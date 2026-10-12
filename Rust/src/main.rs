@@ -5,6 +5,7 @@ mod archive;
 mod textsave;
 mod axes;
 mod conflict;
+mod daemon;
 mod detect;
 mod districts;
 mod doc_rules;
@@ -54,12 +55,15 @@ struct Opts {
     // 않아, 로그가 남은 줄 알고 나중에 찾으면 파일이 없었다(조용한 실패).
     log: Option<String>,
     verbose: bool,
-    // 파이썬 판에만 있는 상주 데몬 관련 요청. 이 판에는 데몬이 없으므로 '무시'가
-    // 아니라 '무엇을 못 해 주는지'를 분명히 답해야 한다(handle_daemon_args).
+    // 임베딩 상주 서버(daemon 모듈) — 설계: plan/Rust-임베딩모델-상주서비스-설계.html
+    //  · serve/status/stop : 서버 기동·조회·정지(handle_daemon_args 가 처리하고 끝낸다)
+    //  · daemon            : 분류할 때 임베딩을 상주 서버에 맡긴다(기본은 직접 로드)
+    //  · idle_timeout      : 서버 유휴 자동 종료(초). 0 = 무한
     serve: bool,
     status: bool,
     stop: bool,
-    daemon_requested: bool,
+    daemon: bool,
+    idle_timeout: u64,
     // 사이냅 전용 추출 요청. 이 판에는 사이냅이 없어 못 해 준다.
     synap_only: bool,
     no_doc_id: bool,            // 결과에 doc_id/key 를 넣지 않는다(기본은 넣는다)
@@ -283,13 +287,21 @@ fn usage() {
     eprintln!("  ※ 지문(hash)과 벡터는 이 모드에서 항상 만듭니다(--hash 를 안 줘도).");
     eprintln!("     지문이 없으면 원본이 바뀌어도 점검이 조용히 넘어갑니다.");
     eprintln!("");
-    eprintln!("─── ⑩ 파이썬 판에는 있고 이 판에는 없는 것 ────────────────────");
-    eprintln!("  [상주 데몬] 이 판에는 데몬이 없습니다. 같은 명령으로 불러도 되도록 인자는 받지만,");
-    eprintln!("             조용히 무시하지 않고 사실대로 답합니다.");
-    eprintln!("  --serve                   지원하지 않음 — 오류로 종료(코드 3)");
-    eprintln!("  --status / --stop         \"데몬 없음\"을 알리고 정상 종료(코드 0)");
-    eprintln!("  --daemon                  경고만 내고 그대로 진행(결과는 같고 속도만 다름)");
-    eprintln!("  --no-daemon               이미 그 상태라 아무 말 없이 받아들임");
+    eprintln!("─── ⑩ 임베딩 상주 서버 ────────────────────────────────────");
+    eprintln!("  파일마다 이 프로그램을 따로 부르면 호출마다 임베딩 모델을 새로 읽습니다.");
+    eprintln!("  모델을 물고 있는 서버를 띄워 두면 그 시간이 없어집니다(분류 결과는 같습니다).");
+    eprintln!("  --serve                   이 프로세스가 상주 서버가 됩니다(정지·유휴 종료까지 실행).");
+    eprintln!("                            같은 모델 서버가 이미 있으면 알리고 끝냅니다(코드 0)");
+    eprintln!("  --daemon                  임베딩을 상주 서버에 맡깁니다. 서버가 없으면 자동으로 띄우고,");
+    eprintln!("                            못 쓰면 모델을 직접 읽습니다. 기본은 꺼짐(직접 읽기)");
+    eprintln!("  --no-daemon               상주 서버를 쓰지 않습니다(기본)");
+    eprintln!("  --status / --stop         서버 상태 한 줄 / 서버 정지 요청(둘 다 코드 0)");
+    eprintln!("  --idle-timeout <초>       서버가 이만큼 요청이 없으면 스스로 끝납니다. 0=무한(기본)");
+    eprintln!("  --model <이름>            서버는 모델마다 하나입니다 — 서버와 호출이 같은 모델이어야 만납니다");
+    eprintln!("  [환경변수] CSOCLASSIFY_STATE_DIR  서버 접속 기록을 둘 폴더. 서버를 띄운 계정과");
+    eprintln!("             부르는 계정이 다르면 양쪽에 같은 폴더를 줘야 서로 찾습니다");
+    eprintln!("");
+    eprintln!("─── ⑩-1 파이썬 판에는 있고 이 판에는 없는 것 ──────────────────");
     eprintln!("  [추출기] 이 판에는 사이냅(snf)이 없고 언제나 자체 파서로 추출합니다.");
     eprintln!("  --hybridparse             이 판이 늘 하는 일이라 그대로 받아들임");
     eprintln!("  --synap-only              지원하지 않음 — 오류로 종료(코드 3).");
@@ -319,7 +331,7 @@ fn usage() {
     eprintln!("  --model  --max-tokens  --overlap  --precision  --per-chunk");
     eprintln!("  --normalize  --no-normalize  --num-threads      (임베딩 세부 설정)");
     eprintln!("  --seed-per-dir  --seed-per-node                 (씨앗 자동 생성 세부 설정)");
-    eprintln!("  --idle-timeout  --timing  -r, --recursive  --classify");
+    eprintln!("  --timing  -r, --recursive  --classify");
     eprintln!("                            ※ --dir 은 원래 늘 재귀라 -r 은 있으나 마나입니다");
     eprintln!("                            ※ 추출 본문이 필요하면 --textsave·--text-only 를 쓰세요");
 }
@@ -454,7 +466,7 @@ fn parse_args() -> Result<Opts, String> {
         seed: seedcli::SeedArgs::default(),
         failsafe: None, check_rules: false,
         filelist: None, no_doc_id: false, report_missing_id: None,
-        serve: false, status: false, stop: false, daemon_requested: false,
+        serve: false, status: false, stop: false, daemon: false, idle_timeout: 0,
         synap_only: false,
         size_limits: limits::Overrides::default(), no_size_limit: false,
         textsave: None,
@@ -594,18 +606,26 @@ fn parse_args() -> Result<Opts, String> {
             // 와 이 값이 같아야 두 판이 같은 기준으로 도는 것이다.
             "-V" | "--version" => { println!("{}", version_text()); std::process::exit(0); }
 
-            // 파이썬 판에만 있는 옵션들 — 이 판에서는 할 일이 없다. 그래도 '모르는
-            // 인자'로 막으면, 두 판을 같은 명령으로 부르던 호출부가 깨진다.
-            // 값이 없는 것들:
-            // 데몬 관련은 삼키지 않고 받아 둔다 — 이 판에 없는 기능이라
-            // '조용히 무시'가 곧 잘못된 성공 신호가 된다.
+            // 임베딩 상주 서버 — 파이썬 판과 같은 이름이다(뜻도 같다).
             "--serve" => o.serve = true,
             "--status" => o.status = true,
             "--stop" => o.stop = true,
-            "--daemon" => o.daemon_requested = true,
-            // --no-daemon 은 이 판에서 이미 참이다(데몬 자체가 없다) — 요청이
-            // 이미 충족된 상태라 아무 말 없이 받아들이는 것이 맞다.
-            "--no-daemon" | "--classify"
+            // 이 판은 기본이 '직접 로드'다(파이썬 판은 기본이 데몬). 둘을 같이 주면 나중 것이 이긴다.
+            "--daemon" => o.daemon = true,
+            "--no-daemon" => o.daemon = false,
+            // 서버 유휴 자동 종료(초). 0 이하는 무한 — 파이썬 판과 같다.
+            "--idle-timeout" => {
+                let v = take(false).unwrap();
+                match v.trim().parse::<i64>() {
+                    Ok(n) => o.idle_timeout = n.max(0) as u64,
+                    Err(_) => errcodes::fail("bad_args",
+                        &format!("[MpowerClassify-rs] {} 값이 정수가 아닙니다: {}", a, v), None),
+                }
+            }
+            // 파이썬 판에만 있는 옵션들 — 이 판에서는 할 일이 없다. 그래도 '모르는
+            // 인자'로 막으면, 두 판을 같은 명령으로 부르던 호출부가 깨진다.
+            // 값이 없는 것들:
+            "--classify"
             | "--embed" | "--per-chunk" | "--normalize" | "--no-normalize"
             | "--timing" | "--recursive" | "-r" => {}
             // 분류 없이 본문만 — 파이썬 판과 같은 이름·같은 출력 모양이다.
@@ -652,9 +672,9 @@ fn parse_args() -> Result<Opts, String> {
                         &format!("[MpowerClassify-rs] --precision 은 f32 또는 f16 입니다: {}", v), None),
                 }
             }
-            // 결과와 무관한 옵션(스레드 수·데몬 유휴시간·파이썬 판 씨앗 설정) — 값은 쓰지 않지만
+            // 결과와 무관한 옵션(스레드 수·파이썬 판 씨앗 설정) — 값은 쓰지 않지만
             // 형식은 본다. 오타가 조용히 통과하면 파이썬 판으로 옮겼을 때 처음 터진다.
-            "--num-threads" | "--idle-timeout" | "--seed-per-dir" | "--seed-per-node" => {
+            "--num-threads" | "--seed-per-dir" | "--seed-per-node" => {
                 let v = take(false).unwrap();
                 if v.trim().parse::<i64>().is_err() {
                     errcodes::fail("bad_args",
@@ -1641,6 +1661,10 @@ fn run_text_only(opts: &Opts) -> i32 {
         fail_no_input(opts);
     }
     // --out 이 있으면 파일로, 없으면 화면으로. 본문이 크므로 버퍼를 쓴다.
+    // --out 의 상위 폴더가 없으면 만들어 둔다. 못 만들면 아래 생성이 실패하며 그 까닭을 알린다.
+    if let Some(parent) = opts.out.as_deref().and_then(|p| Path::new(p).parent()) {
+        if !parent.as_os_str().is_empty() { let _ = std::fs::create_dir_all(parent); }
+    }
     let mut sink: Box<dyn std::io::Write> = match &opts.out {
         Some(p) => match std::fs::File::create(p) {
             Ok(f) => Box::new(std::io::BufWriter::new(f)),
@@ -1820,29 +1844,6 @@ fn glob_match(pat: &str, name: &str) -> bool {
     pi == p.len()
 }
 
-/// 기본 seed 저장소 경로: CSOCLASSIFY_POLICY_DIR/class_seed.jsonl → exe 옆 class_seed.jsonl.
-//------------------------------------------------------------------
-// 데몬 관련 요청에 답한다 (이 판에는 상주 데몬이 없다)
-//=> 파이썬 판은 임베딩 모델을 물고 있는 상주 데몬을 쓰지만 이 판에는 없다.
-//   예전에는 --serve/--status/--stop/--daemon 을 인자만 받고 **조용히 무시**했다.
-//   그러면 두 판을 같은 명령으로 부르던 쪽은 요청이 받아들여진 줄 알고, 정작
-//   결과를 못 읽는 상태가 된다(부록 C-2). 그래서 요청마다 사실대로 답한다.
-//
-//   [왜 셋을 다르게 다루나] '무엇을 요구했는가'가 다르기 때문이다.
-//    · --serve  : 이 프로세스가 서버가 되기를 요구한다. 못 해 준다 → 오류로 멈춘다.
-//                 여기서 조용히 분류하고 끝내면, 서버를 기다리던 쪽은 영영 기다린다.
-//    · --status : "데몬이 도는가"라는 질의다. 답할 수 있다("없다") → 답하고 정상 종료.
-//                 파이썬 판도 데몬이 없을 때 같은 모양으로 답하고 0 을 낸다.
-//    · --stop   : "데몬을 멈춰라". 멈출 것이 없고 원하는 끝 상태는 이미 참이다
-//                 → 사실을 알리고 정상 종료. 실패로 만들 이유가 없다.
-//    · --daemon : "데몬을 써 달라". 결과는 어차피 같고 속도만 다르다 → 경고하고 계속.
-//   --no-daemon 은 이 판에서 이미 참이라 아무 말도 하지 않는다(인자 처리부 참고).
-//
-// -in: opts = 파싱된 실행 옵션
-//
-// -out: 없음 (--serve 는 종료, --status/--stop 은 출력 후 정상 종료)
-// -out: error = --serve 면 unsupported_option 으로 종료(코드 3)
-//------------------------------------------------------------------
 //------------------------------------------------------------------
 // 추출기 선택 요청에 답한다 (이 판에는 사이냅이 없다)
 //=> 파이썬 판은 사이냅 문서필터(snf_exe)를 폴백으로 쓸 수 있고 --synap-only 로
@@ -1868,26 +1869,50 @@ fn handle_extractor_args(opts: &Opts) {
     }
 }
 
+//------------------------------------------------------------------
+// 상주 서버 관련 요청을 처리한다 (--serve / --status / --stop)
+//=> 임베딩 모델을 물고 있는 상주 서버를 띄우거나, 상태를 묻거나, 내린다.
+//   셋 다 문서를 분류하지 않으므로 여기서 처리하고 프로세스를 끝낸다.
+//    · --serve  : 이 프로세스가 서버가 된다. 정지 요청·유휴 종료 때까지 돌아오지 않는다
+//    · --status : 파이썬 판과 같은 모양의 한 줄을 내고 0
+//    · --stop   : 정지 요청을 보내고(없으면 없다고 알리고) 0
+//   --daemon 은 여기서 다루지 않는다 — 분류 흐름의 임베딩 단계가 직접 본다.
+//
+// -in: opts = 파싱된 실행 옵션
+//
+// -out: 없음 (세 요청 중 하나면 여기서 프로세스가 끝난다)
+// -out: error = --serve 기동 실패는 daemon::server::run 이 internal_error/model_load_failed 로 종료
+//------------------------------------------------------------------
 fn handle_daemon_args(opts: &Opts) {
+    let spec = embed::current();
     if opts.serve {
-        errcodes::fail("unsupported_option",
-            "[MpowerClassify-rs] --serve 는 이 판에서 지원하지 않습니다 — 이 빌드에는 상주 데몬이 없습니다. 서버가 필요하면 파이썬 판(MpowerClassify.exe --serve)을 쓰고, 이 판은 호출마다 새 프로세스로 분류하십시오(대량 처리는 --files-from 이 가장 빠릅니다).",
-            None);
+        let code = daemon::server::run(spec, opts.idle_timeout);
+        std::process::exit(errcodes::finish(code, None));
     }
-    // --status/--stop 도 끝을 상태 줄로 알린다 — 파이썬 판은 언제나 한 줄을 낸다.
     if opts.status {
-        println!("데몬 없음 — 이 빌드(MpowerClassify-rs)에는 상주 데몬이 없습니다");
+        match daemon::client::status(spec.key) {
+            Some((rec, ready)) => {
+                // 유휴시간 표시: 0/없음 = 무한(자동종료 없음) — 파이썬 판과 같은 표기.
+                let idle = match rec.get("idle_timeout").and_then(Value::as_u64) {
+                    Some(n) if n > 0 => format!("{}s", n),
+                    _ => "무한(자동종료 없음)".to_string(),
+                };
+                println!("model={} pid={} port={} version={} idle_timeout={} ready={}",
+                         spec.key, rec["pid"], rec["port"],
+                         rec["version"].as_str().unwrap_or(""), idle, ready);
+            }
+            None => println!("model={}: 실행 중인 데몬 없음", spec.key),
+        }
         std::process::exit(errcodes::finish(0, None));
     }
     if opts.stop {
-        println!("정지할 데몬 없음 — 이 빌드(MpowerClassify-rs)에는 상주 데몬이 없습니다");
+        let stopped = daemon::client::stop(spec.key);
+        println!("{}", if stopped { "데몬 정지 요청 전송" } else { "정지할 데몬 없음" });
         std::process::exit(errcodes::finish(0, None));
-    }
-    if opts.daemon_requested {
-        note!("[MpowerClassify-rs] --daemon 은 이 판에 없습니다(상주 데몬 미지원) — 호출마다 모델을 새로 읽습니다. 분류 결과는 같고 속도만 다릅니다. 대량 처리는 --files-from 으로 한 프로세스에 몰아주십시오.");
     }
 }
 
+/// 기본 seed 저장소 경로: CSOCLASSIFY_POLICY_DIR/class_seed.jsonl → exe 옆 class_seed.jsonl.
 fn default_seed_path() -> Option<String> {
     if let Ok(dir) = std::env::var("CSOCLASSIFY_POLICY_DIR") {
         let p = Path::new(&dir).join("class_seed.jsonl");
@@ -2127,6 +2152,8 @@ fn install_interrupt_handler() {
         for prefix in ["cso_zip_", "cso_txt_"] {
             let _ = std::fs::remove_dir_all(std::env::temp_dir().join(format!("{}{}", prefix, pid)));
         }
+        // 상주 서버로 떠 있었다면 접속 기록·잠금도 치운다(서버가 아니면 아무 일도 안 한다).
+        daemon::server::cleanup_on_interrupt();
         if !errcodes::quiet() {
             eprintln!("\n[MpowerClassify-rs] 사용자가 중단했습니다.");
         }
@@ -2382,6 +2409,11 @@ fn main() {
     // append 로 열어 기존 파일을 자르지 않고, 확인하려고 새로 만든 파일이면 바로 치운다 —
     // 뒤에서 다른 이유로 멈췄을 때 빈 결과 파일이 남아 '결과가 있다'로 오인되지 않게.
     if let Some(p) = opts.out.as_deref() {
+        // 상위 폴더가 없으면 만들어 둔다(예: D:\temp 가 없을 때). 못 만들면 아래 열기가
+        // 실패하며 그 까닭을 알린다.
+        if let Some(parent) = Path::new(p).parent() {
+            if !parent.as_os_str().is_empty() { let _ = std::fs::create_dir_all(parent); }
+        }
         let existed = Path::new(p).exists();
         match std::fs::OpenOptions::new().create(true).append(true).open(p) {
             Ok(_) => { if !existed { let _ = std::fs::remove_file(p); } }
@@ -2468,7 +2500,8 @@ fn main() {
     // 모델을 전혀 건드리지 않는다. 그러면 onnxruntime.dll·models/ 가 빠진 배포가
     // 조용히 성공하고, 한참 뒤 미분류가 나오는 배치를 만나서야 드러난다 —
     // "그때는 되고 지금은 안 되네" 는 거버넌스 도구에서 가장 나쁜 실패다.
-    // 이 판은 --status 도 인자만 받고 무시하므로, 배포 이상을 알릴 자리가 여기밖에 없다.
+    // 상주 서버를 안 쓰는 실행에서는 배포 이상을 알릴 자리가 여기밖에 없다
+    // (--status 는 서버가 떠 있는지만 답하고, 이 프로세스의 모델 파일은 보지 않는다).
     //
     // 점검 결과를 '알리고 끝'이 아니라 뒤에서 실제로 쓴다. onnxruntime 을 못 찾으면
     // ort 는 PATH 에 있는 아무 onnxruntime.dll 이나 집어 들고, 버전이 다르면 Err 가
@@ -2480,6 +2513,13 @@ fn main() {
     let deploy_ok = if embed_mode != "none" {
         match embed::check_deployment() {
             Ok(()) => true,
+            // --daemon 이면 여기서 판단하지 않는다 — 이 프로세스에 모델이 없어도 살아 있는
+            // 상주 서버가 벡터를 줄 수 있다. 서버까지 못 쓰는 것이 확인된 뒤(2차 임베딩
+            // 단계)에 같은 기준으로 멈추거나 종료코드 2 로 알린다.
+            Err(why) if opts.daemon => {
+                deploy_why = Some(why);
+                false
+            }
             Err(why) => {
                 // --vector-only 는 임베딩 비교만으로 등급을 정한다 — 모델이 없으면 전 문서가
                 // 미분류가 되므로 결과를 내지 않고 여기서 멈춘다(아직 문서를 읽기 전이다).
@@ -2948,7 +2988,7 @@ fn main() {
     // [2026-09-02] 예전에는 embed_mode 만 보고 무조건 Embedder::load() 했다. 전 문서가
     // 1차 규칙에서 확정된 배치에서는 model.onnx(118MB)+tokenizer.json(17MB)을 읽고
     // ORT 세션까지 구성한 뒤, 아래 루프에서 need 가 전부 false 라 **한 건도 임베딩하지
-    // 않고** 끝났다. 이 판에는 상주 데몬이 없어 그 비용을 프로세스마다 새로 낸다
+    // 않고** 끝났다. 상주 서버(--daemon)를 안 쓰면 그 비용을 프로세스마다 새로 낸다
     // (실측 건당 약 1.4초, Rust/README.md 성능표). 그래서 아래 need 와 같은 판정을
     // 배치 전체에 대해 미리 한 번 돌려, 필요 없으면 모델을 아예 읽지 않는다.
     //
@@ -2963,7 +3003,7 @@ fn main() {
     // 업무분류 2단계가 통째로 사라졌다(파이썬은 같은 배치에서 임베딩한다).
     // 두 판정이 갈릴 자리를 아예 없앤다 — 하나의 판정 함수를 양쪽이 같이 쓴다.
     //
-    // 미리보기 자체는 그대로 필요하다: 이 판에는 상주 데몬이 없어 model.onnx(118MB)
+    // 미리보기 자체는 그대로 필요하다: 상주 서버(--daemon)를 안 쓰는 실행은 model.onnx(118MB)
     // + tokenizer.json(17MB) 적재와 ORT 세션 구성을 프로세스마다 새로 내므로
     // (실측 건당 약 1.4초, Rust/README.md 성능표), 한 건도 임베딩하지 않을 배치에서
     // 모델을 읽는 것은 순수한 낭비다.
@@ -2989,20 +3029,42 @@ fn main() {
     // 종료코드를 2(3002 model_load_failed)로 올린다. 예전에는 exit 0·success 로 끝나,
     // --vector-only 에서 전 문서가 미분류인데도 부르는 쪽은 성공으로 읽었다.
     let mut model_fail: Option<String> = None;
-    if embed_mode != "none" && need_any && !deploy_ok {
+    if embed_mode != "none" && need_any && !deploy_ok && !opts.daemon {
         model_fail = Some(format!("[MpowerClassify-rs] 임베딩 모델/런타임을 올리지 못해 임베딩·전파를 건너뛰었습니다 — {}",
                                   deploy_why.clone().unwrap_or_default()));
     }
-    if embed_mode != "none" && need_any && deploy_ok {
-        match embed::Embedder::load() {
+    // --daemon 이면 임베딩을 상주 서버에 맡긴다(없으면 자동으로 띄우고, 못 쓰면 직접 로드로
+    // 되돌아간다). 클라이언트는 여기서 만들기만 하고 접속은 첫 문서 때 한다 — 그래서
+    // 임베딩이 필요 없는 실행(need_any=false)은 서버를 건드리지도 띄우지도 않는다.
+    if embed_mode != "none" && need_any && (deploy_ok || opts.daemon) {
+        let client = opts.daemon.then(|| daemon::client::DaemonClient::new(
+            embed::current(), opts.idle_timeout, opts.log.clone(), opts.verbose));
+        match embed::EmbedBackend::open(client, deploy_ok) {
             Some(mut embedder) => {
                 // 대상 판정은 위 미리보기와 **같은 함수**다 — 갈릴 자리를 두지 않는다.
                 for it in items.iter_mut() {
                     if need_vec(it) { it.vector = embedder.embed_document(&it.text); }
                 }
+                // 상주 서버도 직접 로드도 못 쓴 경우(--daemon 에서만 여기로 온다 — 직접 로드만
+                // 쓰는 실행은 open() 이 None 을 줘 아래 None 갈래로 간다). 직접 로드가 실패했을
+                // 때와 같은 기준으로 다룬다: --vector-only 는 멈추고, 그 밖은 결과를 내되 2 로 알린다.
+                let embed_failed = embedder.failed();
+                if embed_failed {
+                    let why = deploy_why.clone().unwrap_or_else(|| format!(
+                        "모델/런타임 로드 실패({}/{}, onnxruntime.dll 확인)",
+                        embed::MODEL_ROOT, embed::current().local_dir));
+                    if opts.vector_only {
+                        errcodes::fail("model_load_failed",
+                            &format!("[MpowerClassify-rs] --vector-only 는 임베딩 모델이 있어야 합니다 — {}", why),
+                            None);
+                    }
+                    let m = format!("[MpowerClassify-rs] 임베딩 모델/런타임을 올리지 못해 임베딩·전파를 건너뛰었습니다 — {}", why);
+                    errlog::err(&m);
+                    model_fail = Some(m);
+                }
                 // 여기부터는 '전파'다. --with-vector 만 준 경우(전파 off)는 위에서 벡터만
-                // 만들고 끝내야 하므로 통째로 건너뛴다.
-                if auto_prop {
+                // 만들고 끝내야 하므로 통째로 건너뛴다. 벡터를 못 만든 실행도 건너뛴다.
+                if auto_prop && !embed_failed {
                 // 내부 seed(코퍼스 seed_eligible) + 외부 seed(class_seed.jsonl) 병합.
                 let rec_tuples: Vec<(Option<Vec<f32>>, Option<String>, bool, String)> = items.iter()
                     .map(|it| (it.vector.clone(), it.grade.map(|g| g.as_str().to_string()), it.seed_eligible, it.file.clone()))

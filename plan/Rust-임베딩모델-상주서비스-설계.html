@@ -1,0 +1,631 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rust 임베딩 모델 상주 서비스 — 파일마다 exe 를 불러도 모델은 한 번만 올린다</title>
+</head>
+<body>
+<style>
+  :root{
+    --bg:#f4f6f9; --surface:#ffffff; --surface-2:#eef1f6; --ink:#191d24;
+    --muted:#58616e; --faint:#8b94a2; --line:#dde2ea; --line-strong:#c7cfda;
+    --accent:#26437e; --accent-2:#365fb0; --accent-soft:#e7edf7;
+    --c:#cf3b2e; --c-soft:#fbeceb; --s:#b3760f; --s-soft:#f9f0dc; --o:#2f8f57; --o-soft:#e6f3ea;
+    --shadow:0 1px 2px rgba(20,30,50,.04), 0 8px 24px rgba(20,30,50,.06);
+    --sans:"Pretendard Variable",Pretendard,"Malgun Gothic","맑은 고딕",-apple-system,"Apple SD Gothic Neo",system-ui,sans-serif;
+    --mono:ui-monospace,"Cascadia Code","Cascadia Mono",Consolas,"D2Coding",monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0e1116; --surface:#161b22; --surface-2:#1d232c; --ink:#e7ebf1;
+      --muted:#9aa4b2; --faint:#6b7684; --line:#262d38; --line-strong:#333c49;
+      --accent:#7ea0e8; --accent-2:#8fb0f2; --accent-soft:#182233;
+      --c:#f2695c; --c-soft:#2a1715; --s:#e6a748; --s-soft:#271e10; --o:#57bd85; --o-soft:#122217;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#f4f6f9; --surface:#ffffff; --surface-2:#eef1f6; --ink:#191d24;
+    --muted:#58616e; --faint:#8b94a2; --line:#dde2ea; --line-strong:#c7cfda;
+    --accent:#26437e; --accent-2:#365fb0; --accent-soft:#e7edf7;
+    --c:#cf3b2e; --c-soft:#fbeceb; --s:#b3760f; --s-soft:#f9f0dc; --o:#2f8f57; --o-soft:#e6f3ea;
+  }
+  :root[data-theme="dark"]{
+    --bg:#0e1116; --surface:#161b22; --surface-2:#1d232c; --ink:#e7ebf1;
+    --muted:#9aa4b2; --faint:#6b7684; --line:#262d38; --line-strong:#333c49;
+    --accent:#7ea0e8; --accent-2:#8fb0f2; --accent-soft:#182233;
+    --c:#f2695c; --c-soft:#2a1715; --s:#e6a748; --s-soft:#271e10; --o:#57bd85; --o-soft:#122217;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    line-height:1.7;-webkit-font-smoothing:antialiased;font-size:16px;letter-spacing:-0.003em;}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 24px 96px;}
+  header.doc{padding:56px 0 34px;border-bottom:1px solid var(--line);margin-bottom:40px;}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);font-weight:600;display:flex;gap:10px;align-items:center;margin-bottom:20px;}
+  .eyebrow::before{content:"";width:26px;height:2px;background:var(--accent);border-radius:2px;}
+  h1.title{font-size:clamp(28px,4.6vw,44px);line-height:1.12;margin:0 0 14px;font-weight:800;
+    letter-spacing:-0.02em;text-wrap:balance;}
+  .lede{font-size:clamp(16px,2.1vw,19px);color:var(--muted);margin:0 0 22px;max-width:64ch;}
+  .lede b{color:var(--ink);font-weight:600;}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;}
+  .chip{font-size:12px;font-family:var(--mono);color:var(--muted);background:var(--surface);
+    border:1px solid var(--line);border-radius:999px;padding:5px 12px;}
+  .chip b{color:var(--ink);font-weight:600;}
+  section{margin:52px 0;scroll-margin-top:20px;}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:22px;}
+  .sec-num{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--accent);
+    border:1px solid var(--line-strong);border-radius:7px;padding:3px 9px;flex:none;line-height:1.3;}
+  h2{font-size:clamp(21px,3vw,27px);margin:0;font-weight:750;letter-spacing:-0.015em;line-height:1.25;}
+  h3{font-size:17px;margin:30px 0 12px;font-weight:700;letter-spacing:-0.01em;}
+  p{margin:0 0 15px;max-width:72ch;}
+  ul.plain{margin:0 0 15px;padding-left:20px;} ul.plain li{margin:5px 0;color:var(--muted);}
+  ul.plain li b{color:var(--ink);font-weight:600;}
+  ol.plain{margin:0 0 15px;padding-left:22px;} ol.plain li{margin:6px 0;color:var(--muted);}
+  ol.plain li b{color:var(--ink);font-weight:600;}
+  .tldr{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--accent);
+    border-radius:12px;padding:22px 24px;box-shadow:var(--shadow);}
+  .tldr .k{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);font-weight:700;margin-bottom:10px;}
+  .tldr p{margin:0;font-size:17px;color:var(--ink);max-width:none;}
+  .tldr b{color:var(--accent-2);}
+  .twrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);margin:16px 0;}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:640px;background:var(--surface);}
+  th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--line);vertical-align:top;}
+  thead th{background:var(--surface-2);font-size:12px;letter-spacing:.03em;color:var(--muted);
+    text-transform:uppercase;font-weight:700;white-space:nowrap;}
+  tbody tr:last-child td{border-bottom:none;}
+  td.mono,.mono-cell{font-family:var(--mono);font-size:13px;white-space:nowrap;}
+  code.inl{font-family:var(--mono);font-size:.9em;background:var(--surface-2);border:1px solid var(--line);
+    border-radius:5px;padding:1px 6px;}
+  pre{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 20px;
+    overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.65;box-shadow:var(--shadow);color:var(--ink);}
+  pre .cm{color:var(--o);} pre .kw{color:var(--accent-2);font-weight:600;} pre .hi{color:var(--c);font-weight:600;}
+  .note{border:1px solid var(--line);background:var(--surface-2);border-radius:12px;padding:16px 18px;
+    font-size:14.5px;display:flex;gap:12px;align-items:flex-start;margin:16px 0;}
+  .note .badge{font-family:var(--mono);font-size:10.5px;font-weight:800;letter-spacing:.06em;
+    padding:3px 8px;border-radius:6px;flex:none;text-transform:uppercase;white-space:nowrap;}
+  .note.safe .badge{color:var(--o);background:var(--o-soft);border:1px solid color-mix(in srgb,var(--o) 35%,transparent);}
+  .note.warn .badge{color:var(--s);background:var(--s-soft);border:1px solid color-mix(in srgb,var(--s) 35%,transparent);}
+  .note.bad .badge{color:var(--c);background:var(--c-soft);border:1px solid color-mix(in srgb,var(--c) 35%,transparent);}
+  .note.info .badge{color:var(--accent-2);background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent-2) 35%,transparent);}
+  .note p{margin:0;color:var(--muted);max-width:none;}
+  .note b{color:var(--ink);}
+  .x{color:var(--c);font-weight:700}
+  .ok{color:var(--o);font-weight:700}
+  .wn{color:var(--s);font-weight:700}
+  .src{font-family:var(--mono);font-size:12px;color:var(--faint);}
+  .fig{background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);
+    padding:18px;margin:16px 0;overflow-x:auto;}
+  .fig svg{display:block;min-width:680px;width:100%;height:auto;}
+  .fig text{font-family:var(--sans);fill:var(--ink);font-size:13px;}
+  .fig .t-mono{font-family:var(--mono);font-size:11.5px;fill:var(--muted);}
+  .fig .t-h{font-weight:700;font-size:14px;}
+  .fig .box{fill:var(--surface-2);stroke:var(--line-strong);}
+  .fig .box-a{fill:var(--accent-soft);stroke:var(--accent-2);}
+  .fig .ln{stroke:var(--muted);stroke-width:1.4;fill:none;}
+  .fig .ln-d{stroke:var(--faint);stroke-width:1.2;fill:none;stroke-dasharray:5 4;}
+  .fig .ah{fill:var(--muted);}
+  footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);
+    font-size:13px;color:var(--faint);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;
+    font-family:var(--mono);letter-spacing:.02em;}
+  @media print{ body{background:#fff;} .tldr,pre,.twrap,.fig{box-shadow:none;} }
+</style>
+
+<div class="wrap">
+
+  <header class="doc">
+    <div class="eyebrow">성능 설계 · Resident Embedding Service</div>
+    <h1 class="title">Rust 임베딩 모델 상주 서비스<br>— 파일마다 exe 를 불러도 모델은 한 번만 올린다</h1>
+    <p class="lede">엠파워 v11 은 <b>파일 하나마다 <code class="inl">MpowerClassify-rs.exe</code> 를 한 번씩</b> 부른다.
+    지금 Rust 판은 그때마다 임베딩 모델을 새로 읽는다. 파이썬 판처럼 <b>모델을 물고 있는 상주 프로세스</b>를 두고,
+    exe 는 거기에 텍스트만 보내 벡터를 받아 오게 한다.</p>
+    <div class="meta">
+      <span class="chip"><b>대상</b> Rust 엔진 (MpowerClassify-rs)</span>
+      <span class="chip"><b>범위</b> 새 daemon 모듈 · main.rs 인자/2차 임베딩 단계</span>
+      <span class="chip"><b>분류 결과 변화</b> 없음(목표)</span>
+      <span class="chip"><b>상태</b> 설계 · <b class="ok">구현 완료 2026-10-12</b> (§16)</span>
+      <span class="chip"><b>작성일</b> 2026-10-12</span>
+    </div>
+  </header>
+
+  <div class="tldr">
+    <div class="k">한 줄 요약</div>
+    <p><code class="inl">--serve</code> 로 <b>임베딩만 맡는 상주 프로세스</b>를 띄우고, 분류 호출에 <code class="inl">--daemon</code> 을 붙이면
+    모델을 직접 읽는 대신 그 프로세스에 묻는다. 추출·규칙·전파는 지금처럼 호출한 exe 안에서 돈다.
+    상주 프로세스를 못 쓰면 <b>지금 방식(직접 로드)으로 조용히 되돌아가므로</b> 결과가 안 나오는 경우는 생기지 않는다.
+    옵션 이름·통신 규약은 파이썬 판과 같게 맞춘다.</p>
+  </div>
+
+  <!-- 1 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>왜 필요한가</h2></div>
+    <p>Rust 판에는 상주 데몬이 없어 <b>모든 실행이 콜드 스타트</b>다. 임베딩이 필요한 호출은 매번 아래를 새로 치른다
+    <span class="src">embed.rs:224 <code class="inl">Embedder::load()</code></span>.</p>
+    <ul class="plain">
+      <li><b>model.onnx 118MB</b> 읽기 + ORT 세션 구성 + Level3 그래프 최적화(CPU 작업 — 페이지 캐시로도 안 없어진다)</li>
+      <li><b>tokenizer.json 17MB</b> 파싱</li>
+      <li><b>onnxruntime.dll</b> 동적 로딩</li>
+    </ul>
+    <p>기존 실측(<code class="inl">Rust/README.md</code> 성능표, 200건 <code class="inl">--with-vector</code>)으로 보면 이 고정비가 건당 약 1.4초다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>호출 방식</th><th>Rust</th><th>Python(데몬 on)</th></tr></thead>
+        <tbody>
+          <tr><td><code class="inl">--files-from</code> 1회 (한 프로세스)</td><td class="mono ok">44.0s (0.22s/건)</td><td class="mono">84.0s</td></tr>
+          <tr><td><code class="inl">--file</code> 200회 (파일마다 프로세스) — <b>v11 이 쓰는 방식</b></td><td class="mono x">320.6s (1.60s/건)</td><td class="mono ok">265.5s (1.33s/건)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>그동안의 권고는 "<code class="inl">--files-from</code> 으로 한 프로세스에 몰아 달라"였다. v11 연동은 로직상 그럴 수 없으므로
+    (파일 1건 = exe 1회), 남는 방법은 <b>모델을 프로세스 밖에 상주</b>시키는 것뿐이다.</p>
+    <div class="note info">
+      <span class="badge">기대치</span>
+      <p>임베딩이 필요한 호출에서 건당 약 1.4초가 "소켓 왕복 1번"으로 바뀌는 것이 목표다. 이 숫자는 <b>기존 실측에서 뺀 추정</b>이고,
+      실제 값은 구현 뒤 같은 200건으로 다시 잰다(§13). 규칙만으로 끝나는 호출은 2026-09-02 지연 로딩 덕에 이미 모델을 안 읽으므로
+      이번 변경으로 달라지는 것이 없다.</p>
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>결정 요약</h2></div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>항목</th><th>결정</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>상주 프로세스가 맡는 일</td><td><b>임베딩만</b>(텍스트 → 벡터)</td>
+              <td>분류 로직이 한 곳(호출한 exe)에만 있어야 결과가 안 갈린다. 파이썬 분류 경로도 <code class="inl">embed_text</code> 만 쓴다.</td></tr>
+          <tr><td>켜는 방법</td><td>분류 호출에 <code class="inl">--daemon</code> (기본은 꺼짐)</td>
+              <td>기존 호출부·UI·배치 동작을 그대로 둔다. 지금도 받는 인자라 호출부 수정이 한 단어다.</td></tr>
+          <tr><td>미리 띄우기</td><td><code class="inl">--serve</code> 로 직접 기동 + 없으면 첫 <code class="inl">--daemon</code> 호출이 자동 기동</td>
+              <td>"처음부터 떠 있게" 와 "죽어도 다시 뜨게" 를 둘 다 만족.</td></tr>
+          <tr><td>통신</td><td>127.0.0.1 TCP · 4바이트 길이 + JSON · 토큰</td>
+              <td>파이썬 판 <code class="inl">daemon/ipc.py</code> 와 같은 규약. 윈도우·리눅스 공통, 새 크레이트 불필요.</td></tr>
+          <tr><td>유휴 종료</td><td>기본 0 = 무한(자동 종료 없음), <code class="inl">--idle-timeout N</code> 으로 유한</td>
+              <td>파이썬 판 기본값과 같다. v11 은 "항상 떠 있어야" 한다.</td></tr>
+          <tr><td>못 쓸 때</td><td>지금 방식(프로세스 안 직접 로드)으로 폴백</td>
+              <td>상주 프로세스는 속도 장치일 뿐, 없다고 분류가 실패하면 안 된다.</td></tr>
+          <tr><td>파이썬 데몬과의 관계</td><td><b>서로 안 섞는다</b>(레지스트리 파일명 분리)</td>
+              <td>파이썬 클라이언트는 버전이 다른 데몬을 정지시킨다 — 같은 파일을 쓰면 서로 죽인다(§7).</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 3 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>검토한 대안</h2></div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>안</th><th>내용</th><th>판단</th></tr></thead>
+        <tbody>
+          <tr><td><b>A. 임베딩 상주</b> <span class="ok">채택</span></td>
+              <td>상주 프로세스는 모델만 물고, 추출·규칙·seed 비교는 호출한 exe 가 한다.</td>
+              <td>고정비의 대부분(모델 로드)을 없애면서 바뀌는 코드가 가장 적다. 결과 동일성을 지키기 쉽다.</td></tr>
+          <tr><td>B. 분류 전체 상주</td>
+              <td>파일 경로를 보내면 상주 프로세스가 분류까지 해서 레코드를 돌려준다.</td>
+              <td>정책 파일 로드·pdfium 초기화까지 아끼지만, 정책이 바뀌면 다시 읽어야 하고 출력·옵션·오류 계약을 통째로 원격화해야 한다. 이번 범위를 크게 넘는다. A 를 재고 나서 남는 고정비가 크면 그때 검토.</td></tr>
+          <tr><td>C. Rust exe 가 파이썬 데몬에 붙기</td>
+              <td>이미 있는 파이썬 <code class="inl">--serve</code> 를 재사용.</td>
+              <td>파이썬 판 배포가 같이 깔려야 한다. Rust 판을 쓰는 이유(단일 바이너리)와 어긋난다.</td></tr>
+          <tr><td>D. <code class="inl">--files-from</code> 로 묶기</td>
+              <td>호출 구조를 바꾼다.</td>
+              <td>v11 로직상 불가(전제).</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 4 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>구조와 호출 흐름</h2></div>
+    <div class="fig">
+      <svg viewBox="0 0 880 300" role="img" aria-label="v11 이 파일마다 exe 를 부르고, exe 는 임베딩이 필요할 때만 상주 프로세스에 텍스트를 보내 벡터를 받는다">
+        <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+        <rect class="box" x="16" y="96" width="150" height="76" rx="10"/>
+        <text class="t-h" x="91" y="128" text-anchor="middle">엠파워 v11</text>
+        <text class="t-mono" x="91" y="150" text-anchor="middle">파일 1건 = 호출 1회</text>
+
+        <rect class="box" x="262" y="40" width="270" height="190" rx="10"/>
+        <text class="t-h" x="397" y="66" text-anchor="middle">MpowerClassify-rs.exe --daemon</text>
+        <text class="t-mono" x="397" y="84" text-anchor="middle">호출마다 뜨고 끝나는 프로세스</text>
+        <text x="282" y="116">1. 추출</text>
+        <text x="282" y="140">2. 규칙 스캔 (1차)</text>
+        <text x="282" y="164">3. 임베딩이 필요한가? (need_vec)</text>
+        <text x="282" y="188">4. 전파 · 재융합</text>
+        <text x="282" y="212">5. 레코드 출력</text>
+
+        <rect class="box-a" x="640" y="70" width="224" height="130" rx="10"/>
+        <text class="t-h" x="752" y="98" text-anchor="middle">MpowerClassify-rs.exe --serve</text>
+        <text class="t-mono" x="752" y="118" text-anchor="middle">상주 · 127.0.0.1:임의포트</text>
+        <text x="752" y="150" text-anchor="middle">ONNX 세션 + 토크나이저</text>
+        <text x="752" y="172" text-anchor="middle">(메모리에 계속 물고 있음)</text>
+
+        <path class="ln" d="M166,134 L260,134" marker-end="url(#ah)"/>
+        <path class="ln" d="M532,152 L638,126" marker-end="url(#ah)"/>
+        <text class="t-mono" x="585" y="120" text-anchor="middle">텍스트</text>
+        <path class="ln" d="M640,160 L534,176" marker-end="url(#ah)"/>
+        <text class="t-mono" x="590" y="190" text-anchor="middle">벡터</text>
+
+        <path class="ln-d" d="M397,230 L397,262 L752,262 L752,202" marker-end="url(#ah)"/>
+        <text class="t-mono" x="574" y="280" text-anchor="middle">없으면 자동 기동(분리 실행) · 그래도 안 되면 exe 안에서 직접 로드</text>
+      </svg>
+    </div>
+    <ol class="plain">
+      <li><b>3번에서 "필요 없음"이면</b> 상주 프로세스에 접속조차 하지 않는다. 기존 <code class="inl">need_any</code> 게이트를 그대로 쓴다 <span class="src">main.rs:2982</span>.</li>
+      <li><b>필요하면</b> 지금 <code class="inl">Embedder::load()</code> 를 부르는 한 자리 <span class="src">main.rs:2997</span> 만 "상주 프로세스 우선, 실패 시 직접 로드"로 바꾼다.</li>
+      <li>그 뒤의 seed 비교·전파·출력은 벡터가 어디서 왔는지 모른다(변경 없음).</li>
+    </ol>
+  </section>
+
+  <!-- 5 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h2>CLI 옵션</h2></div>
+    <p>이름은 전부 파이썬 판에 이미 있는 것이다. Rust 판도 지금 인자로는 받고 있어 <span class="src">main.rs:602-608, 657</span>, <b>새 이름은 하나도 없다</b> — 뜻만 채운다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>옵션</th><th>지금(Rust)</th><th>바뀐 뒤</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">--serve</td><td>미지원 오류(1012, 종료코드 3)</td>
+              <td>이 프로세스가 상주 서버가 된다. 포그라운드로 돌며 정지/유휴 종료 때 0 으로 끝난다. 같은 모델 서버가 이미 있으면 한 줄 알리고 0.</td></tr>
+          <tr><td class="mono">--daemon</td><td>"데몬 없음" 경고 후 직접 로드</td>
+              <td>임베딩을 상주 서버에 맡긴다. 없으면 자동 기동, 못 쓰면 직접 로드로 폴백.</td></tr>
+          <tr><td class="mono">--no-daemon</td><td>말없이 통과</td><td>상주 서버를 쓰지 않는다(기본값과 같다). <code class="inl">--daemon</code> 과 같이 오면 나중 것이 이긴다.</td></tr>
+          <tr><td class="mono">--status</td><td>"데몬 없음" 출력, 0</td>
+              <td>파이썬과 같은 한 줄: <code class="inl">model=… pid=… port=… version=… idle_timeout=… ready=…</code> / 없으면 <code class="inl">model=…: 실행 중인 데몬 없음</code>. 0.</td></tr>
+          <tr><td class="mono">--stop</td><td>"정지할 데몬 없음" 출력, 0</td><td>정지 요청을 보내고 <code class="inl">데몬 정지 요청 전송</code> / <code class="inl">정지할 데몬 없음</code>. 0.</td></tr>
+          <tr><td class="mono">--idle-timeout N</td><td>형식만 검사하고 버림</td><td><code class="inl">--serve</code> 와 자동 기동에 쓰인다. 0(기본) = 무한.</td></tr>
+          <tr><td class="mono">--model</td><td>모델 선택</td><td>그대로. 상주 서버는 <b>모델마다 하나</b>이고, 서버·클라이언트가 같은 <code class="inl">--model</code> 로 만난다.</td></tr>
+        </tbody>
+      </table>
+    </div>
+<pre><span class="cm"># ① v11 서비스가 시작할 때 한 번 (미리 띄워 두기)</span>
+MpowerClassify-rs.exe <span class="kw">--serve</span> --model e5-small-ko --log D:\log\mc-daemon.log
+
+<span class="cm"># ② 파일마다 — 기존 명령에 --daemon 한 단어만 더한다</span>
+MpowerClassify-rs.exe --file "D:\docs\a.hwpx" --seeds ... --cso-rules ... <span class="kw">--daemon</span>
+
+<span class="cm"># ③ 운영 확인 / 정지</span>
+MpowerClassify-rs.exe --status
+MpowerClassify-rs.exe --stop</pre>
+    <div class="note warn">
+      <span class="badge">호환</span>
+      <p><code class="inl">--serve</code> 가 "오류"에서 "서버 기동"으로 뜻이 바뀐다. 지금 이 오류에 기대는 호출부는 없을 것으로 보지만
+      (오류로 멈추는 인자를 일부러 넘길 이유가 없다), 도움말 <span class="src">main.rs:289-292</span> · <code class="inl">Rust/README.md</code> · 실행가이드의
+      "Rust 판은 데몬 미지원" 문구를 같이 고쳐야 한다.</p>
+    </div>
+  </section>
+
+  <!-- 6 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">06</span><h2>통신 규약</h2></div>
+    <p>파이썬 판 <code class="inl">daemon/ipc.py</code> 와 같다: <b>연결 하나에 요청 하나, 응답 하나</b>.
+    메시지는 <code class="inl">[길이 4바이트 big-endian][UTF-8 JSON]</code>, 한 메시지 상한 16MB.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>op</th><th>요청</th><th>응답</th><th>토큰</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">ping</td><td class="mono">{op}</td>
+              <td class="mono">{ok, model_ready, model, dim, version, proto, pid}</td><td>불필요</td></tr>
+          <tr><td class="mono">embed_text</td><td class="mono">{op, token, text}</td>
+              <td class="mono">{ok:true, vector, dim, model, version}<br>{ok:false, error, kind}</td><td>필요</td></tr>
+          <tr><td class="mono">stop</td><td class="mono">{op, token}</td><td class="mono">{ok:true}</td><td>필요</td></tr>
+          <tr><td class="mono">그 밖(embed 등)</td><td>—</td><td class="mono">{ok:false, kind:"bad_op"}</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul class="plain">
+      <li><b>파이썬의 <code class="inl">embed</code>(파일 경로를 보내 서버가 추출까지)는 만들지 않는다.</b> Rust 판의 추출은 언제나 호출한 exe 가 한다.</li>
+      <li><b>텍스트는 다듬지 않은 채 보낸다.</b> 서버가 부르는 <code class="inl">embed_document()</code> 가 지금처럼 <code class="inl">clean_for_embed</code> 를 스스로 하므로, 직접 로드할 때와 같은 입력이 같은 함수를 지난다.</li>
+      <li><b>청크 크기·겹침 옵션은 받지 않는다.</b> Rust 판은 512/32 고정이고 다른 값은 이미 인자 단계에서 1012 로 멈춘다 <span class="src">embed.rs:107</span>.</li>
+      <li><b>kind</b> 는 <code class="inl">auth</code>(토큰 불일치) · <code class="inl">embed</code>(빈 텍스트/추론 실패 — 직접 로드에서 <code class="inl">None</code> 이 나오는 경우) · <code class="inl">not_ready</code>(모델 올리는 중 — 부른 쪽이 잠깐 뒤 다시 묻는다) · <code class="inl">bad_op</code>.</li>
+      <li>텍스트 상한(기본 200만 자)은 한글 기준 약 6MB 라 16MB 안에 든다. 상한을 올려 넘치는 문서는 그 문서만 직접 로드로 처리한다.</li>
+    </ul>
+  </section>
+
+  <!-- 7 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">07</span><h2>레지스트리와 "하나만 뜨기"</h2></div>
+    <p>"지금 이 모델 서버가 어느 포트에 있나"를 파일로 남긴다. 자리는 파이썬 판과 같은 상태 폴더,
+    <b>파일 이름만 다르다</b>.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th></th><th>Python</th><th>Rust(이번 설계)</th></tr></thead>
+        <tbody>
+          <tr><td>폴더</td><td colspan="2"><code class="inl">%LOCALAPPDATA%\MpowerClassify</code> (없으면 <code class="inl">~/.csoclassify</code>)</td></tr>
+          <tr><td>접속 정보</td><td class="mono">daemon-&lt;model&gt;.json</td><td class="mono">daemon-rs-&lt;model&gt;.json</td></tr>
+          <tr><td>잠금</td><td class="mono">daemon-&lt;model&gt;.json.lock</td><td class="mono">daemon-rs-&lt;model&gt;.json.lock</td></tr>
+          <tr><td>내용</td><td class="mono">pid, host, port, token, version, model, idle_timeout, started</td><td class="mono">같은 칸 + proto, dim, exe</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note bad">
+      <span class="badge">왜 분리</span>
+      <p>파이썬 클라이언트는 기록의 <code class="inl">version</code> 이 자기와 다르면 <b>그 데몬에 stop 을 보내고 기록을 지운다</b>
+      <span class="src">client.py:97</span>. 같은 파일을 쓰면 두 판이 한 PC 에 같이 깔렸을 때 서로의 서버를 계속 죽인다.
+      또 Rust 판은 NFC 정규화가 빠져 있어 <span class="src">embed.rs:344</span> 두 판의 벡터가 완전히 같다는 보장도 없다. 섞지 않는다.</p>
+    </div>
+
+    <h3>서버 기동 순서</h3>
+    <ol class="plain">
+      <li><b>잠금 파일을 "없을 때만 만들기"로 만든다.</b> 성공하면 내가 서버다(pid·시각 기록).</li>
+      <li><b>소켓을 먼저 연다</b>(127.0.0.1, 포트 0 = OS 가 빈 포트 지정) → 토큰 생성 → 접속 정보 파일을 임시 파일에 쓰고 이름 바꾸기로 교체.</li>
+      <li><b>그다음에 모델을 올린다.</b> 실패하면 기록·잠금을 지우고 <code class="inl">model_load_failed</code>(3002, 종료코드 2).</li>
+      <li>요청 루프. 끝날 때(정지·유휴·Ctrl+C) 기록·잠금을 지운다.</li>
+    </ol>
+
+    <h3>이미 잠금이 있을 때 — 살아 있는 서버인가</h3>
+    <p>파이썬 판은 "기록된 pid 가 살아 있는가"로 판단한다. Rust 판은 <b>"기록된 포트에 실제로 접속되는가"</b>로 판단한다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>관찰</th><th>판정</th></tr></thead>
+        <tbody>
+          <tr><td>접속되고 ping 응답의 pid 가 기록과 같다</td><td class="ok">살아 있음 — 나는 물러난다(0)</td></tr>
+          <tr><td>위와 같되 응답의 <code class="inl">model_ready</code> 가 false</td><td class="wn">모델 올리는 중 — 물러난다(0)</td></tr>
+          <tr><td>ping 이 안 돌아오지만 잠금이 생긴 지 3초 안</td><td class="wn">기록을 쓰기 직전의 기동 중 — 물러난다(0)</td></tr>
+          <tr><td>그 밖(접속 안 됨 / 응답이 엉뚱함 / pid 가 다름)</td><td class="x">죽은 기록 — 지우고 한 번 더 시도</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note info">
+      <span class="badge">파이썬과 다른 점</span>
+      <p>pid 방식은 <b>서버가 강제 종료되거나 PC 가 재부팅된 뒤 그 pid 를 다른 프로그램이 받으면</b> "아직 살아 있다"고 오판한다.
+      그러면 새 서버는 뜨자마자 물러나고, 클라이언트는 호출마다 기동 대기(20초)를 다 채운 뒤에야 폴백한다.
+      "항상 떠 있어야 하는" 용도에서는 치명적이라 접속 여부로 바꾼다. 소켓을 모델보다 먼저 여는 것(순서 2→3)도 이 판정을 위해서다
+      — 구현에서는 한 걸음 더 가서, 요청을 받는 스레드를 모델보다 먼저 띄워 <b>모델을 올리는 중에도 ping 에 "살아 있음, 준비 중"이라고 답한다</b>.
+      그래서 "느려서 답이 없다"와 "죽었다"를 시간으로 추측할 필요가 없다. 덤으로 pid 확인용 OS API 를 부를 필요가 없어진다.</p>
+    </div>
+    <p>토큰은 OS 난수 16바이트(hex)다. <code class="inl">getrandom</code> 은 이미 의존 트리에 있어(Cargo.lock) 직접 의존으로 올려도 새로 받는 것이 없다.
+    리눅스에서는 접속 정보 파일을 0600 으로 만든다.</p>
+  </section>
+
+  <!-- 8 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">08</span><h2>클라이언트 동작과 폴백</h2></div>
+<pre><span class="cm">// main.rs:2997 자리 — 의사 코드</span>
+let mut backend = <span class="kw">if</span> opts.daemon { EmbedBackend::Daemon(client) } <span class="kw">else</span> { EmbedBackend::Local(None) };
+for it in items.iter_mut() {
+    if need_vec(it) { it.vector = backend.embed_document(&amp;it.text); }
+}
+
+<span class="cm">// EmbedBackend::embed_document</span>
+Daemon  → 빠른 길: 기록 읽기 → 접속 → embed_text → 벡터
+            ├ 응답 ok:false, kind=embed      → <span class="hi">None</span> (직접 로드의 None 과 같은 뜻. 폴백 아님)
+            └ 접속·통신 실패 / 버전·모델·차원 불일치
+                 → 느린 길: (불일치면 stop) → 자동 기동 → ping 폴링(최대 20초) → 재요청
+                      └ 그래도 실패 → note 한 줄 + <span class="hi">Local 로 전환</span>(이 실행의 남은 문서 전부)
+Local   → 처음 필요할 때 Embedder::load() 한 번 → embed_document</pre>
+    <ul class="plain">
+      <li><b>빠른 길에는 ping 이 없다.</b> 파이썬은 요청마다 ping 연결 + 본 요청 연결로 두 번 왕복한다. 응답에 <code class="inl">model·dim·version</code> 을 실어 한 번으로 줄인다.</li>
+      <li><b>응답 검증:</b> <code class="inl">dim</code> 이 이번 모델 스펙과 다르거나 벡터 길이가 다르면 그 서버를 쓰지 않는다 — 다른 차원 벡터가 seed 와 섞이면 조용히 틀어진다(직접 로드의 기존 방어와 같은 이유).</li>
+      <li><b>버전 불일치</b>(exe 를 교체했는데 옛 서버가 남음): 기록의 <code class="inl">version·proto</code> 가 다르면 stop 을 보내고 새로 띄운다. 배포 교체 때 서버를 따로 내리지 않아도 된다.</li>
+      <li><b>배포 점검은 그대로 한다</b> <span class="src">main.rs:2481</span>. 파일 존재 확인(stat 몇 번)이라 싸고, 폴백이 실제로 가능한지 미리 알려 준다.
+          점검이 실패했더라도 살아 있는 서버가 있으면 그 서버는 쓴다.</li>
+      <li><b>폴백까지 실패</b>하면 지금과 같다: 결과는 내고 종료코드 2(3002), <code class="inl">--vector-only</code> 는 결과 없이 멈춘다. 새 오류코드는 만들지 않는다.</li>
+    </ul>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>시간 한도</th><th>값</th><th>넘으면</th></tr></thead>
+        <tbody>
+          <tr><td>접속</td><td class="mono">0.3초</td><td>느린 길(기동 시도)</td></tr>
+          <tr><td>ping 응답</td><td class="mono">1초</td><td>아직 준비 안 됨으로 보고 다시 폴링</td></tr>
+          <tr><td>자동 기동 후 준비 대기</td><td class="mono">20초</td><td>직접 로드로 폴백</td></tr>
+          <tr><td>embed_text 응답</td><td class="mono">120초</td><td>직접 로드로 폴백(큰 문서·대기열 대비 넉넉히)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>자동 기동</h3>
+    <p>자기 자신을 <code class="inl">--serve --model &lt;m&gt; --idle-timeout &lt;n&gt;</code> (+ <code class="inl">--log</code>, <code class="inl">-v</code> 물려주기)로 띄운다.
+    표준 입출력은 전부 버리고 부모와 분리한다 — 윈도우는 <code class="inl">DETACHED_PROCESS | CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP</code>,
+    리눅스는 새 프로세스 그룹. 동시에 여러 호출이 띄워도 잠금이 하나만 남긴다.</p>
+    <div class="note warn">
+      <span class="badge">확인 필요</span>
+      <p>v11 이 exe 의 <b>stdout 을 파이프로 받아 읽는다면</b>, 자동 기동된 서버가 그 파이프 핸들을 물려받는 순간 v11 은 "출력이 안 끝났다"고 보고 영영 기다린다.
+      표준 입출력을 버리도록 띄우면 물려받지 않을 것으로 보지만 <b>구현 때 직접 시험해서 확인</b>한다(§13 시험 6).
+      v11 이 시작할 때 <code class="inl">--serve</code> 로 미리 띄워 두면 자동 기동 자체가 거의 일어나지 않는다.</p>
+    </div>
+  </section>
+
+  <!-- 9 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">09</span><h2>서버 동작</h2></div>
+    <ul class="plain">
+      <li><b>임베딩은 한 번에 하나씩 처리한다.</b> ORT 세션은 추론할 때 독점이 필요하고(<code class="inl">embed_one(&amp;mut self)</code>), 추론 자체가 이미 코어를 다 쓴다.
+          연결마다 스레드를 하나 쓰되 모델은 잠금으로 차례를 지킨다 — 그래서 <b>긴 임베딩이 도는 중에도 ping 은 곧바로 답한다</b>(구현 때 바꾼 점. 파이썬 판은 연결 자체를 하나씩 받는다).</li>
+      <li><b>연결마다 읽기 한도 10초.</b> 요청을 보내다 만 클라이언트가 서버 전체를 붙잡지 못하게 한다(파이썬 판에는 없는 방어).</li>
+      <li><b>유휴 종료:</b> <code class="inl">--idle-timeout N</code> 이면 N초 동안 접속이 없을 때 스스로 끝난다. 0 이면 무한.</li>
+      <li><b>종료 정리:</b> 정지 요청·유휴·Ctrl+C 어느 쪽이든 접속 정보·잠금 파일을 지운다. 지금 Ctrl+C 처리기는 임시폴더만 지우고 130 으로 끝내므로
+          <span class="src">main.rs:2123</span>, 서버 모드에서는 레지스트리 정리를 더한다. 강제 종료로 못 지운 기록은 §7 판정이 걸러 낸다.</li>
+      <li><b>로그:</b> <code class="inl">--log</code> 로 받은 파일에 시작·준비 완료(포트)·요청별 소요(글자 수, ms)·종료 사유를 남긴다. <b>문서 본문은 남기지 않는다.</b></li>
+      <li><b>보안:</b> 127.0.0.1 에만 묶는다(외부 주소 금지). 임베딩·정지는 토큰이 맞아야 한다. 토큰은 사용자 프로필 폴더의 파일에만 있다.</li>
+      <li><b>메모리:</b> 모델 하나를 계속 물고 있다(수백 MB 수준 예상 — 실측해서 가이드에 적는다). 모델을 여러 개 쓰면 서버도 그만큼 뜬다.</li>
+    </ul>
+  </section>
+
+  <!-- 10 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">10</span><h2>결과가 같아야 한다</h2></div>
+    <p>이 변경의 조건은 하나다 — <b><code class="inl">--daemon</code> 을 붙여도 레코드가 한 글자도 달라지지 않는다.</b></p>
+    <ul class="plain">
+      <li><b>같은 코드:</b> 서버도 <code class="inl">embed::Embedder::embed_document()</code> 를 그대로 부른다. 임베딩 로직을 복사하지 않는다.</li>
+      <li><b>같은 모델:</b> 서버·클라이언트가 같은 exe, 같은 모델 폴더 규칙을 쓴다. 기록의 <code class="inl">version</code> 과 응답의 <code class="inl">dim</code> 으로 어긋남을 잡는다.</li>
+      <li><b>숫자 왕복:</b> 벡터는 f32 → JSON 글자 → f32 로 오간다. serde_json 은 f32 를 "되읽으면 같은 값이 되는 가장 짧은 표기"로 쓰므로 값이 보존될 것으로 본다.
+          다만 읽는 쪽이 f64 를 거쳐 f32 로 내려오는 경로라 <b>이론상 예외를 배제하지 못했다.</b> 그래서 시험 2 에서 <b>비트 단위 일치</b>를 직접 확인하고,
+          하나라도 어긋나면 벡터만 리틀엔디언 바이트(base64)로 싣는 것으로 바꾼다(규약의 <code class="inl">proto</code> 번호를 올림).</li>
+      <li><b>모델 폴더가 다른 경우:</b> 서버를 <code class="inl">CSO_MODEL</code> 등 환경변수가 다른 상태로 띄우면 클라이언트가 직접 로드할 때와 다른 모델을 쓸 수 있다.
+          기록에 서버가 실제로 연 모델 폴더 경로를 넣고, 클라이언트가 자기 쪽 해석과 다르면 그 서버를 쓰지 않고 경고한다.</li>
+    </ul>
+  </section>
+
+  <!-- 11 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">11</span><h2>v11 에서 쓰는 방법</h2></div>
+    <ol class="plain">
+      <li><b>v11 서비스가 시작할 때</b> <code class="inl">MpowerClassify-rs.exe --serve --model &lt;모델&gt;</code> 을 자식 프로세스로 띄워 둔다(창 없음). 첫 파일부터 웜이다.</li>
+      <li><b>파일마다</b> 기존 명령에 <code class="inl">--daemon</code> 을 붙인다.</li>
+      <li>서버가 죽었으면 다음 호출이 자동으로 다시 띄운다. 그 호출 한 번만 모델 로드 시간만큼 느리다.</li>
+      <li>exe 를 새 버전으로 바꾸면 다음 호출이 옛 서버를 정지시키고 새로 띄운다.</li>
+    </ol>
+    <div class="note bad">
+      <span class="badge">계정 주의</span>
+      <p>접속 정보 파일은 <b>사용자별 폴더</b>(<code class="inl">%LOCALAPPDATA%</code>)에 있다. 서버를 띄운 계정과 exe 를 부르는 계정이 다르면
+      (예: 서버는 관리자가 손으로, 호출은 SYSTEM 서비스가) 서로를 못 찾고, 호출하는 계정으로 서버가 하나 더 뜬다.
+      <b>서버 기동과 파일별 호출을 같은 계정(같은 v11 프로세스)이 하도록</b> 한다. 계정을 맞출 수 없는 구성이라면
+      양쪽에 환경변수 <code class="inl">CSOCLASSIFY_STATE_DIR</code> 로 같은 폴더를 준다(구현에 넣었다 — 시험 격리에도 필요했다).</p>
+    </div>
+    <p>윈도우 서비스(SCM) 등록·systemd 유닛은 이번 범위에 넣지 않는다. <code class="inl">--serve</code> 는 포그라운드 프로세스라
+    필요하면 작업 스케줄러·NSSM·systemd 가 그대로 감쌀 수 있다.</p>
+  </section>
+
+  <!-- 12 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">12</span><h2>코드 변경 범위</h2></div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>파일</th><th>변경</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">Rust/src/daemon/ipc.rs <span class="ok">신규</span></td><td>길이+JSON 송수신, 서버 소켓 만들기, 한도 있는 접속. 파이썬 <code class="inl">ipc.py</code> 와 1:1.</td></tr>
+          <tr><td class="mono">Rust/src/daemon/registry.rs <span class="ok">신규</span></td><td>상태 폴더·기록/잠금 경로·읽기/쓰기/지우기·잠금 획득(§7 판정).</td></tr>
+          <tr><td class="mono">Rust/src/daemon/server.rs <span class="ok">신규</span></td><td>기동 순서, 요청 루프, ping/embed_text/stop, 유휴 종료, 정리.</td></tr>
+          <tr><td class="mono">Rust/src/daemon/client.rs <span class="ok">신규</span></td><td>빠른 길/느린 길, 자동 기동, 준비 폴링, status/stop.</td></tr>
+          <tr><td class="mono">Rust/src/embed.rs</td><td><code class="inl">EmbedBackend</code>(Daemon | Local) 추가. <code class="inl">Embedder</code> 본체는 손대지 않는다. 연 모델 폴더 경로를 밖에서 읽을 수 있게 한다.</td></tr>
+          <tr><td class="mono">Rust/src/main.rs</td><td>인자(<code class="inl">--daemon/--no-daemon/--idle-timeout</code> 값 살리기) · <code class="inl">handle_daemon_args</code> 를 실제 동작으로 · 2997 자리 한 곳 교체 · Ctrl+C 처리기 · 도움말.</td></tr>
+          <tr><td class="mono">Rust/Cargo.toml</td><td><code class="inl">getrandom</code> 을 직접 의존으로(이미 트리에 있음). 그 밖의 새 크레이트 없음 — 소켓·프로세스는 표준 라이브러리.</td></tr>
+          <tr><td class="mono">Rust/tests/cli_daemon.rs <span class="ok">신규</span></td><td>§13 시험.</td></tr>
+          <tr><td class="mono">Rust/README.md · doc/실행가이드(윈도우·리눅스)</td><td>"데몬 없음" 설명을 새 동작으로, v11 연동 절차 추가.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>오류코드 표(<code class="inl">errcodes.rs</code> ↔ 파이썬 <code class="inl">errcodes.py</code>)는 건드리지 않는다. 서버 기동 실패는 기존
+    <code class="inl">model_load_failed</code>(3002)·<code class="inl">internal_error</code>(9001)로 알린다.</p>
+  </section>
+
+  <!-- 13 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">13</span><h2>시험 계획</h2></div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>#</th><th>시험</th><th>통과 기준</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>같은 문서 묶음을 <code class="inl">--daemon</code> / <code class="inl">--no-daemon</code> 로 분류</td><td>레코드가 <code class="inl">ts</code> 외 전부 같다</td></tr>
+          <tr><td>2</td><td><code class="inl">--with-vector</code> 로 벡터 비교(세 모델 모두)</td><td>모든 성분이 비트 단위로 같다</td></tr>
+          <tr><td>3</td><td>서버 없이 <code class="inl">--daemon</code> 호출</td><td>자동 기동되고 결과가 나온다. 다음 호출은 모델 로드 없음</td></tr>
+          <tr><td>4</td><td>서버를 강제 종료(기록 남김) 후 호출</td><td>죽은 기록을 걸러 내고 새로 뜬다. 20초 대기 없음</td></tr>
+          <tr><td>5</td><td><code class="inl">--serve</code> 를 동시에 여러 개 실행</td><td>하나만 남고 나머지는 0 으로 끝난다</td></tr>
+          <tr><td>6</td><td>stdout·stderr 를 파이프로 받는 부모에서 자동 기동 유발</td><td>부모가 exe 종료 직후 출력 끝을 본다(서버가 파이프를 붙잡지 않는다)</td></tr>
+          <tr><td>7</td><td>모델 폴더를 지운 채 <code class="inl">--daemon</code></td><td>기존과 같은 종료코드 2 / <code class="inl">--vector-only</code> 는 멈춤</td></tr>
+          <tr><td>8</td><td>버전이 다른 기록을 심어 두고 호출</td><td>옛 서버 정지 → 새 서버 기동</td></tr>
+          <tr><td>9</td><td>규칙만으로 끝나는 문서를 <code class="inl">--daemon</code> 으로 호출(서버 없음)</td><td>서버가 <b>뜨지 않는다</b></td></tr>
+          <tr><td>10</td><td>동시 호출 8개</td><td>전부 정상 결과, 서로 벡터가 섞이지 않는다</td></tr>
+          <tr><td>11</td><td><code class="inl">--idle-timeout 3</code></td><td>3초 뒤 스스로 끝나고 기록이 지워진다</td></tr>
+          <tr><td>12</td><td>성능: README 의 200건을 <code class="inl">--file</code> 200회로, 서버 on/off</td><td>건당 시간을 재서 README 성능표에 추가(목표: 건당 고정비 대부분 제거)</td></tr>
+          <tr><td>13</td><td>리눅스(CentOS 7 빌드)에서 1·3·4·6</td><td>윈도우와 같다</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 14 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">14</span><h2>정해 주셔야 할 것</h2></div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>#</th><th>질문</th><th>설계의 가정(권고)</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>상주 서버 사용을 기본으로 켤까, <code class="inl">--daemon</code> 을 줄 때만 쓸까?</td>
+              <td><b>줄 때만.</b> 기존 호출부·UI 배치는 그대로 두고 v11 만 한 단어를 더한다. 파이썬 판은 기본 on 이라 두 판의 기본값은 달라진다.</td></tr>
+          <tr><td>2</td><td>v11 은 exe 를 동시에 몇 개까지 부르나?</td>
+              <td>한 번에 하나씩 처리로 충분하다고 가정. 동시 호출이 많고 문서가 길면 대기가 생기므로, 그 경우 서버 내 병렬을 2차로 검토.</td></tr>
+          <tr><td>3</td><td>v11 은 어떤 계정으로 exe 를 부르나(서비스 계정/로그인 사용자)?</td>
+              <td>서버 기동과 호출이 같은 계정. 다르다면 <code class="inl">CSOCLASSIFY_STATE_DIR</code> 를 추가한다.</td></tr>
+          <tr><td>4</td><td>윈도우 서비스로 등록하는 기능까지 필요한가?</td>
+              <td>이번에는 넣지 않는다. v11 이 자식 프로세스로 띄우는 것으로 충분하다고 가정.</td></tr>
+          <tr><td>5</td><td>v11 은 exe 의 stdout 을 파이프로 읽나, 결과 파일(<code class="inl">--out</code>)을 읽나?</td>
+              <td>어느 쪽이든 되게 만든다(시험 6). 파이프라면 <code class="inl">--serve</code> 미리 띄우기를 강하게 권한다.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 15 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">15</span><h2>구현 순서</h2></div>
+    <ol class="plain">
+      <li><b>ipc · registry</b> + 단위 시험(메시지 왕복, 잠금 경쟁, 죽은 기록 판정).</li>
+      <li><b>server</b> — <code class="inl">--serve / --status / --stop</code>. 이 단계만으로 손으로 띄우고 내릴 수 있다.</li>
+      <li><b>client + EmbedBackend</b> — <code class="inl">--daemon</code> 연결(자동 기동 없이, 실패 시 폴백). 시험 1·2 로 결과 동일성 확정.</li>
+      <li><b>자동 기동</b> + 시험 3~6·8.</li>
+      <li>리눅스 확인, 성능 측정, README·실행가이드 갱신.</li>
+    </ol>
+    <p>3단계까지가 v11 연동에 필요한 최소다(v11 이 서버를 미리 띄운다는 전제). 4단계는 "죽어도 다시 뜬다"를 더한다.</p>
+  </section>
+
+  <!-- 16 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">16</span><h2>구현 결과 (2026-10-12)</h2></div>
+    <p>§15 의 1~4단계를 모두 구현했다. §14 의 질문은 답을 받기 전이라 <b>표의 "가정(권고)" 대로</b> 만들었다
+    (기본 꺼짐 · 임베딩은 차례로 · 윈도우 서비스 등록 없음).</p>
+
+    <h3>설계와 달라진 점</h3>
+    <ul class="plain">
+      <li><b>ping 은 임베딩과 따로 곧바로 답한다</b>(§7·§9). 모델을 올리는 중에도, 긴 임베딩 중에도 생존 확인이 막히지 않는다.</li>
+      <li><b><code class="inl">CSOCLASSIFY_STATE_DIR</code> 를 넣었다</b>(§14-3 은 "필요하면"이었다). 시험이 개발자 PC 의 실제 서버를 건드리지 않으려면 어차피 필요했다.</li>
+      <li><b>응답의 <code class="inl">chunks</code> 칸은 뺐다.</b> 이 판의 <code class="inl">embed_document()</code> 는 청크 수를 돌려주지 않고, 쓰는 곳도 없다.</li>
+      <li><b>큰 문서:</b> 본문이 8MB(메시지 상한의 절반)를 넘으면 그 실행은 직접 로드로 넘어간다. 기본 상한(200만 자 ≈ 6MB)에서는 걸리지 않는다.</li>
+      <li><b>윈도우 자동 기동:</b> 띄우기 직전에 이 프로세스의 표준 입출력 핸들의 "상속 가능" 표시를 끈다. 자식에게 NUL 을 주는 것만으로는
+          부른 쪽이 준 파이프 핸들이 서버로 따라가는 것을 막지 못하기 때문이다(§8 "확인 필요"의 답).</li>
+      <li><b>자동 기동 횟수 상한 2회.</b> 뜨자마자 죽는 서버(모델 없음 등)를 호출 한 번이 끝없이 띄우지 않는다.</li>
+    </ul>
+
+    <h3>시험 결과</h3>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>§13 시험</th><th>결과</th><th>어디서</th></tr></thead>
+        <tbody>
+          <tr><td>1·2·3 결과·벡터 동일, 자동 기동</td><td class="ok">통과 — 레코드 동일, 벡터 비트 단위 동일</td><td class="mono">Rust/tests/cli_daemon.rs</td></tr>
+          <tr><td>4 죽은 기록(살아 있는 pid + 닫힌 포트)</td><td class="ok">통과 — 대기 없이 새로 기동</td><td class="mono">cli_daemon.rs · registry.rs</td></tr>
+          <tr><td>5 --serve 동시 4개</td><td class="ok">통과 — 하나만 남고 나머지는 0</td><td class="mono">cli_daemon.rs</td></tr>
+          <tr><td>6 출력 파이프를 받는 부모에서 자동 기동</td><td class="ok">통과 — 부모가 곧바로 출력 끝을 본다</td><td class="mono">cli_daemon.rs(모든 호출이 파이프 캡처)</td></tr>
+          <tr><td>7 모델 없는 배포</td><td class="ok">통과 — --daemon 이어도 종료코드 2, 서버·잠금 안 남음</td><td class="mono">cli_daemon.rs</td></tr>
+          <tr><td>8 버전이 다른 기록</td><td class="ok">통과 — 옛 서버 정지, 새 서버 기동</td><td class="mono">cli_daemon.rs</td></tr>
+          <tr><td>9 임베딩 불필요</td><td class="ok">통과 — 서버를 띄우지 않음</td><td class="mono">cli_daemon.rs · tests/test_rust_daemon_args.py</td></tr>
+          <tr><td>10 동시 호출 8개</td><td class="ok">통과 — 각 벡터가 직접 로드와 비트 단위 동일</td><td class="mono">cli_daemon.rs</td></tr>
+          <tr><td>11 --idle-timeout</td><td class="ok">통과 — 스스로 끝나고 기록 삭제</td><td class="mono">cli_daemon.rs</td></tr>
+          <tr><td>12 성능</td><td class="wn">일부 — 아래</td><td>손으로 1회</td></tr>
+          <tr><td>13 리눅스</td><td class="ok">통과(손으로) — 빌드서버(CentOS 7)에서 배포 tgz 를 풀어 자동 기동·레코드/벡터 비트 동일·기록 파일 0600·정지·유휴 종료 확인</td><td>빌드서버 임시 폴더</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note warn">
+      <span class="badge">아직 안 본 것</span>
+      <p><b>리눅스에서는 통합 시험(cli_daemon.rs)을 돌리지 않았다</b> — 배포본을 손으로 확인한 것이 전부다(동시 호출·죽은 기록·버전 교체는 윈도우에서만 봤다).
+      <b>e5-small · ko-sroberta</b> 는 이 PC 에 모델이 없어 벡터 동일성을 e5-small-ko 로만 확인했다.
+      <b>v11 실제 연동</b>(서비스 계정, 동시 호출 수)은 §14 의 답을 받은 뒤 확인해야 한다.</p>
+    </div>
+
+    <h3>성능(1회 측정)</h3>
+    <p>txt 20건을 <code class="inl">--file</code> 로 하나씩, <code class="inl">--with-vector</code>, release 빌드, 서버는 미리 기동.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>호출</th><th>20건 합계</th><th>건당</th></tr></thead>
+        <tbody>
+          <tr><td><code class="inl">--no-daemon</code>(지금까지의 방식)</td><td class="mono">25.7s</td><td class="mono x">1.29s</td></tr>
+          <tr><td><code class="inl">--daemon</code></td><td class="mono">3.8s</td><td class="mono ok">0.19s</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>서버 프로세스 메모리는 약 480MB(e5-small-ko). README 의 200건(pdf·pptx 등 혼합) 조건으로는 아직 재지 않았다 —
+    추출이 무거운 포맷에서는 건당 시간에서 임베딩이 차지하는 몫이 달라진다.</p>
+  </section>
+
+  <footer>
+    <span>MpowerClassify · plan/Rust-임베딩모델-상주서비스-설계.html</span>
+    <span>관련: plan/Rust-임베딩모델-지연로딩-설계.html · src/csoclassify/daemon/</span>
+  </footer>
+
+</div>
+</body>
+</html>
