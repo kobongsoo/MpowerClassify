@@ -166,6 +166,21 @@ fn model_dir() -> Option<PathBuf> {
     model_dir_candidates(current()).into_iter().find(|d| d.join("model.onnx").is_file())
 }
 
+//------------------------------------------------------------------
+// 이번 모델의 폴더(밖에서 묻는 용도)
+//=> 상주 서버는 자기가 실제로 연 모델 폴더를 기록에 남기고, 부르는 쪽은 자기가
+//   직접 열 폴더와 같은지 본다. 환경변수(CSO_MODEL 등)가 달라 서로 다른 모델을
+//   보고 있으면, 같은 문서인데 서버를 쓸 때와 안 쓸 때 벡터가 달라지기 때문이다.
+//
+// -in: 없음(current() 스펙을 쓴다)
+//
+// -out: Option<PathBuf> = 모델 폴더(못 찾으면 None)
+// -out: error = 없음
+//------------------------------------------------------------------
+pub fn resolved_model_dir() -> Option<PathBuf> {
+    model_dir()
+}
+
 /// onnxruntime 동적 라이브러리 경로: ORT_DYLIB_PATH 유지 or exe 옆 onnxruntime.dll 지정.
 fn ensure_dylib() {
     if std::env::var("ORT_DYLIB_PATH").map(|v| !v.is_empty()).unwrap_or(false) {
@@ -187,7 +202,7 @@ fn ensure_dylib() {
 /// 배포 점검 — 세션을 만들지 않고 '파일이 자리에 있는가'만 본다(stat 몇 번).
 ///
 /// 지연 로딩(§설계 04)이 들어가면서, 규칙만으로 끝나는 실행은 모델을 아예 읽지 않는다.
-/// 그런데 이 판에는 `--status` 가 없어(인자만 받고 무시) **`load()` 시도 자체가
+/// 그런데 이 프로세스의 모델 파일을 미리 봐 주는 명령이 따로 없어 **`load()` 시도 자체가
 /// 배포 누락을 알아챌 유일한 신호**였다. 그 신호가 사라진 자리를 메우는 값싼 확인이다.
 /// 여기서 세션을 만들면 아끼려던 비용을 도로 내는 셈이므로, 파일 존재까지만 본다.
 ///
@@ -327,6 +342,90 @@ impl Embedder {
         let denom = if denom > 1e-9 { denom } else { 1.0 };
         for d in 0..dim { vec[d] /= denom; }
         Some(vec)
+    }
+}
+
+//------------------------------------------------------------------
+// 임베딩 수단 — 상주 서버 우선, 안 되면 직접 로드
+//=> 분류 루프는 "텍스트를 주면 벡터가 온다"만 알면 된다. 벡터가 상주 서버에서 왔는지
+//   이 프로세스가 모델을 직접 읽어 만들었는지는 여기서 감춘다.
+//   서버를 못 쓰게 되면 그 실행의 남은 문서는 전부 직접 로드로 처리한다(문서마다
+//   다시 20초씩 서버를 기다리지 않게).
+//
+// -필드: client   = 상주 서버 클라이언트(--daemon 이 아니거나 서버를 포기했으면 None)
+// -필드: local    = 직접 올린 모델(처음 필요할 때 한 번 올린다)
+// -필드: local_ok = 직접 로드를 시도해도 되는가(배포 점검 통과 여부). 점검이 실패했는데
+//                   load() 를 부르면 ort 가 패닉할 수 있어, false 면 아예 부르지 않는다
+// -필드: failed   = 서버도 직접 로드도 못 써서 벡터를 못 만든 적이 있는가
+//------------------------------------------------------------------
+pub struct EmbedBackend {
+    client: Option<crate::daemon::client::DaemonClient>,
+    local: Option<Embedder>,
+    local_ok: bool,
+    failed: bool,
+}
+
+impl EmbedBackend {
+    //------------------------------------------------------------------
+    // 임베딩 수단 열기
+    //=> 상주 서버를 쓰는 실행이면 클라이언트만 들고 시작한다(접속은 첫 문서 때).
+    //   아니면 지금까지처럼 모델을 바로 올린다.
+    //
+    // -in: client   = 상주 서버 클라이언트(--daemon 일 때만 Some)
+    // -in: local_ok = 배포 점검(check_deployment) 통과 여부
+    //
+    // -out: Option<EmbedBackend> = 쓸 수 있는 수단. 서버도 안 쓰고 직접 로드도 실패하면 None
+    // -out: error = 없음
+    //------------------------------------------------------------------
+    pub fn open(client: Option<crate::daemon::client::DaemonClient>, local_ok: bool) -> Option<EmbedBackend> {
+        if client.is_some() {
+            return Some(EmbedBackend { client, local: None, local_ok, failed: false });
+        }
+        if !local_ok { return None; }
+        let local = Embedder::load()?;
+        Some(EmbedBackend { client: None, local: Some(local), local_ok, failed: false })
+    }
+
+    //------------------------------------------------------------------
+    // 문서 임베딩
+    //=> 1) 상주 서버가 있으면 거기에 맡긴다
+    //   2) 서버를 못 쓰면 한 줄 알리고, 이후로는 직접 로드로 간다
+    //   3) 직접 로드도 안 되면 failed 를 세우고 None
+    //
+    // -in: text = 문서 본문(정제는 embed_document 안에서 한다 — 서버든 직접이든 같다)
+    //
+    // -out: Option<Vec<f32>> = 정규화된 문서 벡터. 빈 텍스트·임베딩 실패·수단 없음이면 None
+    // -out: error = 없음(수단을 못 쓴 경우는 failed() 로 따로 묻는다)
+    //------------------------------------------------------------------
+    pub fn embed_document(&mut self, text: &str) -> Option<Vec<f32>> {
+        use crate::daemon::client::EmbedReply;
+        if let Some(c) = self.client.as_mut() {
+            match c.embed_text(text) {
+                EmbedReply::Vector(v) => return Some(v),
+                EmbedReply::NoVector => return None,
+                EmbedReply::Unavailable(why) => {
+                    // 결과는 같고 속도만 다르다 — 오류가 아니라 알림으로 남긴다.
+                    crate::note!("[MpowerClassify-rs] 상주 서버를 쓸 수 없어 모델을 직접 읽습니다 — {}", why);
+                    crate::linfo!("상주 서버 불가 → 직접 로드 :: {}", why);
+                    self.client = None;
+                }
+            }
+        }
+        if self.failed { return None; }
+        if self.local.is_none() {
+            // 배포 점검이 실패했으면 load() 를 부르지 않는다(ort 패닉 방지).
+            self.local = if self.local_ok { Embedder::load() } else { None };
+            if self.local.is_none() {
+                self.failed = true;
+                return None;
+            }
+        }
+        self.local.as_mut().and_then(|e| e.embed_document(text))
+    }
+
+    /// 서버도 직접 로드도 못 써서 벡터를 못 만든 적이 있는가.
+    pub fn failed(&self) -> bool {
+        self.failed
     }
 }
 
