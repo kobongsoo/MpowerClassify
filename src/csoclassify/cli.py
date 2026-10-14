@@ -195,6 +195,33 @@ def build_parser():
                    metavar="경로",
                    help="sfile_id 를 못 얻어 폴백으로 채운 문서 목록을 이 파일에 쓴다"
                         "(jsonl). 그 문서들은 매핑 테이블 적재 대상이 아니다")
+    # 엠파워 v11 암호화 문서 복호화 — 설계: plan/엠파워v11-암호화문서-복호화연동-설계-20261012.html
+    #   [다량] --filelist 의 각 줄에 mrk·enc_mode·zip_mode 를 적으면 그 줄만 푼다(옵션 불필요).
+    #   [단일] --file 에 --decrypt 를 붙일 때만 푼다(안 붙이면 지금처럼 그대로 읽는다).
+    p.add_argument("--decrypt", dest="decrypt", action="store_true",
+                   help="[엠파워 v11] --file 한 건을 removeenc.sh 로 풀어서 분류한다. "
+                        "--mrk · --enc-mode · --zip-mode 가 함께 있어야 한다. "
+                        "풀린 파일은 분류가 끝나면 바로 지운다")
+    p.add_argument("--no-decrypt", dest="no_decrypt", action="store_true",
+                   help="[엠파워 v11] 목록(--filelist)에 열쇠가 있어도 풀지 않고 그대로 읽는다")
+    p.add_argument("--mrk", dest="mrk", default=None, metavar="값",
+                   help="[엠파워 v11] 평문 MRK(환경변수 CSOCLASSIFY_MRK 로도 줄 수 있다). "
+                        "'v2:' 로 시작하는 감싼 값은 받지 않는다. 로그·결과에는 남기지 않는다")
+    p.add_argument("--enc-mode", dest="enc_mode", default=None, metavar="값",
+                   help="[엠파워 v11] ENC_MODE(0 도 올바른 값)")
+    p.add_argument("--zip-mode", dest="zip_mode", default=None, metavar="값",
+                   help="[엠파워 v11] ZIP_MODE(0 도 올바른 값)")
+    p.add_argument("--name", dest="dec_name", default=None, metavar="이름",
+                   help="[엠파워 v11] 원래 파일 이름(확장자 판별 · 파일명 신호). "
+                        "저장 이름에는 확장자도 뜻도 없어서 주기를 권한다")
+    p.add_argument("--decrypt-cmd", dest="decrypt_cmd", default=None, metavar="경로",
+                   help="[엠파워 v11] 복호화 도구 경로(환경변수 CSOCLASSIFY_DECRYPT_CMD, "
+                        "기본 /MOCOMSYS/MpowerScript/removeenc/removeenc.sh)")
+    p.add_argument("--decrypt-tmp", dest="decrypt_tmp", default=None, metavar="폴더",
+                   help="[엠파워 v11] 풀린 파일을 잠깐 둘 곳(환경변수 CSOCLASSIFY_DECRYPT_TMP, "
+                        "기본 시스템 임시 폴더). /dev/shm 을 주면 디스크에 닿지 않는다")
+    p.add_argument("--decrypt-timeout", dest="decrypt_timeout", type=int, default=None,
+                   metavar="초", help="[엠파워 v11] 복호화 한 건의 시간 제한(기본 60)")
     p.add_argument("--glob", dest="glob", default="*",
                    help="배치 필터 패턴(기본 *). 여러 개는 콤마로 나열: "
                         "예) \"*.hwp,*.docx,*.pdf\" (중괄호 \"*.{hwp,docx,pdf}\" 도 가능)")
@@ -630,6 +657,319 @@ def read_files_from(src):
 # -out: files = 처리할 파일 경로 리스트(정렬·중복제거, 디렉터리는 제외)
 # -out: error = --file/--dir 둘 다 없거나 대상이 없으면 빈 리스트(상위에서 처리)
 #------------------------------------------------------------------
+#------------------------------------------------------------------
+# 문서 하나를 어떻게 꺼낼지 — 복호화 계획
+#=> 엠파워 v11 암호화 문서용. 설계: plan/엠파워v11-암호화문서-복호화연동-설계-20261012.html
+#
+# -필드: info    = 열쇠와 모드(decrypt.DecInfo). problem 이 있으면 None
+# -필드: problem = 풀 수 없는 사유(decrypt.DecError). 있으면 그 문서는 풀지도 읽지도 않고
+#                  오류 레코드로 남긴다(열쇠 칸이 일부만 있거나 감싼 열쇠가 온 경우)
+# -필드: name    = 원래 파일 이름(없을 수 있다)
+# -필드: size    = 원래 크기(없을 수 있다)
+#------------------------------------------------------------------
+class _DecPlan:
+    __slots__ = ("info", "problem", "name", "size")
+
+    def __init__(self, info, problem, name, size):
+        self.info = info
+        self.problem = problem
+        self.name = name
+        self.size = size
+
+
+#------------------------------------------------------------------
+# 풀지 못한 문서 한 건 — 분류 루프에 '실패로 남겨라'고 알리는 표식
+#
+# -필드: label = 문서 경로(목록의 path 와 같은 표기)
+# -필드: plan  = 그 문서의 복호화 계획(_DecPlan)
+# -필드: err   = 실패 사유(decrypt.DecError)
+#------------------------------------------------------------------
+class _DecFailed:
+    __slots__ = ("label", "plan", "err")
+
+    def __init__(self, label, plan, err):
+        self.label = label
+        self.plan = plan
+        self.err = err
+
+
+#------------------------------------------------------------------
+# 이번 실행의 복호화 상태 — 계획·작업장·집계를 한데 묶는다
+#
+# -필드: plans  = {문서 경로: _DecPlan} — 아직 풀지 않은 문서들(풀 차례에 꺼낸다)
+# -필드: sess   = decrypt.Session(임시 폴더와 도구)
+# -필드: meta   = {문서 경로: (원래 이름, 도구를 실제로 불렀는가)} — 풀린 문서의 부속 정보
+# -필드: n_dec  = 도구로 푼 문서 수 / n_fail = 풀지 못한 문서 수(요약 · 종료코드)
+# -필드: extra  = 압축을 펼쳐 늘어난 작업 수(진행 표시의 분모 보정)
+# -필드: arch_unexpanded = 못 펼친 압축 표(run_classify 의 것을 함께 쓴다)
+#------------------------------------------------------------------
+class _DecContext:
+    def __init__(self, plans, sess):
+        self.plans = plans
+        self.sess = sess
+        self.meta = {}
+        self.n_dec = 0
+        self.n_fail = 0
+        self.extra = 0
+        self.arch_unexpanded = {}
+
+
+#------------------------------------------------------------------
+# 명령줄로 받은 열쇠 세 칸 → 복호화 정보
+#=> --mrk 가 없으면 환경변수 CSOCLASSIFY_MRK 를 본다(명령줄에 열쇠를 남기지 않는 길).
+#   환경변수는 모드(--enc-mode·--zip-mode)를 명령줄로 줬을 때만 본다 — 안 그러면
+#   남아 있던 환경변수 하나가 '목록에서 열쇠를 찾는 실행'을 '일부만 줌' 오류로 만든다.
+#
+# -in: args = 파싱된 인자
+#
+# -out: DecInfo 또는 None(명령줄에 열쇠 정보가 없다)
+# -out: error = 일부만 줬거나 감싼 열쇠면 decrypt.DecError
+#------------------------------------------------------------------
+def _cli_dec_info(args):
+    from . import decrypt
+    modes_given = args.enc_mode is not None or args.zip_mode is not None
+    mrk = args.mrk
+    if mrk is None and args.decrypt and modes_given:
+        mrk = os.environ.get("CSOCLASSIFY_MRK") or None
+    return decrypt.parse_dec_info(mrk, args.enc_mode, args.zip_mode)
+
+
+#------------------------------------------------------------------
+# --decrypt 관련 인자 조합 검사 — 문서를 읽기 전에 끝낸다
+#=> "풀릴 줄 알았는데 안 풀린" 상태를 만들지 않는다(설계 §4 표). Rust 판 check_decrypt_args 와 같다.
+#    1) 열쇠·이름만 주고 --decrypt 를 안 주면 오류
+#    2) --decrypt 와 --no-decrypt 는 함께 못 쓴다
+#    3) --decrypt 는 --file 한 건에만 쓴다(폴더에는 파일마다 다른 열쇠를 줄 방법이 없다)
+#    4) --decrypt 면 열쇠 셋이 있어야 한다(없으면 --filelist 에서 찾는다)
+#
+# -in: args = 파싱된 인자
+#
+# -out: None = 문제 없음 / int = 종료코드(이미 오류를 알렸다 — 그대로 return 한다)
+# -out: error = 예외 없음
+#------------------------------------------------------------------
+def check_decrypt_args(args):
+    from . import decrypt
+
+    def bad(msg):
+        return fail_err("decrypt_args_invalid", f"[MpowerClassify] {msg}")
+
+    has_keys = (args.mrk is not None or args.enc_mode is not None
+                or args.zip_mode is not None)
+    if not args.decrypt:
+        if has_keys or args.dec_name is not None:
+            return bad("--mrk · --enc-mode · --zip-mode · --name 은 --decrypt 와 함께 써야 합니다.\n"
+                       "  풀어서 분류하려면 --decrypt 를 붙이고, 이미 풀어 둔 파일이면 이 인자들을 빼세요.")
+        return None
+    if args.no_decrypt:
+        return bad("--decrypt 와 --no-decrypt 는 함께 쓸 수 없습니다.")
+    if not args.file:
+        return bad("--decrypt 는 --file 한 건에만 씁니다. 여러 파일은 --filelist 의 각 줄에 "
+                   "mrk · enc_mode · zip_mode 를 적어 주세요(파일마다 열쇠가 다릅니다).")
+    try:
+        info = _cli_dec_info(args)
+    except decrypt.DecError as e:
+        return bad(e.message)
+    # 명령줄에 열쇠가 없으면 목록에서 찾는다 — 목록도 없으면 풀 방법이 없다.
+    # (--text-only 는 Rust 판이 목록을 읽지 않으므로, 두 판을 맞춰 명령줄에 있어야 한다.)
+    if info is None and not (getattr(args, "filelist", None) and not args.text_only):
+        return bad("--decrypt 에는 --mrk · --enc-mode · --zip-mode 가 필요합니다"
+                   "(--mrk 는 환경변수 CSOCLASSIFY_MRK 로도 줄 수 있습니다).")
+    return None
+
+
+#------------------------------------------------------------------
+# 이 문서의 복호화 계획 찾기
+#=> 명령줄(--decrypt) → 목록(--filelist)의 그 줄 순으로 본다.
+#    1) --no-decrypt 면 언제나 None(그대로 읽는다)
+#    2) --decrypt 면 명령줄 값이 우선, 없으면 목록의 그 줄
+#    3) 그 밖에는 목록의 그 줄에 열쇠 칸이 있을 때만
+#
+# -in: args = 파싱된 인자(_filelist 에 읽어 둔 목록이 실려 있다)
+# -in: path = 문서 경로(목록의 path 와 같은 표기)
+#
+# -out: _DecPlan = 풀어야(또는 오류로 남겨야) 하는 문서 / None = 그대로 읽는 문서
+# -out: error = 예외 없음
+#------------------------------------------------------------------
+def _dec_plan_for(args, path):
+    from . import decrypt
+    if getattr(args, "no_decrypt", False):
+        return None
+    fl = getattr(args, "_filelist", None)
+    entry = fl.lookup(path)[0] if fl is not None else None
+    if getattr(args, "decrypt", False):
+        name = args.dec_name or (entry.name if entry is not None else None)
+        size = entry.size if entry is not None else None
+        try:
+            info = _cli_dec_info(args)
+        except decrypt.DecError as e:
+            return _DecPlan(None, e, name, size)
+        if info is not None:
+            return _DecPlan(info, None, name, size)
+        if entry is not None and entry.dec is not None:
+            return _DecPlan(entry.dec, None, name, size)
+        if entry is not None and entry.dec_problem is not None:
+            return _DecPlan(None, entry.dec_problem, name, size)
+        return _DecPlan(None, decrypt.DecError(
+            "info_incomplete",
+            "--decrypt 를 줬지만 명령줄에도 목록에도 이 파일의 열쇠가 없습니다"), name, size)
+    if entry is None:
+        return None
+    if entry.dec_problem is not None:
+        return _DecPlan(None, entry.dec_problem, entry.name, entry.size)
+    if entry.dec is not None:
+        return _DecPlan(entry.dec, None, entry.name, entry.size)
+    return None
+
+
+#------------------------------------------------------------------
+# 작업 목록을 돌면서 암호화 문서를 '차례가 왔을 때' 푼다 (제너레이터)
+#=> "한 번에 한 건만 풀려 있다"(설계 §3)를 지키는 자리다. 미리 다 풀어 두면 평문
+#   수천 건이 한꺼번에 디스크에 놓이고, 중간에 죽으면 그대로 남는다.
+#    1) 계획이 없는 작업은 그대로 내보낸다(지금까지와 같다)
+#    2) 계획이 있으면 풀고, 압축파일이면 그 문서 전용 폴더 안에 내부 문서로 펼친다
+#       (순서는 복호화 → 펼치기 → 분류. zip_mode 는 도구가 이미 풀었고, 여기서 펼치는
+#        것은 사용자가 올린 zip·7z 같은 '문서로서의 압축'이다)
+#    3) 라벨에서 임시 경로를 원래 경로로 되돌린다 — 임시 경로는 결과·로그에 나가면 안 된다
+#    4) 그 문서에서 나온 작업을 다 내보낸 뒤(= 부른 쪽이 다음 것을 달라고 할 때) 평문을 지운다
+#    5) 못 풀면 _DecFailed 를 내보낸다. 환경 문제(fatal)는 예외로 올려 실행을 멈춘다
+#
+# -in: jobs = 작업 목록(경로 문자열 또는 (src, label, origin) 튜플)
+# -in: ctx  = _DecContext(없으면 jobs 를 그대로 흘린다)
+#
+# -out: 작업 하나씩(튜플·문자열) 또는 _DecFailed
+# -out: error = 환경 문제면 decrypt.DecError(fatal=True) 전파
+#------------------------------------------------------------------
+def _iter_dec_jobs(jobs, ctx):
+    if ctx is None:
+        yield from jobs
+        return
+    from . import decrypt
+    from .extract.archive import expand_paths
+    for item in jobs:
+        src, label, origin = _as_job(item)
+        plan = ctx.plans.pop(label, None) if origin is None else None
+        if plan is None:
+            yield item
+            continue
+        try:
+            if plan.problem is not None:
+                # 열쇠 칸이 일부만 있거나 감싼 열쇠 — 도구를 부르지 않고 오류로 남긴다.
+                raise decrypt.DecError(plan.problem.reason, plan.problem.message)
+            # 풀기 전에 저장 파일 크기를 본다 — 터무니없이 큰 파일은 풀지도 않는다(설계 §9).
+            # 풀린 뒤의 실제 크기는 추출기의 크기 상한이 지금까지처럼 다시 본다.
+            try:
+                src_len = os.path.getsize(src)
+            except OSError:
+                src_len = 0
+            max_b = config.MAX_FILE_BYTES
+            if max_b and max_b > 0 and src_len > max_b:
+                raise decrypt.DecError(
+                    "size_limit",
+                    f"저장 파일이 크기 상한을 넘어 풀지 않았습니다({src_len}바이트 > {max_b}바이트). "
+                    f"--max-file-mb 로 조정할 수 있습니다")
+            d = ctx.sess.decrypt(src, plan.info, plan.name, plan.size)
+        except decrypt.DecError as e:
+            if e.fatal:
+                raise
+            yield _DecFailed(label, plan, e)
+            continue
+        if d.tool:
+            ctx.n_dec += 1
+        ctx.sess.remember(d, label)
+        xdir = os.path.join(d.dir, "x")
+        os.makedirs(xdir, exist_ok=True)
+        st = {}
+        inner = expand_paths([d.file], xdir, stats=st)
+
+        # 임시 경로로 시작하는 라벨을 원래 경로로 되돌린다.
+        def fix(s, _tmp=d.file, _label=label):
+            if s is None:
+                return None
+            if s == _tmp:
+                return _label
+            if s.startswith(_tmp) and s[len(_tmp):len(_tmp) + 1] in ("/", "\\"):
+                return _label + s[len(_tmp):]
+            return s
+
+        inner = [(j[0], fix(j[1]), fix(j[2])) for j in (_as_job(x) for x in inner)]
+        for row in st.get("unexpanded", []):
+            row["path"] = fix(row["path"])
+            ctx.arch_unexpanded[row["path"]] = (row["reason"], row.get("kind", "limit"))
+        ctx.meta[label] = (plan.name, d.tool)
+        ctx.extra += len(inner) - 1
+        try:
+            for j in inner:
+                yield j
+        finally:
+            # 이 문서에서 나온 작업이 모두 끝났다(또는 중단됐다) — 평문을 지운다.
+            ctx.sess.release(d.dir)
+
+
+#------------------------------------------------------------------
+# 풀린 문서의 레코드에 부속 정보 달기
+#=> 신호는 원래 이름으로 봤지만 결과의 file 은 부른 쪽이 준 경로 그대로여야 한다
+#   (목록과 결과를 잇는 키다). 원래 이름과 '풀어서 읽었다'는 사실도 남긴다.
+#   열쇠는 남기지 않는다.
+#
+# -in: rec  = 결과 레코드(제자리에서 고친다)
+# -in: path = 문서 경로(결과의 file 칸에 들어갈 값)
+# -in: dm   = (원래 이름, 도구를 불렀는가) 또는 None(엠파워 문서가 아님)
+#
+# -out: 없음
+# -out: error = 없음
+#------------------------------------------------------------------
+def _apply_dec_meta(rec, path, dm):
+    if not dm:
+        return
+    name, tool = dm
+    rec["file"] = path
+    if name:
+        rec["name"] = name
+    if tool:
+        rec.setdefault("meta", {})["decrypted"] = True
+
+
+#------------------------------------------------------------------
+# 복호화 실패 레코드
+#=> 풀지 못했거나 풀린 결과가 수상한 문서를 결과에 한 줄로 남긴다.
+#   암호문을 "그래도 분류해 보자"로 넘기지 않는다 — 등급이 나와 버리면 그것이 정상
+#   결과처럼 DB 에 들어간다. 실패는 언제나 grade=None + error 다(설계 §7).
+#    1) 등급 없는 레코드를 직접 만든다(파일명 신호로도 등급을 매기지 않는다)
+#    2) error 는 다른 실패 레코드와 같은 틀 — kind 로 가르고(기계), reason 은 사람이 읽는 문장.
+#       detail 은 세부 사유 이름, rc 는 removeenc 종료코드(안 불렀으면 None)
+#    3) 업무분류 축이 켜져 있으면 '축은 돌았다'를 남긴다(화면이 "분류 안 됨"으로 세게)
+#
+# -in: path     = 문서 경로
+# -in: name     = 원래 파일 이름(없으면 None)
+# -in: err      = decrypt.DecError
+# -in: kind     = "decrypt_failed" 또는 "size_limit"
+# -in: ruleset · doc_rules · taxonomy = 업무분류 축 조립용(분류 때와 같은 값)
+#
+# -out: dict = 결과 레코드
+# -out: error = 없음
+#------------------------------------------------------------------
+def _decrypt_failed_record(path, name, err, kind, ruleset, doc_rules=None, taxonomy=None):
+    from .classify import now_iso
+    rec = {
+        "file": path,
+        "grade": None,
+        "why": {"security": {"confidence": 0.0, "method": "decrypt_failed",
+                             "decided_by": [], "seed_eligible": False, "signals": {}}},
+        "error": {"stage": "decrypt", "kind": kind, "detail": err.reason,
+                  "rc": err.rc, "reason": err.message},
+        "meta": {"ts": now_iso()},
+    }
+    if name:
+        rec["name"] = name
+    if doc_rules is not None and taxonomy is not None:
+        # 빈 본문으로 축만 돌려 그 결과를 옮겨 온다(보안등급 쪽은 버린다).
+        tmp = _extract_failed_record(name or path, err.message, ruleset, doc_rules, taxonomy)
+        dt = (tmp.get("why") or {}).get("doctype")
+        if dt is not None:
+            rec["why"]["doctype"] = dt
+    return rec
+
+
 def collect_files(args):
     # 목록 입력이 있으면 그것이 대상이다(--file/--dir 과의 동시 사용은 호출부에서 막는다).
     if getattr(args, "files_from", None):
@@ -1344,7 +1684,9 @@ def _save_text_file(save_dir, rec, text, path, truncated, ts):
 #   ② 어떻게 됐나  grade · doctype(dc_id 목록) · error · excluded(처리제외)
 #   ③ 왜          why(축별 상세) · pii · vector
 #   ④ 장부        meta · elapsed_ms
-_REC_ORDER = ("file", "hash", "doc_id", "doc_id_source", "rematched_by",
+# name 은 엠파워 v11 의 원래 파일 이름 — 목록·명령줄이 줬을 때만 있다(Rust 판 REC_ORDER 와 같다).
+# 신원 세 칸(file · hash · doc_id)이 맨 앞이라는 약속은 그대로 두고 그 뒤에 넣는다.
+_REC_ORDER = ("file", "hash", "doc_id", "doc_id_source", "rematched_by", "name",
               "grade", "doctype", "error", "excluded", "why", "pii", "vector",
               "text_saved", "text_save_error", "meta", "elapsed_ms")
 
@@ -1514,6 +1856,10 @@ def _simple_record(rec, why=False):
         # sfile_id 로 채워진 것만 MpowerV11 문서와 이어지는 값이다. 폴백(content·path)은
         # 우리가 만들어 낸 값이라 적재하면 안 되므로 None 으로 내보낸다.
         out["doc_id"] = rec.get("doc_id") if rec.get("doc_id_source") == "sfile_id" else None
+    # 엠파워 v11 의 원래 파일 이름 — 줬을 때만 싣는다(없던 실행의 줄 모양은 그대로다).
+    # 신원 세 칸(file · hash · doc_id) 뒤에 둔다 — 그 차례는 받는 쪽과의 약속이다.
+    if rec.get("name"):
+        out["name"] = rec["name"]
     out["grade"] = record.grade_of(rec)
     # 업무분류 축이 돌았을 때만 doctype 키를 붙인다. 축을 안 쓰는 배포에서 빈 배열이
     # 나가면 "분류를 못 했다"와 "축을 안 썼다"가 구분되지 않는다(설계서 4-6과 같은 규약).
@@ -1549,7 +1895,7 @@ def _simple_record(rec, why=False):
 # -out: code = 종료코드(모두 성공이면 0, 하나라도 추출 실패면 EXIT_EXTRACT_FAIL)
 # -out: error = 없음(개별 실패는 stderr 로 알림)
 #------------------------------------------------------------------
-def run_text_only(files, opts, out_fp):
+def run_text_only(files, opts, out_fp, dec_ctx=None):
     from .extract import build_extractor
     from .extract.base import ExtractError
     from .clean import clean_text
@@ -1559,7 +1905,18 @@ def run_text_only(files, opts, out_fp):
     code = config.EXIT_OK
     # 못 읽은 문서 수 — 상태 줄에 "N건 중 M건"을 싣는다(종료코드 1 의 까닭).
     failed = 0
-    for item in files:
+    n_jobs = 0
+    # 엠파워 v11 암호화 문서는 차례가 왔을 때 풀어서 읽는다(dec_ctx 가 없으면 그대로 돈다).
+    for item in _iter_dec_jobs(files, dec_ctx):
+        n_jobs += 1
+        if isinstance(item, _DecFailed):
+            print(f"[MpowerClassify] 복호화 실패: {item.label} :: {item.err.message}",
+                  file=sys.stderr)
+            errcodes.set_status("decrypt_failed",
+                                f"[MpowerClassify] 복호화하지 못했습니다 — {item.err.message}")
+            code = errcodes.exit_of("decrypt_failed")
+            failed += 1
+            continue
         # src=실제 읽을 경로(압축 내부면 임시파일), label=표시용(압축경로/내부경로).
         src, label, _origin = _as_job(item)
         try:
@@ -1572,7 +1929,7 @@ def run_text_only(files, opts, out_fp):
             print(f"[MpowerClassify] 추출 실패: {label} :: {e}", file=sys.stderr)
             code = config.EXIT_EXTRACT_FAIL
             failed += 1
-    errcodes.set_counts(len(files), failed)
+    errcodes.set_counts(n_jobs, failed)
     return code
 
 
@@ -2284,11 +2641,68 @@ def run_classify(files, args, out_fp):
     arch_doctypes = {}
     rec_origins = []   # auto_prop 경로에서 records 와 나란히 origin 을 보관
 
+    # 엠파워 v11 암호화 문서 — 차례가 왔을 때 풀어서 읽는다(없으면 dec_ctx 는 None).
+    dec_ctx = getattr(args, "_dec_ctx", None)
+    if dec_ctx is not None:
+        # 풀린 압축에서 못 펼친 것도 같은 표에 들어오게 한다.
+        dec_ctx.arch_unexpanded = arch_unexpanded
+    n_jobs = 0    # 실제로 돈 작업 수(복호화한 압축이 내부 문서로 늘어나면 len(files) 와 달라진다)
+
     # for문을 돌면서 문서처리..
-    for i, item in enumerate(files, 1):
+    for i, item in enumerate(_iter_dec_jobs(files, dec_ctx), 1):
+        n_jobs = i
+        if dec_ctx is not None:
+            total = len(files) + dec_ctx.extra
+        # 풀지 못한 문서 — 분류하지 않고 오류 레코드로 남긴 뒤 다음으로 간다.
+        if isinstance(item, _DecFailed):
+            path, _e = item.label, item.err
+            if _e.reason == "size_limit":
+                _kind = "size_limit"
+                n_size_skipped += 1
+                n_extract_failed += 1
+                code = config.EXIT_EXTRACT_FAIL
+            else:
+                _kind = "decrypt_failed"
+                dec_ctx.n_fail += 1
+            print(f"[MpowerClassify] 복호화 실패: {path} :: {_e.message}({_e.reason})",
+                  file=sys.stderr)
+            log.error("복호화 실패 file=%s :: %s(%s)", path, _e.message, _e.reason)
+            rec = _decrypt_failed_record(path, item.plan.name, _e, _kind,
+                                         ruleset, doc_rules_set, taxonomy)
+            counts["none"] = counts.get("none", 0) + 1
+            if docid_on:
+                # 지문(hash)은 싣지 않는다 — 여기서 읽을 수 있는 것은 암호문뿐이고,
+                # 암호문의 지문은 '이 문서가 무엇인가'를 말해 주지 않는다.
+                _ent, _how = (docid_flist.lookup(path) if docid_flist is not None
+                              else (None, None))
+                if _ent is not None:
+                    rec["doc_id"] = _ent.sfile_id
+                    rec["doc_id_source"] = "sfile_id"
+                    docid_stats["sfile_id"] = docid_stats.get("sfile_id", 0) + 1
+                    if _how == "case":
+                        rec["rematched_by"] = "case"
+                        docid_stats["case"] = docid_stats.get("case", 0) + 1
+                else:
+                    rec["doc_id"] = None
+                    rec["doc_id_source"] = "path"
+                    docid_stats["path"] = docid_stats.get("path", 0) + 1
+                    missing_id_rows.append(rec)
+            if auto_prop:
+                records.append(rec)
+                rec_origins.append(None)
+            else:
+                _finalize_doctype(rec)
+                _emit(rec)
+            if show_progress:
+                print(f"[progress] {i}/{total} {path}", file=sys.stderr, flush=True)
+            continue
         # src=실제 읽을 경로(압축 내부면 임시파일), path(label)=표시·규칙신호용(압축경로/내부경로),
         # origin=이 파일이 나온 최상위 압축경로(일반 파일이면 None).
         src, path, origin = _as_job(item)
+        # 엠파워 v11 문서면 (원래 이름, 도구를 불렀는가). 파일명 신호에는 원래 이름을 쓴다 —
+        # 저장 이름(F_….SMF)에는 단서가 없다. 결과의 file 칸은 언제나 path 다.
+        _dm = dec_ctx.meta.get(path) if dec_ctx is not None else None
+        sig_path = _dm[0] if (_dm and _dm[0]) else path
         # 파일별 스톱워치 — 추출/정제/규칙/(임베딩) 단계별 소요시간을 잰다(--embed 와 동일 형식).
         timing = Timing()
 
@@ -2302,9 +2716,10 @@ def run_classify(files, args, out_fp):
         _vol = archive_split_hint(path, src)
         if _vol and path not in arch_unexpanded:
             rec = _extract_failed_record(
-                path, f"분할 압축의 조각입니다({_vol}) — 조각 하나만으로는 내용을 "
+                sig_path, f"분할 압축의 조각입니다({_vol}) — 조각 하나만으로는 내용을 "
                       f"꺼낼 수 없어 읽지 않았습니다. 이 도구는 분할 압축을 잇지 않습니다.",
                 ruleset, doc_rules_set, taxonomy)
+            _apply_dec_meta(rec, path, _dm)
             rec["error"]["kind"] = "split_volume"
             n_split_volume += 1
             code = config.EXIT_EXTRACT_FAIL
@@ -2385,8 +2800,9 @@ def run_classify(files, args, out_fp):
             # 사라져, 화면에는 "18개 중 11건"처럼 조용히 줄어든 숫자만 남는다.
             # 무엇이 왜 빠졌는지 알 수 없는 것은 거버넌스 도구에서 가장 나쁜 실패다.
             # 등급 없이(=보류) 실패 사유를 실어 내보내 사람이 처리하게 한다.
-            rec = _extract_failed_record(path, e, ruleset, doc_rules_set, taxonomy,
+            rec = _extract_failed_record(sig_path, e, ruleset, doc_rules_set, taxonomy,
                                          excluded=scan)
+            _apply_dec_meta(rec, path, _dm)
             # 못 펼친 압축은 '본문 추출'까지 실패해 이 갈래로 오는 일이 흔하다
             # (분할 7z 처럼 사이냅도 못 읽는 경우). 표식을 성공 경로에만 달면
             # 정작 필요한 이 자리에서 빠져, 요약은 세는데 레코드는 비는 상태가 된다.
@@ -2438,11 +2854,12 @@ def run_classify(files, args, out_fp):
         #    - doc_rule.yaml 규칙으로 스캔하여 다중 라벨 후보를 산출
         #    - doc_rules_set 또는 taxonomy 중 하나라도 없으면 labels.doctype 키 자체를 생략
         with timing.measure("rule"):
-            rec = build_record(path, text, ruleset, ts=now_iso(),
+            rec = build_record(sig_path, text, ruleset, ts=now_iso(),
                                failsafe=args.failsafe, vector=None,
                                with_pii=getattr(args, "with_pii", False),
                                rules_enabled=rules_enabled,
                                doc_rules=doc_rules_set, taxonomy=taxonomy)
+            _apply_dec_meta(rec, path, _dm)
             
         # 본문을 사실상 못 읽었으면 표식을 단다(분류 결과 자체는 건드리지 않는다).
         # 종료코드도 추출 실패(1)로 올린다 — 배치가 "이 실행에 손봐야 할 문서가
@@ -2803,7 +3220,10 @@ def run_classify(files, args, out_fp):
     none_cnt = counts.get("none", 0)
     # 없는 파일도 '다룬 문서'로 센다 — 요청받은 문서이기 때문이다. total 에서 빼면
     # 부르는 쪽이 "7건 요청했는데 total 이 1" 인 것을 눈치챌 수단이 사라진다.
-    total_files = len(files) + n_missing_file
+    total_files = (n_jobs or len(files)) + n_missing_file
+    # 복호화 집계(엠파워 v11) — 쓴 실행에서만 값이 있다.
+    n_dec = dec_ctx.n_dec if dec_ctx is not None else 0
+    n_dec_fail = dec_ctx.n_fail if dec_ctx is not None else 0
     detected = c_cnt + s_cnt + o_cnt                      # 등급이 매겨진(=검출된) 문서 수
     total_ms = round((time.perf_counter() - PROCESS_START_PERF) * 1000.0, 1)
     # 상태 줄에 실을 건수를 남겨 둔다 — '16건 중 1건 실패'를 숫자로 알려 준다.
@@ -2818,7 +3238,14 @@ def run_classify(files, args, out_fp):
                             f"[MpowerClassify] 임베딩 모델을 올리지 못해 임베딩·전파를 "
                             f"건너뛰었습니다 — {embed_errors[0]}")
         code = errcodes.exit_of("model_load_failed")
-    errcodes.set_counts(total_files, n_extract_failed + n_missing_file)
+    # 풀지 못한 문서가 있으면 그것을 까닭으로 알린다(종료코드는 같은 1 이고 번호만 3005 다).
+    # 모델 실패(2)가 이미 잡혀 있으면 그쪽이 우선이다 — 대응이 배치 전체에 걸린다.
+    if n_dec_fail and code != errcodes.exit_of("model_load_failed"):
+        errcodes.set_status("decrypt_failed",
+                            f"[MpowerClassify] 복호화하지 못한 문서 {n_dec_fail}건 — "
+                            f"결과에 error.kind=decrypt_failed 로 남겼습니다")
+        code = errcodes.exit_of("decrypt_failed")
+    errcodes.set_counts(total_files, n_extract_failed + n_missing_file + n_dec_fail)
     # 정책 버전도 함께 — 결과만 있고 '어떤 규칙으로 판정했는지'가 없으면 나중에
     # 재현할 수 없다(--simple --nosummary 면 지금까지 어디에도 안 남았다).
     errcodes.set_versions(
@@ -2836,6 +3263,10 @@ def run_classify(files, args, out_fp):
     # 목록에 있으나 없던 파일 — 있을 때만 싣는다(0건이 정상이라 칸이 늘면 헷갈린다).
     if n_missing_file:
         summary["file_missing"] = n_missing_file
+    # 복호화 — 쓴 실행에서만 싣는다(엠파워 v11 암호화 문서).
+    if n_dec or n_dec_fail:
+        summary["decrypted"] = n_dec
+        summary["decrypt_failed"] = n_dec_fail
     # 글자수 상한에 걸린 문서가 '있을 때만' 요약에 싣는다 — 0건일 때 칸이 늘면
     # 기존 요약을 읽던 스크립트·눈이 괜히 흔들린다(doctype 칸과 같은 방식).
     if n_text_truncated:
@@ -2945,6 +3376,8 @@ def run_classify(files, args, out_fp):
         part_note = f", 부분추출={n_partial_extract}" if n_partial_extract else ""
         excl_note = f", 처리제외={n_excluded}" if n_excluded else ""
         arch_un_note = f", 압축미해제={len(arch_unexpanded)}" if arch_unexpanded else ""
+        if n_dec or n_dec_fail:
+            arch_un_note += f", 복호화 {n_dec}건(실패 {n_dec_fail})"
         # --textsave 를 안 쓰면 0/0 이라 칸을 아예 안 낸다(쓰는 사람만 보게).
         ts_note = f", 텍스트저장={n_text_saved}" if text_save_dir else ""
         ts_fail_note = f", 저장실패={n_text_save_failed}" if n_text_save_failed else ""
@@ -3184,6 +3617,34 @@ def _finish_seed_add(args, taxonomy):
 
 
 #------------------------------------------------------------------
+# --out 의 상위 폴더가 없으면 만든다
+#=> 결과 파일을 열기 직전에 부른다. 예를 들어 --out D:\\temp\\o.json 인데 D:\\temp 가
+#   아직 없으면, 예전에는 "출력 파일을 쓰지 못했습니다"(4001)로 멈췄다. 폴더가 없다는
+#   이유만으로 분류를 못 하는 것은 부르는 쪽에 일을 떠넘기는 것이라 만들어 준다.
+#   Rust 판(main.rs 의 --out 확인 자리)과 같은 동작이다 — 두 판이 갈리면 안 된다.
+#    1) 경로에 폴더 부분이 없으면(파일 이름만) 할 일이 없다
+#    2) 있으면 중간 폴더까지 한 번에 만든다(이미 있으면 그대로 둔다)
+#    3) 못 만들어도 여기서는 조용히 넘어간다 — 바로 뒤의 open() 이 실패하면서
+#       그 까닭을 4001 로 알린다(실패를 알리는 자리를 한 곳으로 둔다)
+#
+# -in: path = --out 으로 받은 결과 파일 경로
+#
+# -out: 없음
+# -out: error = 없음(폴더를 못 만든 경우는 뒤따르는 open() 이 OSError 로 드러낸다)
+#------------------------------------------------------------------
+def _ensure_out_parent(path):
+    parent = os.path.dirname(path)
+    if not parent:
+        return
+    try:
+        # 상위의 상위까지 없을 수 있으므로 중간 폴더도 함께 만든다.
+        os.makedirs(parent, exist_ok=True)
+    except OSError:
+        # 권한 없음·상위가 파일임 등 — 뒤의 open() 이 같은 까닭으로 실패해 알려 준다.
+        pass
+
+
+#------------------------------------------------------------------
 # 임베딩 라벨 전파(--propagate, Signal B 2차 패스)
 #=> --with-vector 로 만든 1차 레코드(jsonl, 벡터 포함)를 읽어, 고신뢰 등급을 seed
 #   삼아 미분류·저신뢰 문서에 라벨을 전파하고 최종 등급을 재계산해 다시 출력한다.
@@ -3322,6 +3783,9 @@ def run_propagate(args):
     # 결과 출력(--out 있으면 파일). 전파 입력은 '레코드 묶음'이라 json 은 항상 배열로
     # 감싸 유효한 JSON 파일이 되게 한다(다건 concatenation 무효화 방지).
     try:
+        # 상위 폴더가 없으면 만들어 둔다(Rust 판과 같다). 못 만들면 아래 open 이 까닭을 알린다.
+        if args.out:
+            _ensure_out_parent(args.out)
         out_fp = open(args.out, "w", encoding="utf-8") if args.out else None
     except OSError as e:
         return fail_err("output_write_failed",
@@ -3542,6 +4006,9 @@ def handle_daemon_commands(args):
 def _full_command_line():
     import subprocess
     parts = list(sys.argv) if getattr(sys, "frozen", False) else [sys.executable] + list(sys.argv)
+    # 열쇠(--mrk 뒤의 값)는 로그에 남기지 않는다 — **** 로 가려서 적는다.
+    from . import decrypt
+    parts = decrypt.mask_args(parts)
     try:
         return subprocess.list2cmdline(parts)
     except Exception:
@@ -4260,7 +4727,12 @@ def _main(argv=None):
 
     # 어떤 실행이었는지 남겨 재현/추적을 돕는다: (1) 실제 커맨드라인 풀경로, (2) 파싱된 argv.
     log.info("실행 cmd=%s", _full_command_line())
-    log.info("실행 argv=%s", argv if argv is not None else sys.argv[1:])
+    from . import decrypt as decrypt_mod
+    log.info("실행 argv=%s", decrypt_mod.mask_args(list(argv if argv is not None else sys.argv[1:])))
+    # --decrypt 조합이 틀렸으면 아무것도 읽기 전에 끝낸다.
+    _dc = check_decrypt_args(args)
+    if _dc is not None:
+        return _dc
 
     # (0-1) 출력 형식 확정 — 아래 모든 모드가 args.fmt 를 그대로 읽으므로 여기서 한 번만 정한다.
     args.fmt = resolve_format(args.fmt, args.out, log)
@@ -4376,6 +4848,16 @@ def _main(argv=None):
               f"{st['loaded']}건 적재(데이터 {st['lines']}줄{_skipped})", file=sys.stderr)
         for w in args._filelist.warnings:
             print(f"[MpowerClassify] {w}", file=sys.stderr)
+        # 열쇠 칸(mrk·enc_mode·zip_mode)이 붙은 줄이 있으면 알린다 — 풀어서 읽는다는 것을
+        # 모르고 돌리는 일이 없게. --no-decrypt 면 풀지 않는다는 것도 함께 말한다.
+        _n_dec = args._filelist.dec_count()
+        if _n_dec:
+            if args.no_decrypt:
+                print(f"[MpowerClassify] 목록에 복호화 정보가 {_n_dec}건 있지만 --no-decrypt 라 "
+                      f"풀지 않고 그대로 읽습니다", file=sys.stderr)
+            else:
+                print(f"[MpowerClassify] 복호화 정보가 있는 문서 {_n_dec}건 — 한 건씩 풀어서 "
+                      f"분류하고 바로 지웁니다", file=sys.stderr)
 
     #-------------------------------------------
     # 문서 수집
@@ -4441,6 +4923,26 @@ def _main(argv=None):
     import shutil
     import tempfile
     from .extract.archive import expand_paths
+
+    # (3-0b) 엠파워 v11 암호화 문서 — 복호화할 문서를 먼저 갈라 둔다(설계 §9 '구조 변경').
+    #   이 문서들은 아래에서 미리 펼치지 않는다. 지금 펼치려면 먼저 다 풀어야 하고, 그러면
+    #   평문 수천 건이 한꺼번에 디스크에 놓인다. 분류 루프가 한 건씩 풀기→펼치기→분류→지우기로
+    #   처리한다(_iter_dec_jobs). 기준 문서 등록(--seed-add)·벡터 단독(--embed)은 대상이 아니다.
+    dec_plans = {}
+    if not getattr(args, "_seed_plan", None) and not args.embed:
+        for _f in files:
+            _plan = _dec_plan_for(args, _f)
+            if _plan is not None:
+                dec_plans[safe_text(_f)] = _plan
+    # 복호화 도구가 있는지 문서를 읽기 전에 본다. 없으면 대상 전부가 같은 이유로 실패한
+    # 결과 파일이 만들어진다(설계 §5). 둘 다 0 인(암호화 안 된) 문서뿐이면 보지 않는다.
+    dec_cmd = decrypt_mod.resolve_cmd(args.decrypt_cmd)
+    if any(p.info is not None and not p.info.is_plain() for p in dec_plans.values()):
+        _why = decrypt_mod.preflight(dec_cmd)
+        if _why:
+            return fail_err("decrypt_cmd_missing", f"[MpowerClassify] {_why}", dec_cmd)
+    args._dec_ctx = None
+
     arch_tmp = tempfile.mkdtemp(prefix="cso_zip_")
 
     # 파싱된 args 에서 파이프라인/데몬이 쓰는 처리 옵션만 뽑아 dict 로 만든다
@@ -4449,6 +4951,8 @@ def _main(argv=None):
     # --out 이 있으면 결과 본문을 파일로 쓴다(시간요약은 여전히 stderr).
     out_fp = None
     if args.out:
+        # 상위 폴더가 없으면 만들어 둔다(Rust 판과 같다). 못 만들면 아래 open 이 까닭을 알린다.
+        _ensure_out_parent(args.out)
         try:
             out_fp = open(args.out, "w", encoding="utf-8")
         except OSError as e:
@@ -4465,12 +4969,27 @@ def _main(argv=None):
         # 압축 해제 상한(G4)에 걸린 건을 분류 요약까지 실어 나르려고 stats 를 준다.
         # args 에 실어 두는 것은 _filelist·_log_path 와 같은 이 파일의 관례다.
         args._archive_stats = {}
-        jobs = expand_paths(files, arch_tmp, stats=args._archive_stats)
+        # 복호화할 문서는 빼고 펼친다 — 그 문서들은 차례가 왔을 때 풀어서 펼친다.
+        _plain = [f for f in files if safe_text(f) not in dec_plans]
+        jobs = expand_paths(_plain, arch_tmp, stats=args._archive_stats)
+        jobs.extend(f for f in files if safe_text(f) in dec_plans)
+        if dec_plans:
+            # 임시 폴더는 문서를 읽기 직전에 만든다 — 위의 사전 점검에서 끝나면 빈 폴더도 안 남는다.
+            try:
+                _sess = decrypt_mod.Session(
+                    dec_cmd, decrypt_mod.resolve_tmp_base(args.decrypt_tmp),
+                    args.decrypt_timeout if args.decrypt_timeout is not None
+                    else decrypt_mod.DEFAULT_TIMEOUT_SECS)
+            except decrypt_mod.DecError as e:
+                return fail_err("decrypt_unavailable", f"[MpowerClassify] {e.message}")
+            # 추출기가 로그에 적는 '읽은 경로'가 임시 경로로 나가지 않게 한다.
+            _sess.attach_log_mask(logsetup.get_logger("csoclassify"))
+            args._dec_ctx = _DecContext(dec_plans, _sess)
 
         # 명시 모드가 있으면 그쪽으로, 없으면 기본 = C/S/O 분류.
         # => --text-only 일때 문서에서 text만 추출(*python 모드 exe 일때만)
         if args.text_only: 
-            return run_text_only(jobs, opts, out_fp)
+            return run_text_only(jobs, opts, out_fp, args._dec_ctx)
         # => --embed 일때는 문서에서 벡터만 추출(*python 모드 exe 일때만)
         if args.embed:
             return run_embed(jobs, args, opts, out_fp)
@@ -4481,7 +5000,15 @@ def _main(argv=None):
         # => text 추출/정제 -> 1단계 rule 분류 -> 벡터생성 -> 씨드생성 -> 2차 전파(분류)
         #--------------------------------------------------------------------------
         return run_classify(jobs, args, out_fp)
+    except decrypt_mod.DecError as e:
+        # 환경 문제(도구를 못 띄움 · PHP 확장 없음) — 다음 문서도 똑같이 실패한다.
+        # 남은 문서를 전부 실패로 채운 결과를 내느니 여기서 멈춘다(설계 §7).
+        return fail_err("decrypt_unavailable",
+                        f"[MpowerClassify] 복호화 환경 문제로 중단합니다 — {e.message}")
     finally:
+        # 풀어 둔 평문을 통째로 지운다(정상 종료 · 예외 · Ctrl+C 모두 여기를 지난다).
+        if getattr(args, "_dec_ctx", None) is not None:
+            args._dec_ctx.sess.close()
         if out_fp is not None:
             out_fp.close()
         # 압축 확장에 쓴 임시폴더(내부 원문 포함)를 통째로 정리한다.

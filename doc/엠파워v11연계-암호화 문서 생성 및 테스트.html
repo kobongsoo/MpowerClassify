@@ -1,0 +1,824 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>엠파워 v11 연계 — 암호화 문서 생성 및 테스트</title>
+</head>
+<body>
+<style>
+  :root{
+    --bg:#f4f6f9; --surface:#ffffff; --surface-2:#eef1f6; --ink:#191d24;
+    --muted:#58616e; --faint:#8b94a2; --line:#dde2ea; --line-strong:#c7cfda;
+    --accent:#26437e; --accent-2:#365fb0; --accent-soft:#e7edf7;
+    --c:#cf3b2e; --c-soft:#fbeceb; --s:#b3760f; --s-soft:#f9f0dc; --o:#2f8f57; --o-soft:#e6f3ea;
+    --shadow:0 1px 2px rgba(20,30,50,.04), 0 8px 24px rgba(20,30,50,.06);
+    --sans:"Pretendard Variable",Pretendard,"Malgun Gothic","맑은 고딕",-apple-system,"Apple SD Gothic Neo",system-ui,sans-serif;
+    --mono:ui-monospace,"Cascadia Code","Cascadia Mono",Consolas,"D2Coding",monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0e1116; --surface:#161b22; --surface-2:#1d232c; --ink:#e7ebf1;
+      --muted:#9aa4b2; --faint:#6b7684; --line:#262d38; --line-strong:#333c49;
+      --accent:#7ea0e8; --accent-2:#8fb0f2; --accent-soft:#182233;
+      --c:#f2695c; --c-soft:#2a1715; --s:#e6a748; --s-soft:#271e10; --o:#57bd85; --o-soft:#122217;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#f4f6f9; --surface:#ffffff; --surface-2:#eef1f6; --ink:#191d24;
+    --muted:#58616e; --faint:#8b94a2; --line:#dde2ea; --line-strong:#c7cfda;
+    --accent:#26437e; --accent-2:#365fb0; --accent-soft:#e7edf7;
+    --c:#cf3b2e; --c-soft:#fbeceb; --s:#b3760f; --s-soft:#f9f0dc; --o:#2f8f57; --o-soft:#e6f3ea;
+  }
+  :root[data-theme="dark"]{
+    --bg:#0e1116; --surface:#161b22; --surface-2:#1d232c; --ink:#e7ebf1;
+    --muted:#9aa4b2; --faint:#6b7684; --line:#262d38; --line-strong:#333c49;
+    --accent:#7ea0e8; --accent-2:#8fb0f2; --accent-soft:#182233;
+    --c:#f2695c; --c-soft:#2a1715; --s:#e6a748; --s-soft:#271e10; --o:#57bd85; --o-soft:#122217;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    line-height:1.7;-webkit-font-smoothing:antialiased;font-size:16px;letter-spacing:-0.003em;}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 24px 96px;}
+  header.doc{padding:56px 0 34px;border-bottom:1px solid var(--line);margin-bottom:40px;}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);font-weight:600;display:flex;gap:10px;align-items:center;margin-bottom:20px;}
+  .eyebrow::before{content:"";width:26px;height:2px;background:var(--accent);border-radius:2px;}
+  h1.title{font-size:clamp(28px,4.6vw,44px);line-height:1.12;margin:0 0 14px;font-weight:800;
+    letter-spacing:-0.02em;text-wrap:balance;}
+  .lede{font-size:clamp(16px,2.1vw,19px);color:var(--muted);margin:0 0 22px;max-width:64ch;}
+  .lede b{color:var(--ink);font-weight:600;}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;}
+  .chip{font-size:12px;font-family:var(--mono);color:var(--muted);background:var(--surface);
+    border:1px solid var(--line);border-radius:999px;padding:5px 12px;}
+  .chip b{color:var(--ink);font-weight:600;}
+  section{margin:52px 0;scroll-margin-top:20px;}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:22px;}
+  .sec-num{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--accent);
+    border:1px solid var(--line-strong);border-radius:7px;padding:3px 9px;flex:none;line-height:1.3;}
+  h2{font-size:clamp(21px,3vw,27px);margin:0;font-weight:750;letter-spacing:-0.015em;line-height:1.25;}
+  h3{font-size:17px;margin:30px 0 12px;font-weight:700;letter-spacing:-0.01em;}
+  p{margin:0 0 15px;max-width:72ch;}
+  ul.plain{margin:0 0 15px;padding-left:20px;} ul.plain li{margin:5px 0;color:var(--muted);}
+  ul.plain li b{color:var(--ink);font-weight:600;}
+  ol.plain{margin:0 0 15px;padding-left:22px;} ol.plain li{margin:6px 0;color:var(--muted);}
+  ol.plain li b{color:var(--ink);font-weight:600;}
+  .tldr{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--accent);
+    border-radius:12px;padding:22px 24px;box-shadow:var(--shadow);}
+  .tldr .k{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);font-weight:700;margin-bottom:10px;}
+  .tldr p{margin:0;font-size:17px;color:var(--ink);max-width:none;}
+  .tldr b{color:var(--accent-2);}
+  .twrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);margin:16px 0;}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:640px;background:var(--surface);}
+  th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--line);vertical-align:top;}
+  thead th{background:var(--surface-2);font-size:12px;letter-spacing:.03em;color:var(--muted);
+    text-transform:uppercase;font-weight:700;white-space:nowrap;}
+  tbody tr:last-child td{border-bottom:none;}
+  td.mono,.mono-cell{font-family:var(--mono);font-size:13px;white-space:nowrap;}
+  code.inl{font-family:var(--mono);font-size:.9em;background:var(--surface-2);border:1px solid var(--line);
+    border-radius:5px;padding:1px 6px;}
+  pre{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 20px;
+    overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.65;box-shadow:var(--shadow);color:var(--ink);}
+  pre .cm{color:var(--o);} pre .kw{color:var(--accent-2);font-weight:600;} pre .hi{color:var(--c);font-weight:600;}
+  .note{border:1px solid var(--line);background:var(--surface-2);border-radius:12px;padding:16px 18px;
+    font-size:14.5px;display:flex;gap:12px;align-items:flex-start;margin:16px 0;}
+  .note .badge{font-family:var(--mono);font-size:10.5px;font-weight:800;letter-spacing:.06em;
+    padding:3px 8px;border-radius:6px;flex:none;text-transform:uppercase;white-space:nowrap;}
+  .note.safe .badge{color:var(--o);background:var(--o-soft);border:1px solid color-mix(in srgb,var(--o) 35%,transparent);}
+  .note.warn .badge{color:var(--s);background:var(--s-soft);border:1px solid color-mix(in srgb,var(--s) 35%,transparent);}
+  .note.bad .badge{color:var(--c);background:var(--c-soft);border:1px solid color-mix(in srgb,var(--c) 35%,transparent);}
+  .note.info .badge{color:var(--accent-2);background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent-2) 35%,transparent);}
+  .note p{margin:0;color:var(--muted);max-width:none;}
+  .note b{color:var(--ink);}
+  .x{color:var(--c);font-weight:700}
+  .ok{color:var(--o);font-weight:700}
+  .wn{color:var(--s);font-weight:700}
+  .src{font-family:var(--mono);font-size:12px;color:var(--faint);}
+  .fig{background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);
+    padding:18px;margin:16px 0;overflow-x:auto;}
+  .fig svg{display:block;min-width:680px;width:100%;height:auto;}
+  .fig text{font-family:var(--sans);fill:var(--ink);font-size:13px;}
+  .fig .t-mono{font-family:var(--mono);font-size:11.5px;fill:var(--muted);}
+  .fig .t-h{font-weight:700;font-size:14px;}
+  .fig .box{fill:var(--surface-2);stroke:var(--line-strong);}
+  .fig .box-a{fill:var(--accent-soft);stroke:var(--accent-2);}
+  .fig .ln{stroke:var(--muted);stroke-width:1.4;fill:none;}
+  .fig .ln-d{stroke:var(--faint);stroke-width:1.2;fill:none;stroke-dasharray:5 4;}
+  .fig .ah{fill:var(--muted);}
+  footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);
+    font-size:13px;color:var(--faint);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;
+    font-family:var(--mono);letter-spacing:.02em;}
+  @media print{ body{background:#fff;} .tldr,pre,.twrap,.fig{box-shadow:none;} }
+</style>
+
+
+<div class="wrap">
+
+  <header class="doc">
+    <div class="eyebrow">테스트 가이드 · Mpower v11 Encrypted Samples</div>
+    <h1 class="title">엠파워 v11 연계<br>— 암호화 문서 생성 및 테스트</h1>
+    <p class="lede">엠파워 v11 에 문서를 올리면 서버가 <b>암호화해서</b> 저장한다. 이 가이드는 그 <b>암호화된 파일을 그대로</b> PC 로 가져오고,
+    파일마다의 열쇠 정보가 든 <code class="inl">filelist.jsonl</code> 을 만드는 방법을 순서대로 적은 것이다.
+    그리고 그 자료로 MpowerClassify 의 <b>복호화 연동을 실제로 시험하는 방법</b>(6장)까지 다룬다.</p>
+    <div class="meta">
+      <span class="chip"><b>서버</b> 10.10.19.40 (테스트 서버)</span>
+      <span class="chip"><b>작업 폴더</b> Rust\dist-onedir\windows\sample</span>
+      <span class="chip"><b>실행 확인</b> 2026-10-12 · 6건</span>
+      <span class="chip"><b>관련 설계</b> plan/엠파워v11-암호화문서-복호화연동-설계-20261012.html</span>
+    </div>
+  </header>
+
+  <div class="tldr">
+    <div class="k">한 줄 요약</div>
+    <p>① 테스트 문서를 준비해 <b>웹으로 올리고</b> → ② PC 에서 <code class="inl">fetch_enc.py</code> 를 <b>한 번 실행</b>하면 암호화 파일과 <code class="inl">filelist.jsonl</code> 이 <code class="inl">sample\enc\</code> 에 생긴다 →
+    ③ <code class="inl">check_enc.py</code> 로 <b>제대로 받았는지 확인</b>한다 →
+    ④ 중계 스크립트(<code class="inl">relay_removeenc.cmd</code>)를 <code class="inl">--decrypt-cmd</code> 에 주고 분류를 돌려 <b>풀린 문서의 지문이 원본과 같은지</b> 본다(6장). 웹의 "다운로드" 버튼으로는 암호화된 파일을 받을 수 없다 — 서버 저장소에서 직접 복사해야 한다.</p>
+  </div>
+
+  <!-- 0 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">00</span><h2>먼저 알아 둘 것</h2></div>
+    <h3>왜 웹 다운로드로는 안 되나</h3>
+    <p>엠파워 웹에서 파일을 내려받으면 서버가 <b>풀어서</b> 준다. 우리가 필요한 것은 풀리기 전, 서버 디스크에 놓인 <b>잠긴 파일</b>이다.
+    그래서 서버에 SSH 로 들어가 저장소의 파일을 직접 복사한다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>받는 방법</th><th>받는 것</th><th>테스트에 쓸 수 있나</th></tr></thead>
+        <tbody>
+          <tr><td>웹 화면의 다운로드</td><td>풀린 원본 (<code class="inl">분류테스트_워드문서.docx</code>)</td><td class="x">아니오</td></tr>
+          <tr><td>서버 저장소에서 복사 (이 가이드)</td><td>잠긴 파일 (<code class="inl">F_f095df74….SMF</code>)</td><td class="ok">예</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>필요한 것</h3>
+    <ul class="plain">
+      <li><b>웹 계정</b> — 문서를 올릴 엠파워 로그인 계정.</li>
+      <li><b>서버 SSH 계정</b> — <code class="inl">mpower@10.10.19.40</code>. 저장소 파일을 읽고 <code class="inl">/MOCOMSYS/MpowerScript/removeenc/</code> 에 파일을 쓸 수 있어야 한다.</li>
+      <li><b>PC</b> — Python, 그리고 <code class="inl">ssh</code> · <code class="inl">scp</code> 명령(윈도우 10/11 기본 포함, 또는 Git Bash).</li>
+    </ul>
+
+    <h3>폴더 구성</h3>
+    <pre>Rust\dist-onedir\windows\sample\
+├─ enc_test\
+│   ├─ orig\                   <span class="cm">← ① 올릴 테스트 문서 원본 (PC 에 보관)</span>
+│   ├─ orig_sha256.txt         <span class="cm">← 원본의 지문(SHA-256). 나중에 복호화 결과와 견준다</span>
+│   ├─ server\export_filelist.php   <span class="cm">← 서버에서 목록을 뽑는 스크립트</span>
+│   ├─ fetch_enc.py            <span class="cm">← ② 받아 오기 (PC 에서 실행)</span>
+│   ├─ check_enc.py            <span class="cm">← ③ 받은 것 점검 (PC 에서 실행)</span>
+│   ├─ relay_removeenc.cmd     <span class="cm">← ④ 복호화 중계 도구 — --decrypt-cmd 에 준다 (6장)</span>
+│   ├─ relay_removeenc.py      <span class="cm">←    중계의 본체(위 .cmd 가 부른다)</span>
+│   ├─ .env_v11                <span class="cm">←    중계가 읽는 접속 정보(서버 주소 · 계정 · 비밀번호)</span>
+│   ├─ check_result.py         <span class="cm">← ④ 분류 결과 점검 — 풀린 지문 = 원본 지문?</span>
+│   └─ make_wrong_list.py      <span class="cm">← ④ '틀린 열쇠' 시험용 목록 만들기</span>
+└─ enc\                        <span class="cm">← 암호화 파일 + filelist.jsonl (+ 시험 뒤 result.jsonl)</span></pre>
+    <div class="note warn">
+      <span class="badge">주의</span>
+      <p><code class="inl">filelist.jsonl</code> 에는 파일을 풀 수 있는 <b>평문 열쇠(MRK)</b>가 들어간다. <b>테스트 서버와 더미 문서로만</b> 하고, 실제 업무 문서로 하지 않는다.
+      <code class="inl">Rust/dist-onedir/</code> 는 git 에서 제외돼 있어 커밋되지는 않지만, 테스트가 끝나면 목록을 지운다.</p>
+    </div>
+  </section>
+
+  <!-- 1 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>1단계 — 테스트 문서 준비</h2></div>
+    <p>올릴 문서를 <code class="inl">enc_test\orig\</code> 에 모은다. 규칙은 두 가지다.</p>
+    <ol class="plain">
+      <li><b>이름 앞에 같은 접두어를 붙인다</b> — 예: <code class="inl">분류테스트_</code>. 나중에 서버에서 "이 글자로 시작하는 파일"만 골라 내는 데 쓴다.</li>
+      <li><b>형식을 골고루</b> — hwp · hwpx · docx · xlsx · pptx · pdf · txt · zip 을 한 건씩. 형식마다 복호화 뒤 확인 방법이 달라서다.</li>
+    </ol>
+    <p>2026-10-12 에 준비한 6건:</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>파일</th><th>크기</th><th>넣은 이유</th></tr></thead>
+        <tbody>
+          <tr><td>분류테스트_한글문서.hwp</td><td class="mono">91,648</td><td>OLE 형식(구형 한글)</td></tr>
+          <tr><td>분류테스트_워드문서.docx</td><td class="mono">28,367</td><td>zip 기반 오피스 문서</td></tr>
+          <tr><td>분류테스트_엑셀문서.xlsx</td><td class="mono">5,154</td><td>위와 같음</td></tr>
+          <tr><td>분류테스트_발표자료.pptx</td><td class="mono">885,765</td><td>위와 같음 · 조금 큰 파일</td></tr>
+          <tr><td>분류테스트_텍스트 (공백 포함).txt</td><td class="mono">215</td><td>시그니처가 없는 형식 · <b>이름에 공백과 괄호</b></td></tr>
+          <tr><td>분류테스트_압축묶음.zip</td><td class="mono">780,690</td><td>압축 파일(풀린 뒤 내부 문서로 펼쳐지는지)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>pdf 와 hwpx 는 아직 없다. 더미 파일이 생기면 같은 접두어로 넣는다.</p>
+
+    <h3>원본 지문 적어 두기</h3>
+    <p>올리기 전에 원본의 SHA-256 을 적어 둔다. 나중에 복호화한 결과의 지문이 이것과 같으면 <b>"제대로 풀렸다"</b>는 증거가 된다.</p>
+    <pre><span class="cm"># Git Bash — enc_test\orig 폴더에서</span>
+sha256sum * &gt; ../orig_sha256.txt</pre>
+    <pre><span class="cm"># PowerShell — enc_test\orig 폴더에서 (PowerShell 에는 sha256sum 이 없다)</span>
+$l = Get-ChildItem -File | ForEach-Object { (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower() + " *" + $_.Name }
+[IO.File]::WriteAllLines("$PWD\..\orig_sha256.txt", $l)</pre>
+    <div class="note warn">
+      <span class="badge">주의</span>
+      <p>PowerShell 에서 <code class="inl">sha256sum * &gt; ../orig_sha256.txt</code> 를 치면 "용어가 인식되지 않습니다" 오류가 나고,
+      그 사이에 <b><code class="inl">orig_sha256.txt</code> 가 빈 파일로 덮어써진다</b>(<code class="inl">&gt;</code> 가 먼저 파일을 비운다).
+      그렇게 됐으면 위 둘 중 하나로 다시 만든다. 파일 한 줄의 모양은 <code class="inl">&lt;지문&gt; *&lt;파일이름&gt;</code> 이다.</p>
+    </div>
+    <div class="note info">
+      <span class="badge">팁</span>
+      <p>같은 파일을 여러 번 올리면 서버에 버전이 쌓여 목록에 여러 줄로 나온다. 테스트 문서는 <b>한 번씩만</b> 올린다.</p>
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>2단계 — 엠파워에 올리기</h2></div>
+    <ol class="plain">
+      <li>브라우저로 <code class="inl">http://10.10.19.40/web/login/index.php</code> 에 접속해 로그인한다.</li>
+      <li>테스트용 폴더를 하나 정한다(이번에는 <b>내 폴더 / test</b>).</li>
+      <li><code class="inl">enc_test\orig\</code> 의 파일을 모두 올린다.</li>
+    </ol>
+    <p>이 순간 서버에서 일어나는 일:</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>서버가 하는 일</th><th>결과</th></tr></thead>
+        <tbody>
+          <tr><td>파일마다 열쇠(MRK)를 새로 만든다</td><td>DB <code class="inl">SHARE_FILE_INFO.MRK</code> 에 저장. v11 은 이 값을 한 번 더 감싸서(<code class="inl">v2:…</code>) 넣는다</td></tr>
+          <tr><td>파일을 암호화한다</td><td>방식 번호가 <code class="inl">ENC_MODE</code> · <code class="inl">ZIP_MODE</code> 에 기록된다</td></tr>
+          <tr><td>저장용 이름으로 디스크에 쓴다</td><td><code class="inl">VOL_PATH / RFILE_PATH / RFILE_NAME</code> — 예: <code class="inl">…/F_f095df74b5f7….SMF</code>. 원래 이름·확장자의 흔적이 없다</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 3 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>3단계 — 암호화 파일과 목록 받아 오기</h2></div>
+    <p>PC 에서 아래 한 줄을 실행한다. 두 번째 인자는 1단계에서 정한 <b>접두어</b>다.</p>
+    <pre>python "D:\Project\MpowerClassify\Rust\dist-onedir\windows\sample\enc_test\fetch_enc.py" mpower@10.10.19.40 "분류테스트_"</pre>
+    <p>실행 중에 <b>비밀번호를 여러 번 묻는다</b>(파일 수 + 2번 — 이번에는 8번). 묻는 대로 입력한다.</p>
+
+    <h3>스크립트가 하는 일</h3>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>순서</th><th>하는 일</th><th>어디서</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">[1/4]</td><td><code class="inl">export_filelist.php</code> 를 서버의 <code class="inl">/MOCOMSYS/MpowerScript/removeenc/</code> 에 올린다</td><td>PC → 서버 (scp)</td></tr>
+          <tr><td class="mono">[2/4]</td><td>서버에서 그 스크립트를 실행해 목록을 받는다</td><td>서버 (ssh)</td></tr>
+          <tr><td class="mono">[3/4]</td><td>목록에 적힌 저장 파일을 하나씩 <code class="inl">sample\enc\</code> 로 받는다(이름 그대로 = 암호화 상태)</td><td>서버 → PC (scp)</td></tr>
+          <tr><td class="mono">[4/4]</td><td>목록의 <code class="inl">path</code> 를 PC 경로로 바꿔 <code class="inl">sample\enc\filelist.jsonl</code> 로 쓴다</td><td>PC</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>서버 스크립트(export_filelist.php)가 하는 일</h3>
+    <p>기존 <code class="inl">SDR_Indexing_for_node_id.php</code> 와 같은 방식으로 DB 를 조회한다. 핵심은 세 가지다.</p>
+    <pre><span class="cm">// ① 접두어로 시작하는 파일을 찾는다 (볼륨 경로는 STORAGE_INFO 를 이어서 얻는다)</span>
+SELECT SFI.SFILE_ID, SFI.MRK, SFI.ENC_MODE, SFI.ZIP_MODE, SFI.LFILE_NAME, SFI.LFILE_SIZE,
+       SFI.RFILE_PATH, SFI.RFILE_NAME, SI.VOL_PATH
+FROM SHARE_FILE_INFO SFI LEFT JOIN STORAGE_INFO SI ON SFI.VOL_ID = SI.VOL_ID
+WHERE SFI.STATUS = '1' AND SFI.LFILE_NAME LIKE '분류테스트_%'
+
+<span class="cm">// ② 저장 파일의 전체 경로를 만든다</span>
+$serverPath = $r['VOL_PATH'] . '/' . $r['RFILE_PATH'] . '/' . $r['RFILE_NAME'];
+
+<span class="cm">// ③ 감싼 열쇠(v2:)를 벗겨 평문 열쇠로 바꾼다 — 이것을 빠뜨리면 복호화가 전부 실패한다</span>
+'mrk' =&gt; <span class="hi">$crypt-&gt;decryptMRKWithKEK</span>(trim((string)$r['MRK'])),</pre>
+    <div class="note warn">
+      <span class="badge">핵심</span>
+      <p>③이 가장 중요하다. v11 의 DB 에 든 MRK 는 서버의 키 파일(KEK)로 한 번 더 잠겨 있다. 그 키는 엠파워 서버만 갖고 있으므로
+      <b>벗기는 일은 반드시 서버에서</b> 해야 한다. 감싼 값을 그대로 쓰면 <code class="inl">removeenc.sh</code> 가 거부한다(오류 14).</p>
+    </div>
+
+    <h3>정상일 때 화면</h3>
+    <pre>[1/4] 목록 스크립트 올리기
+[2/4] 서버에서 목록 뽑기
+[3/4] 암호화 파일 6건 받기 → D:\…\sample\enc
+[4/4] 윈도우용 목록 쓰기
+완료: D:\…\sample\enc\filelist.jsonl
+  enc=3 zip=0 size=   885765  분류테스트_발표자료.pptx
+  enc=0 zip=0 size=   780690  분류테스트_압축묶음.zip
+  …</pre>
+
+    <h3>결과 — filelist.jsonl 한 줄의 모양</h3>
+    <pre>{"path":"D:/Project/MpowerClassify/Rust/dist-onedir/windows/sample/enc/F_f095df74b5f78be9057020c73ec809d7.SMF",
+ "server_path":"/…/F_f095df74b5f78be9057020c73ec809d7.SMF",
+ "sfile_id":"SF_…", "mrk":"(평문 열쇠 32자)", "enc_mode":3, "zip_mode":0,
+ "name":"분류테스트_워드문서.docx", "size":28367}</pre>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>칸</th><th>뜻</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">path</td><td>PC 에 받은 암호화 파일의 경로. MpowerClassify 가 읽을 위치</td></tr>
+          <tr><td class="mono">server_path</td><td><b>테스트용 메모.</b> 서버에 있던 원래 경로를 적어 둔 것이다. <b>MpowerClassify 는 이 칸을 읽지 않는다</b>(아래 "중요 ①")</td></tr>
+          <tr><td class="mono">sfile_id</td><td>엠파워의 문서 ID. 분류 결과의 <code class="inl">doc_id</code> 로 나간다</td></tr>
+          <tr><td class="mono">mrk · enc_mode · zip_mode</td><td>복호화에 필요한 세 값. <code class="inl">removeenc.sh</code> 의 <code class="inl">-k · -e · -z</code></td></tr>
+          <tr><td class="mono">name</td><td>원래 파일 이름(<code class="inl">LFILE_NAME</code>). 형식 판별 · 파일명 신호 · 틀린 열쇠 가려내기에 쓴다. <b>권장</b></td></tr>
+          <tr><td class="mono">size</td><td>원래 파일 크기, <b>단위는 바이트</b>(<code class="inl">LFILE_SIZE</code>). 풀린 결과의 크기와 견준다. <b>선택</b>(아래 "중요 ②")</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note bad">
+      <span class="badge">중요 ①</span>
+      <p><b><code class="inl">server_path</code> 는 연동에 필요한 칸이 아니다.</b>
+      MpowerClassify 가 목록에서 읽는 칸은 <code class="inl">path · sfile_id · hash · mrk · enc_mode · zip_mode · name · size</code> 뿐이고, 그 밖의 칸은 <b>무시한다.</b>
+      <code class="inl">removeenc.sh</code> 의 <code class="inl">-s</code>(원본 경로)에는 언제나 <b><code class="inl">path</code></b> 가 들어간다.</p>
+    </div>
+    <p>그러면 왜 이 문서의 목록에는 <code class="inl">server_path</code> 가 있나 — <b>윈도우 PC 에서 시험하려고</b> <code class="inl">fetch_enc.py</code> 가 넣은 것이다.
+    파일을 PC 로 받아 오면 <code class="inl">path</code> 를 PC 경로로 바꿔야 하는데, 그러면 "원래 서버 어디에 있던 파일인지"가 사라진다. 그 값을 잃지 않으려고 옆 칸에 적어 둔 메모다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>어디서 실행하나</th><th><code class="inl">path</code> 에 넣는 값</th><th><code class="inl">server_path</code></th></tr></thead>
+        <tbody>
+          <tr><td><b>엠파워 서버에서 직접</b> (운영 형태)</td>
+              <td>서버의 암호화 파일 경로<br><span class="src">VOL_PATH / RFILE_PATH / RFILE_NAME</span></td>
+              <td class="ok">넣지 않는다</td></tr>
+          <tr><td>윈도우 PC + 중계 스크립트 (이 문서의 테스트)</td>
+              <td>PC 에 받아 둔 파일 경로<br><span class="src">D:/…/sample/enc/F_….SMF</span></td>
+              <td>없어도 된다(참고용 메모)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><b>엠파워가 실제 연동용으로 만드는 목록은 이 모양이면 된다</b> — <code class="inl">path</code> 에 서버 경로가 들어가고 <code class="inl">server_path</code> 는 없다.</p>
+    <pre>{"path":"<span class="kw">/(VOL_PATH)/(RFILE_PATH)/F_f095df74b5f78be9057020c73ec809d7.SMF</span>",
+ "sfile_id":"SF_…", "mrk":"(평문 열쇠)", "enc_mode":3, "zip_mode":0,
+ "name":"분류테스트_워드문서.docx", "size":28367}</pre>
+
+    <div class="note bad">
+      <span class="badge">중요 ②</span>
+      <p><b><code class="inl">size</code> 는 바이트 단위의 "원래 파일 크기"다.</b> 엠파워 DB 의 <code class="inl">LFILE_SIZE</code> 값 그대로이며, 암호화되기 <b>전</b> 문서의 크기다
+      (저장된 파일의 크기가 아니다). 예: 워드문서의 <code class="inl">28367</code> 은 PC 에 보관한 원본 파일의 크기 28,367 바이트와 같다.
+      <b>필수가 아니다</b> — 없으면 크기 검사만 건너뛴다.</p>
+    </div>
+    <p><b>무엇에 쓰나.</b> 복호화가 끝난 뒤 "풀린 파일의 크기가 이 값과 같은가"를 본다. 다르면 그 문서는 분류하지 않고
+    <code class="inl">decrypt_failed</code>(<code class="inl">detail: size_mismatch</code>)로 남긴다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>이 검사가</th><th>경우</th><th>왜</th></tr></thead>
+        <tbody>
+          <tr><td class="ok">잡는다</td><td>쓰다 만 파일</td><td>디스크가 찼거나 도구가 중간에 죽으면 일부만 쓰여 크기가 작다</td></tr>
+          <tr><td class="ok">잡는다</td><td>저장 시 압축(<code class="inl">zip_mode≠0</code>)이 제대로 안 풀린 파일</td><td>풀린 크기가 원래와 달라진다. <span class="src">※ 이 서버에는 그런 파일이 없어 실제로 확인하지는 못했다</span></td></tr>
+          <tr><td class="x">못 잡는다</td><td><b>틀린 열쇠</b>로 풀린 파일</td>
+              <td>암호화해도 크기가 그대로이고(모드 3), 틀린 열쇠로 풀어도 <b>같은 크기의 쓰레기</b>가 나온다. 4단계·6-7 에서 실제로 확인했다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><b>왜 넣었나.</b> 엠파워 자신이 이 검사를 한다 — 복호화 공통 함수(<span class="src">class.MCrypt.php 의 mpowerDecrypt</span>)는 풀고 나서 크기가 <code class="inl">LFILE_SIZE</code> 와 다르면 실패로 처리한다.
+    그런데 우리가 부르는 <code class="inl">removeenc.php</code> 에는 그 검사가 빠져 있다. 그래서 MpowerClassify 가 대신 한다.</p>
+    <div class="note info">
+      <span class="badge">정리</span>
+      <p>틀린 열쇠를 가려내는 것은 <code class="inl">size</code> 가 아니라 <b><code class="inl">name</code></b> 이다 — 확장자를 보고 풀린 파일의 앞머리(시그니처)가 그 형식인지 확인한다.
+      둘 중 하나만 줄 수 있다면 <code class="inl">name</code> 이 더 중요하고, 둘 다 주는 것이 가장 좋다. 두 값 모두 <code class="inl">SHARE_FILE_INFO</code> 의 같은 행에 있어 함께 뽑는 데 비용이 들지 않는다.</p>
+    </div>
+  </section>
+
+  <!-- 4 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>4단계 — 제대로 받았는지 확인</h2></div>
+    <pre>python "D:\Project\MpowerClassify\Rust\dist-onedir\windows\sample\enc_test\check_enc.py"</pre>
+    <p>2026-10-12 실행 결과:</p>
+    <pre>목록 6건 — D:\…\sample\enc\filelist.jsonl
+[OK  ] enc=3 zip=0    885765B  암호화됨    mrk 32자  분류테스트_발표자료.pptx
+[OK  ] enc=0 zip=0    780690B  평문 그대로  mrk 32자  분류테스트_압축묶음.zip
+[OK  ] enc=3 zip=0      5154B  암호화됨    mrk 32자  분류테스트_엑셀문서.xlsx
+[OK  ] enc=3 zip=0     28367B  암호화됨    mrk 32자  분류테스트_워드문서.docx
+[OK  ] enc=3 zip=0       215B  암호화됨    mrk 32자  분류테스트_텍스트 (공백 포함).txt
+[OK  ] enc=3 zip=0     91648B  암호화됨    mrk 32자  분류테스트_한글문서.hwp
+결과: 모두 정상</pre>
+
+    <h3>무엇을 보고 "정상"이라 하나</h3>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>검사</th><th>방법</th><th>예</th></tr></thead>
+        <tbody>
+          <tr><td>파일이 있고 크기가 맞다</td><td>디스크 크기 = 목록의 <code class="inl">size</code></td><td>docx 28,367 = 28,367</td></tr>
+          <tr><td>정말 암호화돼 있다</td><td>파일 앞머리가 문서 시그니처가 <b>아니다</b></td>
+              <td>docx 는 원래 <code class="inl">50 4B</code>("PK")로 시작하는데, 받은 파일은 <code class="inl">DA 6E 3C 8C…</code></td></tr>
+          <tr><td>모드와 실제가 맞다</td><td><code class="inl">enc=0, zip=0</code> 이면 평문이어야 하고, 아니면 암호화돼 있어야 한다</td>
+              <td>zip 은 <code class="inl">(0,0)</code> 이고 받은 파일이 원본과 지문까지 같다</td></tr>
+          <tr><td>열쇠가 평문이다</td><td><code class="inl">mrk</code> 가 <code class="inl">v2:</code> 로 시작하지 않는다</td><td>6건 모두 32자 평문</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>스크립트는 열쇠 <b>값</b>을 화면에 찍지 않고 길이만 보여 준다.</p>
+
+    <h3>이번 자료에서 알게 된 것</h3>
+    <ul class="plain">
+      <li><b>암호화해도 크기가 변하지 않는다</b>(모드 3). 그래서 틀린 열쇠로 풀린 결과를 크기로는 가려낼 수 없고, 파일 앞머리(시그니처)를 봐야 한다.</li>
+      <li><b>모든 파일이 암호화되는 것은 아니다.</b> zip 은 서버가 <code class="inl">(0,0)</code> 으로 그대로 저장했다. 이런 파일은 복호화 도구를 부르지 않고 바로 읽어야 한다.</li>
+      <li><b>저장 이름에는 단서가 없다</b>(<code class="inl">F_….SMF</code>). 목록의 <code class="inl">name</code> 이 없으면 무슨 형식인지 이름으로는 알 수 없다.</li>
+      <li>이 서버에는 <b>저장 시 압축(<code class="inl">zip_mode≠0</code>)을 쓴 파일이 없다.</b> 압축 해제 경로는 이 자료로는 시험할 수 없다.</li>
+    </ul>
+  </section>
+
+  <!-- 5 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h2>5단계 — 이 자료로 테스트하기</h2></div>
+    <div class="note info">
+      <span class="badge">현재 상태</span>
+      <p>복호화 기능은 <b>2026-10-12 에 구현</b>됐고 <code class="inl">dist-onedir\windows\MpowerClassify-rs.exe</code> 도 새 판으로 바꿨다.
+      아래 ①은 윈도우에서 돌려 본 결과이고, ②는 <b>아직 해 보지 못한</b> 절차다(리눅스 빌드와 서버가 필요하다).</p>
+    </div>
+
+    <h3>① 윈도우에서 — 받은 파일로 흐름 확인 (돌려 봄)</h3>
+    <p>윈도우에는 엠파워의 복호화 확장(<code class="inl">Mpower 64File</code>)이 없어 <b>진짜 복호화는 되지 않는다.</b> 그래도 아래 두 가지는 확인된다.</p>
+    <pre><span class="cm"># dist-onedir\windows 폴더에서 — 복호화 도구가 없으므로 한 건도 읽지 않고 끝난다</span>
+MpowerClassify-rs.exe --filelist sample\enc\filelist.jsonl --rule-only --simple --json-errors
+<span class="cm"># → {"error":{"code":1015,"kind":"decrypt_cmd_missing", …}}   종료코드 3</span></pre>
+    <pre><span class="cm"># 암호화되지 않은(0,0) zip 한 줄만 뽑아서 — 도구 없이 내부 문서로 펼쳐 분류한다</span>
+findstr /C:"\"enc_mode\": 0" sample\enc\filelist.jsonl &gt; sample\enc\zip_only.jsonl
+MpowerClassify-rs.exe --filelist sample\enc\zip_only.jsonl --rule-only --simple --format jsonl --out zip_result.jsonl
+<span class="cm"># → [summary] 총 3개 / 검출 2, C=0 S=2 O=0 미분류=1 추출실패=0, 압축 1건</span></pre>
+    <p>개발용으로는 가짜 도구(<code class="inl">Rust\target\debug\examples\fake_removeenc.exe</code>, <code class="inl">cargo test</code> 가 만든다)를 <code class="inl">--decrypt-cmd</code> 에 줄 수 있다.
+    가짜 도구는 진짜 암호문을 풀지 못하므로, 받은 5건은 <b>"풀린 결과가 그 형식이 아니다"</b>(<code class="inl">signature_mismatch</code>)로 걸러진다 — 틀린 열쇠를 줬을 때와 같은 길이다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>문서</th><th>결과 (2026-10-12)</th></tr></thead>
+        <tbody>
+          <tr><td>hwp · docx · xlsx · pptx</td><td><code class="inl">decrypt_failed / signature_mismatch</code>, 등급 없음</td></tr>
+          <tr><td>txt</td><td>시그니처가 없는 형식이라 위 검사는 통과하지만, 본문을 글자로 읽지 못해 추출 실패로 남음(등급 없음)</td></tr>
+          <tr><td>zip (0,0)</td><td>도구를 부르지 않고 내부 문서 3건으로 펼쳐 분류</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>①-2 윈도우에서 — 중계 스크립트로 진짜 복호화 (돌려 봄)</h3>
+    <p>윈도우 PC 에서도 <b>서버의 <code class="inl">removeenc.sh</code> 를 대신 불러 주는 중계 스크립트</b>를 쓰면 진짜 복호화를 시험할 수 있다.
+    2026-10-12 에 받아 둔 6건으로 돌려 <b>암호화된 5건 모두 원본과 지문이 같음</b>을 확인했다. 과정 전체는 <b>6장</b>에 실제 화면과 함께 적었다.</p>
+
+    <h3>② 서버에서 — 리눅스 빌드로 직접 (아직 해 보지 못함)</h3>
+    <ol class="plain">
+      <li><b>새 리눅스 빌드를 서버에 올린다.</b> 복호화 기능이 든 판은 2026-10-12 16:48 에 빌드해 <code class="inl">Rust/dist-onedir/linux/MpowerClassify-rs-linux.tgz</code> 에 있다
+        (다시 만들려면 <code class="inl">bash scripts/build/linux-build.sh</code>).</li>
+      <li>서버에서 먼저 손으로 한 건을 풀어 기준값을 확인한다.
+<pre><span class="cm"># 값은 filelist.jsonl 의 그 줄에서 가져온다</span>
+/MOCOMSYS/MpowerScript/removeenc/removeenc.sh \
+  -s "(server_path)" -t /tmp/dec_test.docx -k "(mrk)" -e 3 -z 0
+sha256sum /tmp/dec_test.docx      <span class="cm"># ← PC 의 orig_sha256.txt 와 같아야 한다</span>
+rm -f /tmp/dec_test.docx</pre></li>
+      <li>목록의 <code class="inl">path</code> 를 <code class="inl">server_path</code> 값으로 되돌린 사본을 서버에 올리고 분류한다
+        (서버에서는 <code class="inl">path</code> 가 서버 경로여야 한다. <code class="inl">server_path</code> 칸은 남아 있어도 무시되므로 지우지 않아도 된다).
+<pre>./MpowerClassify-rs --filelist /tmp/job/filelist.jsonl --simple --format jsonl --out /tmp/job/result.jsonl --json-errors</pre></li>
+      <li>결과의 <code class="inl">hash</code> 가 <code class="inl">orig_sha256.txt</code> 의 값과 같으면 제대로 풀린 것이다. 끝난 뒤 임시 폴더(<code class="inl">/tmp/cso_dec_*</code>)가 남지 않았는지도 본다.</li>
+    </ol>
+
+    <h3>준비해 두면 좋은 시험 건</h3>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>건</th><th>만드는 방법</th><th>기대 결과</th></tr></thead>
+        <tbody>
+          <tr><td>정상</td><td>받은 목록 그대로</td><td>등급이 나오고 <code class="inl">hash</code> 가 원본과 같다</td></tr>
+          <tr><td>틀린 열쇠</td><td>목록 사본에서 <code class="inl">mrk</code> 한 글자를 바꾼다</td><td><code class="inl">decrypt_failed</code>, <code class="inl">grade: null</code></td></tr>
+          <tr><td>감싼 열쇠</td><td><code class="inl">mrk</code> 앞에 <code class="inl">v2:</code> 를 붙인다</td><td>그 줄만 오류(<code class="inl">key_wrapped</code>)</td></tr>
+          <tr><td>모드 0/0</td><td>zip 건(이미 있다)</td><td>복호화 도구를 부르지 않고 분류, 내부 문서로 펼쳐진다</td></tr>
+          <tr><td>열쇠 칸 누락</td><td>한 줄에서 <code class="inl">zip_mode</code> 를 지운다</td><td>그 줄만 오류(암호문을 분류하지 않는다)</td></tr>
+          <tr><td>특수 이름</td><td>txt 건(공백·괄호, 이미 있다)</td><td>정상 처리</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 6 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">06</span><h2>복호화 테스트 — 윈도우 PC 에서 진짜로 풀어 보기</h2></div>
+    <p>여기까지 오면 손에 <b>잠긴 파일 6개</b>와 <b>열쇠가 든 목록</b>이 있다. 이제 MpowerClassify 가 이 파일을 제대로 풀어서 분류하는지 본다.
+    아래는 2026-10-12 에 실제로 돌린 과정과 화면 그대로다.</p>
+
+    <h3>6-1. 먼저 — 왜 "중계"가 필요한가</h3>
+    <p>MpowerClassify 는 복호화를 <b>직접 하지 않는다.</b> 엠파워의 <code class="inl">removeenc.sh</code> 를 불러서 시킨다. 실제로 푸는 것은 엠파워 서버에만 있는 프로그램이다.</p>
+    <pre>MpowerClassify-rs  →  removeenc.sh (bash)  →  removeenc.php (PHP)  →  mpower_decrypt()  <span class="cm">← 엠파워 전용 확장 "Mpower 64File"</span></pre>
+    <p>로컬 PC 의 <code class="inl">C:\svn\Mpower_v11\…\removeenc</code> 폴더에는 <code class="inl">removeenc.sh</code> 와 <code class="inl">removeenc.php</code> 가 있지만, <b>그것만으로는 풀 수 없다.</b>
+    그 둘은 "풀어 달라고 부탁하는 글"일 뿐이고, 실제로 푸는 확장이 이 PC 에 없기 때문이다. 로컬 경로를 그대로 줘 보면 이렇게 끝난다.</p>
+    <pre>MpowerClassify-rs.exe --filelist sample\enc\filelist.jsonl --rule-only --json-errors ^
+    --decrypt-cmd "C:\svn\Mpower_v11\PHP\Mpower_11.0\MpowerScript\removeenc\removeenc.sh"
+
+{"error":{"code":<span class="hi">3006</span>,"kind":"<span class="hi">decrypt_unavailable</span>","message":"… 복호화 도구를 실행하지 못했습니다: …removeenc.sh
+          (%1은(는) 올바른 Win32 응용 프로그램이 아닙니다.)"}}        <span class="cm">← 종료코드 2, 한 건도 처리하지 않음</span></pre>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>필요한 것</th><th>이 PC</th><th>엠파워 서버</th></tr></thead>
+        <tbody>
+          <tr><td><code class="inl">removeenc.sh</code> · <code class="inl">removeenc.php</code></td><td class="ok">있음(svn 소스)</td><td class="ok">있음</td></tr>
+          <tr><td><code class="inl">.sh</code> 를 실행할 환경 · <code class="inl">/MOCOMSYS/.bash_profile</code> · PHP</td><td class="x">없음</td><td class="ok">있음</td></tr>
+          <tr><td>복호화 확장 <code class="inl">Mpower 64File</code></td><td class="x">없음(svn 에도 없다)</td><td class="ok">있음</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>그래서 <b>"파일을 서버로 보내 거기서 풀고, 풀린 것을 도로 받아 오는"</b> 심부름꾼을 중간에 세운다. 이것이 중계 스크립트다.</p>
+    <div class="note info">
+      <span class="badge">원리</span>
+      <p><code class="inl">--decrypt-cmd</code> 에는 <code class="inl">removeenc.sh</code> 와 <b>같은 인자</b>(<code class="inl">-s -t -k -e -z</code>)를 받는 실행 파일이면 무엇이든 줄 수 있다.
+      MpowerClassify 는 상대가 진짜 도구인지 중계인지 모른다 — 인자를 주고, 종료코드와 풀린 파일만 본다.</p>
+    </div>
+
+    <h3>6-2. 중계 스크립트가 하는 일</h3>
+    <p><code class="inl">sample\enc_test\relay_removeenc.cmd</code> 는 한 줄짜리 껍데기이고(윈도우가 실행할 수 있게), 실제 일은 <code class="inl">relay_removeenc.py</code> 가 한다.
+    문서 <b>한 건마다</b> 아래 네 가지를 한다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>순서</th><th>하는 일</th><th>쓰는 도구</th><th>예 (워드문서 한 건)</th></tr></thead>
+        <tbody>
+          <tr><td>①</td><td>PC 의 암호화 파일을 서버 <code class="inl">/tmp</code> 로 올린다</td><td class="mono">pscp</td>
+              <td class="mono">F_f095df74….SMF → /tmp/cso_relay_1234_ab12cd34.enc</td></tr>
+          <tr><td>②</td><td>서버에서 <code class="inl">removeenc.sh</code> 를 실행한다</td><td class="mono">plink</td>
+              <td class="mono">removeenc.sh -s ….enc -t ….dec -k (열쇠) -e 3 -z 0</td></tr>
+          <tr><td>③</td><td>풀린 파일을 PC 의 임시 위치로 받는다</td><td class="mono">pscp</td>
+              <td class="mono">/tmp/….dec → …\cso_dec_5678\000005\000005.docx</td></tr>
+          <tr><td>④</td><td>서버의 임시 파일 둘을 지운다(성공·실패 무관)</td><td class="mono">plink</td>
+              <td class="mono">rm -f ….enc ….dec</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>끝나면 <code class="inl">removeenc.sh</code> 의 <b>종료코드를 그대로</b> 돌려준다. 중계 자체가 실패하면(접속 불가 등) 200 을 돌려준다 — removeenc 의 코드와 겹치지 않는 번호다.</p>
+
+    <h3>6-3. 준비물</h3>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>준비물</th><th>확인 방법</th><th>없으면</th></tr></thead>
+        <tbody>
+          <tr><td><b>PuTTY 의 <code class="inl">plink</code> · <code class="inl">pscp</code></b></td><td><code class="inl">where plink</code> 에 경로가 나온다</td><td>PuTTY 를 설치하고 PATH 에 넣는다</td></tr>
+          <tr><td><b>접속 정보 파일</b> <code class="inl">sample\enc_test\.env_v11</code><br><span class="src">(중계 스크립트와 같은 폴더)</span></td>
+              <td><code class="inl">SSH_SERVER</code> · <code class="inl">SSH_USER_ID</code> · <code class="inl">SSH_USER_PWD</code> 세 줄이 있다</td>
+              <td>파일을 만든다. 없으면 아래 "찾는 순서"의 다음 자리를 본다</td></tr>
+          <tr><td><b>받아 둔 자료</b> <code class="inl">sample\enc\</code></td><td>3·4단계를 마쳤다(<code class="inl">check_enc.py</code> 가 "모두 정상")</td><td>3단계부터 다시</td></tr>
+          <tr><td><b>복호화 기능이 든 exe</b></td><td><code class="inl">MpowerClassify-rs.exe --help</code> 에 "⑦-2 엠파워 v11 암호화 문서" 가 나온다</td><td>새로 빌드한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>접속 정보는 <b>스크립트가 파일에서 직접 읽는다.</b> 명령줄에 비밀번호를 칠 일이 없고, 화면에도 찍히지 않는다.</p>
+
+    <h3>어느 서버로 가는가 — 접속 정보 파일을 찾는 순서</h3>
+    <p><code class="inl">MpowerClassify-rs.exe</code> 는 서버가 어디인지 <b>모른다.</b> 중계 스크립트에 <code class="inl">-s -t -k -e -z</code> 만 넘길 뿐이다.
+    서버 주소는 중계 스크립트가 <code class="inl">.env_v11</code> 의 <code class="inl">SSH_SERVER</code> 에서 읽는다. 그 파일은 아래 차례로 찾고, <b>먼저 찾은 것 하나만</b> 쓴다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>차례</th><th>찾는 곳</th><th>언제 쓰나</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td class="mono">sample\enc_test\.env_v11</td><td><b>기본.</b> 중계 스크립트와 같은 폴더 — 시험 폴더만 떼어 옮겨도 그대로 돈다</td></tr>
+          <tr><td>2</td><td>환경변수 <code class="inl">RELAY_ENV</code> 에 준 경로</td><td>1번 파일이 없을 때만 본다</td></tr>
+          <tr><td>3</td><td class="mono">D:\Project\MpowerClassify\.env_v11</td><td>위 둘이 없을 때. 예전부터 쓰던 자리(프로젝트 최상위)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>2026-10-12 에 이름을 잠깐 바꿔 가며 확인한 결과:</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>상황</th><th>고른 파일</th></tr></thead>
+        <tbody>
+          <tr><td>같은 폴더에 있음</td><td class="mono">sample\enc_test\.env_v11</td></tr>
+          <tr><td>같은 폴더에 있음 + <code class="inl">RELAY_ENV</code> 지정</td><td class="mono">sample\enc_test\.env_v11 <span class="src">(같은 폴더가 이긴다)</span></td></tr>
+          <tr><td>같은 폴더에 없음 + <code class="inl">RELAY_ENV</code> 지정</td><td><code class="inl">RELAY_ENV</code> 의 파일</td></tr>
+          <tr><td>같은 폴더에 없음</td><td class="mono">D:\Project\MpowerClassify\.env_v11</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note warn">
+      <span class="badge">주의</span>
+      <p><b>같은 폴더에 파일이 있으면 <code class="inl">RELAY_ENV</code> 를 줘도 쓰이지 않는다.</b> 다른 서버로 잠깐 바꿔 보려면 같은 폴더의 파일을 고치거나 이름을 바꿔 둔다.
+      서버를 바꿀 때는 주소만이 아니라 <code class="inl">relay_removeenc.py</code> 의 <code class="inl">HOSTKEY</code>(그 서버의 호스트 키 지문)도 함께 바꿔야 한다 —
+      안 바꾸면 접속이 거부되고 결과에 <code class="inl">error.rc: 200</code> 으로 남는다.
+      그리고 <code class="inl">sample\enc_test\.env_v11</code> 에는 비밀번호가 들어 있으니, 이 폴더를 묶어 다른 곳에 보낼 때는 빼야 한다.</p>
+    </div>
+
+    <h3>6-4. (선택) 한 건만 손으로 중계해 보기</h3>
+    <p>전체를 돌리기 전에 중계가 되는지 한 건으로 먼저 본다. 접속 문제를 여기서 미리 잡을 수 있다. 값은 <code class="inl">filelist.jsonl</code> 의 그 줄에서 가져온다.</p>
+    <pre><span class="cm"># sample 폴더에서 — 워드문서 한 건</span>
+python enc_test\relay_removeenc.py -s enc\F_f095df74b5f78be9057020c73ec809d7.SMF ^
+    -t %TEMP%\relay_one.docx -k (그 줄의 mrk) -e 3 -z 0
+echo %ERRORLEVEL%                 <span class="cm">← 0 이면 성공</span></pre>
+    <p>2026-10-12 결과 — 받은 파일을 열어 보니 진짜 워드 문서였고 지문이 원본과 같았다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th></th><th>암호화된 파일 (보낸 것)</th><th>풀린 파일 (받은 것)</th><th>올리기 전 원본</th></tr></thead>
+        <tbody>
+          <tr><td>크기</td><td class="mono">28,367</td><td class="mono">28,367</td><td class="mono">28,367</td></tr>
+          <tr><td>앞머리</td><td class="mono x">DA 6E 3C 8C …</td><td class="mono ok">50 4B 03 04 ("PK")</td><td class="mono">50 4B 03 04</td></tr>
+          <tr><td>SHA-256</td><td>(암호문)</td><td class="mono ok">95e868ba7a00afae…fb419b9</td><td class="mono">95e868ba7a00afae…fb419b9</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>6-5. 6건 전체를 MpowerClassify 로 돌리기</h3>
+    <p><code class="inl">dist-onedir\windows</code> 폴더에서 아래 한 줄을 실행한다. 평소 명령에 <code class="inl">--decrypt-cmd</code> 하나가 붙은 것뿐이다.</p>
+    <pre>cd /d D:\Project\MpowerClassify\Rust\dist-onedir\windows
+
+MpowerClassify-rs.exe --filelist sample\enc\filelist.jsonl --rule-only --format jsonl ^
+    --out sample\enc\result.jsonl <span class="hi">--decrypt-cmd sample\enc_test\relay_removeenc.cmd</span> --json-errors</pre>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>인자</th><th>뜻</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">--filelist sample\enc\filelist.jsonl</td><td>3단계에서 받은 목록. 줄마다 열쇠(<code class="inl">mrk · enc_mode · zip_mode</code>)가 있어 그 줄을 풀어서 읽는다</td></tr>
+          <tr><td class="mono">--decrypt-cmd …relay_removeenc.cmd</td><td>복호화 도구로 중계 스크립트를 쓴다(안 주면 <code class="inl">/MOCOMSYS/…/removeenc.sh</code> 를 찾다가 "도구 없음"으로 끝난다)</td></tr>
+          <tr><td class="mono">--rule-only</td><td>규칙만으로 분류(시험을 빠르게 하려고. 평소대로 돌려도 된다)</td></tr>
+          <tr><td class="mono">--format jsonl --out …result.jsonl</td><td>결과를 한 줄에 한 건씩 파일로</td></tr>
+          <tr><td class="mono">--json-errors</td><td>끝날 때 상태를 JSON 한 줄로</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>실제 화면(2026-10-12). <code class="inl">--json-errors</code> 를 빼면 맨 앞에 "목록 6건 적재" · "복호화 정보가 있는 문서 6건 — 한 건씩 풀어서 분류하고 바로 지웁니다" 안내도 함께 나온다.</p>
+    <pre>[summary][문서 ID] sfile_id 5 · 폴백(content) 3 · 폴백(path) 0
+[summary][문서 ID] ※ 폴백 3건은 매핑 테이블 적재 대상이 아닙니다. --report-missing-id 로 목록 확인
+[summary] 총 8개 / 검출 5, C=1 S=4 O=0 미분류=3 추출실패=0, 압축 1건, <span class="hi">복호화 5건(실패 0)</span>, 총시간=9357.2ms
+[summary][업무분류] 법무/규정 2 (사내규정 2) / 기술/개발 1 (테스트결과서 1) / 미분류 5
+{"error":{"code":0,"kind":"<span class="kw">success</span>","message":"","total":8,"failed":0,…}}</pre>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>화면의 숫자</th><th>뜻</th></tr></thead>
+        <tbody>
+          <tr><td>sfile_id <b>5</b> · 폴백 <b>3</b></td><td>문서 5건은 목록의 sfile_id 를 받았다. 폴백 3건은 zip 안의 내부 문서다(엠파워에 따로 등록된 문서가 아니라 ID 가 없다)</td></tr>
+          <tr><td>복호화 <b>5건</b>(실패 0)</td><td>도구를 실제로 부른 것은 5건. <b>zip 은 모드가 둘 다 0 이라 부르지 않았다</b></td></tr>
+          <tr><td>총 <b>8개</b></td><td>문서 5건 + zip 안의 내부 문서 3건. (zip 자체의 집계 줄은 따로 한 줄 더 나온다)</td></tr>
+          <tr><td><code class="inl">"kind":"success"</code> · <code class="inl">"failed":0</code></td><td>실패한 문서가 없다. 종료코드도 0 이다</td></tr>
+          <tr><td>총시간 <b>약 9.4초</b></td><td>대부분이 중계의 SSH 접속 시간이다(건당 4번). 서버에서 직접 돌리면 이 시간은 없다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>6-6. 결과 확인 — 풀린 문서가 원본과 같은가</h3>
+    <p>결과의 <code class="inl">hash</code> 는 <b>풀린 내용</b>의 지문이다. 1단계에서 적어 둔 원본 지문(<code class="inl">orig_sha256.txt</code>)과 같으면 <b>한 바이트도 틀리지 않고 풀린 것</b>이다.</p>
+    <pre>python sample\enc_test\check_result.py</pre>
+    <pre>[OK  ] 등급=S     풀어서 읽음  <span class="kw">원본과 같음</span>         분류테스트_한글문서.hwp
+[OK  ] 등급=S     풀어서 읽음  <span class="kw">원본과 같음</span>         분류테스트_발표자료.pptx
+[OK  ] 등급=None  풀어서 읽음  <span class="kw">원본과 같음</span>         분류테스트_엑셀문서.xlsx
+[OK  ] 등급=C     풀어서 읽음  <span class="kw">원본과 같음</span>         분류테스트_텍스트 (공백 포함).txt
+[OK  ] 등급=S     그대로 읽음  (압축 내부 문서)     F_e57f048d….SMF/test.hwp
+[OK  ] 등급=None  그대로 읽음  (압축 내부 문서)     F_e57f048d….SMF/test.docx
+[OK  ] 등급=S     그대로 읽음  (압축 내부 문서)     F_e57f048d….SMF/test.pptx
+[OK  ] 등급=None  풀어서 읽음  <span class="kw">원본과 같음</span>         분류테스트_워드문서.docx
+[OK  ] 등급=S     그대로 읽음  (압축 집계)        enc/F_e57f048d….SMF
+요약: 총 8건 · 복호화 5건 · 복호화 실패 0건 · 추출 실패 0건
+결과: 모두 정상</pre>
+    <ul class="plain">
+      <li><b>"원본과 같음" 5건</b> — 암호화된 다섯 문서가 모두 제대로 풀렸다.</li>
+      <li><b>등급이 None 인 문서</b>(엑셀·워드)는 실패가 아니다. 더미 문서라 규칙에 걸리는 내용이 없었을 뿐이다. 실패라면 <code class="inl">error</code> 가 붙는다.</li>
+      <li><b>zip</b> 은 "그대로 읽음"이다 — 암호화되지 않은 파일이라 풀 것이 없었고, 내부 문서 3건으로 펼쳐져 각각 분류됐다.</li>
+    </ul>
+
+    <h3>결과 한 줄 읽는 법 — 실제 레코드</h3>
+    <pre>{"file": "D:/…/sample/enc/<span class="kw">F_da5e64fea3e38f6ac99b0c65a127fe35.SMF</span>",   <span class="cm">← 목록에 준 path 그대로(저장 이름)</span>
+ "hash": "fcf09d53ba1b9789…da767c5",                              <span class="cm">← 풀린 내용의 지문 = 원본 지문</span>
+ "doc_id": "SF_75ed05715097354e90f913111f6e760c_00",              <span class="cm">← 목록의 sfile_id</span>
+ "doc_id_source": "sfile_id",
+ "name": "분류테스트_텍스트 (공백 포함).txt",                       <span class="cm">← 목록의 name(원래 이름)</span>
+ "grade": "C", "doctype": ["DC_002_003"],                         <span class="cm">← 분류 결과</span>
+ "why": {…},
+ "meta": {"ts": "2026-10-12 17:10:01", <span class="hi">"decrypted": true</span>}}        <span class="cm">← 도구로 풀어서 읽었다는 표식</span></pre>
+    <p>열쇠(<code class="inl">mrk</code>)와 임시 경로(<code class="inl">cso_dec_…</code>)는 결과에도 로그에도 없다. 이것도 확인했다 —
+    결과 파일과 로그 폴더 전체에서 열쇠 값과 <code class="inl">cso_dec_</code> 를 찾았을 때 한 건도 나오지 않았고, 실행이 끝난 뒤 임시 폴더는 비어 있었다.</p>
+
+    <h3>6-7. 틀린 열쇠로 돌려 보기 — 가장 중요한 시험</h3>
+    <p>엠파워 도구에는 고약한 성질이 하나 있다. <b>열쇠가 틀려도 "성공(0)"이라고 답하면서, 원본과 크기가 같은 쓰레기를 내놓는다.</b>
+    그것을 그대로 분류하면 아무 신호도 없으니 낮은 등급이 나온다 — 기밀 문서가 공개 문서로 기록되는 사고다. MpowerClassify 가 이것을 막는지 본다.</p>
+    <pre><span class="cm"># ① 열쇠의 마지막 글자만 바꾼 목록을 만든다(겉으로는 멀쩡한 열쇠다)</span>
+python sample\enc_test\make_wrong_list.py
+<span class="cm">   틀린 열쇠 목록 5건: sample\enc\filelist_wrong.jsonl</span>
+
+<span class="cm"># ② 그 목록으로 똑같이 돌린다</span>
+MpowerClassify-rs.exe --filelist sample\enc\filelist_wrong.jsonl --rule-only --format jsonl ^
+    --out sample\enc\result_wrong.jsonl --decrypt-cmd sample\enc_test\relay_removeenc.cmd --json-errors</pre>
+    <pre>[summary] 총 5개 / 검출 0, C=0 S=0 O=0 미분류=5 추출실패=1, <span class="hi">복호화 1건(실패 4)</span>, 총시간=9100.3ms
+{"error":{"code":<span class="hi">3005</span>,"kind":"<span class="hi">decrypt_failed</span>","message":"[MpowerClassify-rs] 복호화하지 못한 문서 4건 —
+          결과에 error.kind=decrypt_failed 로 남겼습니다","total":5,"failed":5,…}}       <span class="cm">← 종료코드 1</span></pre>
+    <pre>python sample\enc_test\check_result.py sample\enc\result_wrong.jsonl
+
+[확인] 등급=None  그대로 읽음  실패: <span class="hi">decrypt_failed/signature_mismatch</span> 분류테스트_한글문서.hwp
+[확인] 등급=None  그대로 읽음  실패: <span class="hi">decrypt_failed/signature_mismatch</span> 분류테스트_발표자료.pptx
+[확인] 등급=None  그대로 읽음  실패: <span class="hi">decrypt_failed/signature_mismatch</span> 분류테스트_엑셀문서.xlsx
+[확인] 등급=None  풀어서 읽음  실패: <span class="hi">extract_failed</span> 분류테스트_텍스트 (공백 포함).txt
+[확인] 등급=None  그대로 읽음  실패: <span class="hi">decrypt_failed/signature_mismatch</span> 분류테스트_워드문서.docx
+요약: 총 5건 · 복호화 1건 · 복호화 실패 4건 · 추출 실패 1건</pre>
+    <p><b>다섯 건 모두 등급이 매겨지지 않았다.</b> 이것이 바라던 결과다. 워드문서의 레코드를 보면 무슨 일이 있었는지 그대로 적혀 있다.</p>
+    <pre>{"file": "D:/…/enc/F_f095df74b5f78be9057020c73ec809d7.SMF", "doc_id": "SF_aecddd49…_00",
+ "name": "분류테스트_워드문서.docx", <span class="hi">"grade": null</span>,
+ "error": {"stage": "decrypt", "kind": "decrypt_failed",
+           "detail": "<span class="hi">signature_mismatch</span>",
+           "rc": <span class="hi">0</span>,                                           <span class="cm">← 도구는 "성공"이라고 했다</span>
+           "reason": "docx 파일인데 앞머리가 zip 계열(PK) 형식이 아닙니다 — 열쇠(mrk)와 모드가 맞는지 확인하세요"}}</pre>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>문서</th><th>어떻게 걸러졌나</th></tr></thead>
+        <tbody>
+          <tr><td>hwp · docx · xlsx · pptx</td>
+              <td>도구가 0 을 돌려줬지만, 풀린 파일의 앞머리가 그 형식이 아니었다(docx 는 "PK" 로, hwp 는 OLE 머리로 시작해야 한다). <b>분류 단계로 넘기지 않았다</b></td></tr>
+          <tr><td>txt</td>
+              <td>글자 파일은 정해진 앞머리가 없어 위 검사로는 못 잡는다. 대신 추출 단계가 "글자로 읽히지 않는다"고 판단해 <b>추출 실패</b>로 남겼다.
+              요약줄에 "복호화 1건"으로 세어진 것이 이 건이다(도구는 성공했다고 했으므로)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note warn">
+      <span class="badge">한계</span>
+      <p>txt 처럼 시그니처가 없는 형식은 "틀린 열쇠"를 복호화 단계에서 가려내지 못하고 추출 단계에 기댄다.
+      목록에 <code class="inl">name</code> 을 주지 않으면 확장자를 몰라 <b>모든 형식</b>이 이 상태가 된다. 그래서 <code class="inl">name</code> 을 꼭 주기를 권한다.</p>
+    </div>
+
+    <h3>6-8. Python 판으로도 같은 시험</h3>
+    <p>Python 판도 같은 옵션·같은 결과 모양이다. 소스로 바로 돌려 볼 수 있다(프로젝트 최상위에서).</p>
+    <pre>cd /d D:\Project\MpowerClassify
+set PYTHONPATH=src
+python -m csoclassify --filelist Rust\dist-onedir\windows\sample\enc\filelist.jsonl ^
+    --cso-rules resources\policy\cso_rule.yaml --rule-only --format jsonl --out %TEMP%\py_result.jsonl ^
+    --decrypt-cmd Rust\dist-onedir\windows\sample\enc_test\relay_removeenc.cmd
+
+[summary] 총 8개 / 검출 5, C=1 S=4 O=0 미분류=3 추출실패=0, 압축 1건, 복호화 5건(실패 0), 총시간=10015.9ms</pre>
+    <p>2026-10-12 결과: Rust 판과 같은 숫자가 나왔고, 암호화된 5건의 지문이 모두 원본과 같았다.</p>
+
+    <h3>6-9. 시험 결과 한눈에 (2026-10-12)</h3>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>시험</th><th>기대</th><th>결과</th></tr></thead>
+        <tbody>
+          <tr><td>맞는 열쇠 · 암호화된 5건</td><td>풀린 지문 = 원본 지문</td><td class="ok">5건 모두 같음 (Rust · Python)</td></tr>
+          <tr><td>모드 0/0 인 zip</td><td>도구를 부르지 않고 내부 문서로 펼침</td><td class="ok">내부 3건 분류 · 집계 S</td></tr>
+          <tr><td>틀린 열쇠 5건</td><td>등급을 매기지 않음</td><td class="ok">4건 <code class="inl">signature_mismatch</code> · 1건 추출 실패 — 모두 등급 없음</td></tr>
+          <tr><td>이름에 공백·괄호가 든 문서</td><td>정상 처리</td><td class="ok">정상(txt 건)</td></tr>
+          <tr><td>끝난 뒤 임시 폴더</td><td>비어 있음</td><td class="ok">비어 있음</td></tr>
+          <tr><td>결과·로그의 열쇠 · 임시 경로</td><td>없음</td><td class="ok">없음</td></tr>
+          <tr><td>도구 경로를 안 줌 / 로컬 <code class="inl">.sh</code> 를 줌</td><td>한 건도 읽지 않고 끝</td><td class="ok"><code class="inl">1015 decrypt_cmd_missing</code> / <code class="inl">3006 decrypt_unavailable</code></td></tr>
+          <tr><td>서버에서 리눅스 빌드로 직접</td><td>—</td><td class="x">아직 해 보지 못함(5단계 ②)</td></tr>
+          <tr><td>저장 시 압축(<code class="inl">zip_mode≠0</code>) 문서</td><td>—</td><td class="x">이 서버에 그런 파일이 없어 시험하지 못함</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>6-10. 중계에서 막혔을 때</h3>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>증상</th><th>원인</th><th>해결</th></tr></thead>
+        <tbody>
+          <tr><td>결과의 <code class="inl">error.rc</code> 가 <b>200</b>, reason 에 "relay: 서버로 올리지 못했습니다 …"</td>
+              <td>중계 자체가 실패했다 — 접속이 안 되거나 비밀번호·계정이 틀렸다</td>
+              <td>6-4 처럼 한 건을 손으로 돌려 화면의 문구를 본다. <b>실제로 읽히는</b> <code class="inl">.env_v11</code>(6-3 의 찾는 순서 — 보통 <code class="inl">sample\enc_test\</code> 의 것)의 세 값을 확인한다</td></tr>
+          <tr><td>문구에 <code class="inl">host key</code> · <code class="inl">hostkey</code> 가 보인다</td>
+              <td>서버를 다시 설치해 호스트 키가 바뀌었다. 스크립트는 2026-10-12 의 지문만 믿도록 고정돼 있다</td>
+              <td>서버가 바뀐 것이 맞는지 확인한 뒤 <code class="inl">relay_removeenc.py</code> 의 <code class="inl">HOSTKEY</code> 를 새 지문으로 바꾼다</td></tr>
+          <tr><td>"plink 를 실행하지 못했습니다"</td><td>PuTTY 가 없거나 PATH 에 없다</td><td>PuTTY 를 설치한다</td></tr>
+          <tr><td>"접속 정보 파일이 없습니다 — 찾아본 곳: …" / "SSH_USER_PWD 가 없습니다"</td><td>세 자리 어디에도 <code class="inl">.env_v11</code> 이 없거나, 찾은 파일의 값이 비었다</td>
+              <td>문구에 찾아본 경로가 모두 나온다. <code class="inl">sample\enc_test\.env_v11</code> 을 만들어 세 값을 채운다</td></tr>
+          <tr><td>엉뚱한 서버로 붙거나, 값을 고쳤는데 그대로다</td><td>고친 파일이 아니라 <b>앞 차례의 다른 파일</b>이 읽히고 있다(같은 폴더 → <code class="inl">RELAY_ENV</code> → 최상위)</td>
+              <td><code class="inl">sample\enc_test\.env_v11</code> 이 있는지 먼저 본다. 있으면 그것이 쓰인다</td></tr>
+          <tr><td><code class="inl">error.rc</code> 가 <b>56</b> → 실행이 즉시 멈춤(<code class="inl">decrypt_unavailable</code>)</td><td>서버의 PHP 가 확장 <code class="inl">Mpower 64File</code> 을 읽지 못했다</td><td>엠파워 서버 설치를 점검한다(엠파워 담당자)</td></tr>
+          <tr><td><code class="inl">error.rc</code> 가 <b>14</b></td><td>열쇠가 <code class="inl">v2:</code> 로 감싼 값이다</td><td>목록을 다시 뽑는다(3단계의 서버 스크립트가 벗겨 준다)</td></tr>
+          <tr><td><code class="inl">error.detail</code> 이 <code class="inl">timeout</code></td><td>한 건이 60초를 넘겼다(망이 느리거나 파일이 크다)</td><td><code class="inl">--decrypt-timeout 180</code> 처럼 늘린다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note bad">
+      <span class="badge">주의</span>
+      <p>중계는 <b>테스트 서버 · 더미 문서 전용</b>이다. 열쇠가 SSH 명령줄에 실리고, 풀린 문서가 망을 한 번 더 건넌다.
+      운영에서는 엠파워 서버에서 MpowerClassify 를 직접 돌린다(5단계 ②) — 그때는 <code class="inl">--decrypt-cmd</code> 를 줄 필요도 없다.</p>
+    </div>
+  </section>
+
+  <!-- 7 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">07</span><h2>막혔을 때 (파일 받아 오기)</h2></div>
+    <p>2026-10-12 에 실제로 겪은 것과, 스크립트 구조상 생길 수 있는 것을 함께 적는다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>증상</th><th>원인</th><th>해결</th></tr></thead>
+        <tbody>
+          <tr><td><code class="inl">Host key for 10.10.19.40 has changed … Host key verification failed</code> <span class="src">(겪음)</span></td>
+              <td>서버를 다시 설치해 서버의 신분증(호스트 키)이 바뀌었다. PC 에는 옛 것이 남아 있다</td>
+              <td>서버가 바뀐 것이 맞는지 확인한 뒤 <code class="inl">ssh-keygen -R 10.10.19.40</code> 로 옛 키를 지운다. 다음 접속에서 지문을 보고 <code class="inl">yes</code></td></tr>
+          <tr><td>공개 키를 등록했는데도 <code class="inl">Permission denied (publickey,…)</code> <span class="src">(겪음 · 미해결)</span></td>
+              <td>확인하지 못했다. 흔한 원인은 홈 폴더·<code class="inl">.ssh</code> 권한, 키 줄 끝의 <code class="inl">\r</code>, SELinux 라벨</td>
+              <td>키 없이 <b>비밀번호로 실행해도 된다</b>(이번에 그렇게 했다). 묻는 횟수만 늘어난다</td></tr>
+          <tr><td><code class="inl">'분류테스트_' 로 시작하는 파일이 서버에 없습니다</code></td>
+              <td>접두어가 올린 이름과 다르거나, 아직 올리지 않았다</td>
+              <td>두 번째 인자를 실제 파일 이름의 앞머리로 맞춘다</td></tr>
+          <tr><td><code class="inl">php: No such file</code> / [2/4] 에서 실패</td>
+              <td>서버의 PHP 위치가 다르다</td>
+              <td><code class="inl">fetch_enc.py</code> 의 <code class="inl">REMOTE_PHP</code>(기본 <code class="inl">/MOCOMSYS/php/bin/php</code>)를 고친다</td></tr>
+          <tr><td>[3/4] 에서 <code class="inl">Permission denied</code> / <code class="inl">No such file</code></td>
+              <td>SSH 계정이 저장소 폴더를 읽지 못하거나, 볼륨이 로컬 디스크가 아니다(S3 등)</td>
+              <td>엠파워 서비스 계정으로 접속한다. S3 볼륨이면 이 방법으로는 받을 수 없다</td></tr>
+          <tr><td>같은 문서가 목록에 여러 줄</td>
+              <td>같은 이름으로 여러 번 올려 버전이 쌓였다</td>
+              <td>필요한 줄만 남기거나, 새 접두어로 한 번씩만 다시 올린다</td></tr>
+          <tr><td><code class="inl">check_enc.py</code> 가 "mrk 가 KEK 로 감싼 값(v2:)"</td>
+              <td>서버 스크립트가 열쇠를 벗기지 못했다</td>
+              <td>서버의 KEK 키 파일 설정을 확인한다(엠파워 담당자)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 7 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">08</span><h2>끝난 뒤 정리</h2></div>
+    <ul class="plain">
+      <li><b>PC</b> — 테스트가 끝나면 <code class="inl">sample\enc\filelist.jsonl</code> 과 <code class="inl">filelist_wrong.jsonl</code> 을 지운다(열쇠가 들어 있다).
+        <code class="inl">result.jsonl</code> · <code class="inl">result_wrong.jsonl</code> 에는 열쇠가 없다. 암호화 파일은 열쇠 없이는 쓸모가 없지만 함께 지워도 된다.</li>
+      <li><b>PC 의 접속 정보</b> — <code class="inl">sample\enc_test\.env_v11</code> 에는 서버 비밀번호가 들어 있다. 시험을 마쳤고 다시 쓸 일이 없으면 지운다.</li>
+      <li><b>서버</b> — 올려 둔 <code class="inl">/MOCOMSYS/MpowerScript/removeenc/export_filelist.php</code> 를 지운다. 누구든 실행하면 평문 열쇠가 나오는 스크립트다.</li>
+      <li><b>엠파워</b> — 테스트 폴더의 문서를 지운다.</li>
+    </ul>
+    <pre><span class="cm"># 서버 스크립트 지우기</span>
+ssh mpower@10.10.19.40 "rm -f /MOCOMSYS/MpowerScript/removeenc/export_filelist.php"</pre>
+  </section>
+
+  <footer>
+    <span>MpowerClassify · doc/엠파워v11연계-암호화 문서 생성 및 테스트.html</span>
+    <span>관련: plan/엠파워v11-암호화문서-복호화연동-설계-20261012.html · Rust/dist-onedir/windows/sample/enc_test/</span>
+  </footer>
+
+</div>
+</body>
+</html>

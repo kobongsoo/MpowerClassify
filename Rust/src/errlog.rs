@@ -124,7 +124,8 @@ pub fn note(msg: &str) {
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
         let _ = writeln!(f, "\n===== {} pid={} =====", now_readable(), std::process::id());
-        let _ = writeln!(f, "cmd: {}", args.join(" "));
+        // 열쇠(--mrk 뒤의 값)는 오류 로그에도 남기지 않는다.
+        let _ = writeln!(f, "cmd: {}", crate::decrypt::mask_args(&args).join(" "));
     });
     let _ = writeln!(f, "{} {}", now_readable(), msg);
 }

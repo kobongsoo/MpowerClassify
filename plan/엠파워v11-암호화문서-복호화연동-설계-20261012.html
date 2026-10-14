@@ -1,0 +1,764 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>엠파워 v11 암호화 문서 복호화 연동 — 풀어서 분류하고 바로 지운다</title>
+</head>
+<body>
+<style>
+  :root{
+    --bg:#f4f6f9; --surface:#ffffff; --surface-2:#eef1f6; --ink:#191d24;
+    --muted:#58616e; --faint:#8b94a2; --line:#dde2ea; --line-strong:#c7cfda;
+    --accent:#26437e; --accent-2:#365fb0; --accent-soft:#e7edf7;
+    --c:#cf3b2e; --c-soft:#fbeceb; --s:#b3760f; --s-soft:#f9f0dc; --o:#2f8f57; --o-soft:#e6f3ea;
+    --shadow:0 1px 2px rgba(20,30,50,.04), 0 8px 24px rgba(20,30,50,.06);
+    --sans:"Pretendard Variable",Pretendard,"Malgun Gothic","맑은 고딕",-apple-system,"Apple SD Gothic Neo",system-ui,sans-serif;
+    --mono:ui-monospace,"Cascadia Code","Cascadia Mono",Consolas,"D2Coding",monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0e1116; --surface:#161b22; --surface-2:#1d232c; --ink:#e7ebf1;
+      --muted:#9aa4b2; --faint:#6b7684; --line:#262d38; --line-strong:#333c49;
+      --accent:#7ea0e8; --accent-2:#8fb0f2; --accent-soft:#182233;
+      --c:#f2695c; --c-soft:#2a1715; --s:#e6a748; --s-soft:#271e10; --o:#57bd85; --o-soft:#122217;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#f4f6f9; --surface:#ffffff; --surface-2:#eef1f6; --ink:#191d24;
+    --muted:#58616e; --faint:#8b94a2; --line:#dde2ea; --line-strong:#c7cfda;
+    --accent:#26437e; --accent-2:#365fb0; --accent-soft:#e7edf7;
+    --c:#cf3b2e; --c-soft:#fbeceb; --s:#b3760f; --s-soft:#f9f0dc; --o:#2f8f57; --o-soft:#e6f3ea;
+  }
+  :root[data-theme="dark"]{
+    --bg:#0e1116; --surface:#161b22; --surface-2:#1d232c; --ink:#e7ebf1;
+    --muted:#9aa4b2; --faint:#6b7684; --line:#262d38; --line-strong:#333c49;
+    --accent:#7ea0e8; --accent-2:#8fb0f2; --accent-soft:#182233;
+    --c:#f2695c; --c-soft:#2a1715; --s:#e6a748; --s-soft:#271e10; --o:#57bd85; --o-soft:#122217;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    line-height:1.7;-webkit-font-smoothing:antialiased;font-size:16px;letter-spacing:-0.003em;}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 24px 96px;}
+  header.doc{padding:56px 0 34px;border-bottom:1px solid var(--line);margin-bottom:40px;}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);font-weight:600;display:flex;gap:10px;align-items:center;margin-bottom:20px;}
+  .eyebrow::before{content:"";width:26px;height:2px;background:var(--accent);border-radius:2px;}
+  h1.title{font-size:clamp(28px,4.6vw,44px);line-height:1.12;margin:0 0 14px;font-weight:800;
+    letter-spacing:-0.02em;text-wrap:balance;}
+  .lede{font-size:clamp(16px,2.1vw,19px);color:var(--muted);margin:0 0 22px;max-width:64ch;}
+  .lede b{color:var(--ink);font-weight:600;}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;}
+  .chip{font-size:12px;font-family:var(--mono);color:var(--muted);background:var(--surface);
+    border:1px solid var(--line);border-radius:999px;padding:5px 12px;}
+  .chip b{color:var(--ink);font-weight:600;}
+  section{margin:52px 0;scroll-margin-top:20px;}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:22px;}
+  .sec-num{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--accent);
+    border:1px solid var(--line-strong);border-radius:7px;padding:3px 9px;flex:none;line-height:1.3;}
+  h2{font-size:clamp(21px,3vw,27px);margin:0;font-weight:750;letter-spacing:-0.015em;line-height:1.25;}
+  h3{font-size:17px;margin:30px 0 12px;font-weight:700;letter-spacing:-0.01em;}
+  p{margin:0 0 15px;max-width:72ch;}
+  ul.plain{margin:0 0 15px;padding-left:20px;} ul.plain li{margin:5px 0;color:var(--muted);}
+  ul.plain li b{color:var(--ink);font-weight:600;}
+  ol.plain{margin:0 0 15px;padding-left:22px;} ol.plain li{margin:6px 0;color:var(--muted);}
+  ol.plain li b{color:var(--ink);font-weight:600;}
+  .tldr{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--accent);
+    border-radius:12px;padding:22px 24px;box-shadow:var(--shadow);}
+  .tldr .k{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);font-weight:700;margin-bottom:10px;}
+  .tldr p{margin:0;font-size:17px;color:var(--ink);max-width:none;}
+  .tldr b{color:var(--accent-2);}
+  .twrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);margin:16px 0;}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:640px;background:var(--surface);}
+  th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--line);vertical-align:top;}
+  thead th{background:var(--surface-2);font-size:12px;letter-spacing:.03em;color:var(--muted);
+    text-transform:uppercase;font-weight:700;white-space:nowrap;}
+  tbody tr:last-child td{border-bottom:none;}
+  td.mono,.mono-cell{font-family:var(--mono);font-size:13px;white-space:nowrap;}
+  code.inl{font-family:var(--mono);font-size:.9em;background:var(--surface-2);border:1px solid var(--line);
+    border-radius:5px;padding:1px 6px;}
+  pre{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 20px;
+    overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.65;box-shadow:var(--shadow);color:var(--ink);}
+  pre .cm{color:var(--o);} pre .kw{color:var(--accent-2);font-weight:600;} pre .hi{color:var(--c);font-weight:600;}
+  .note{border:1px solid var(--line);background:var(--surface-2);border-radius:12px;padding:16px 18px;
+    font-size:14.5px;display:flex;gap:12px;align-items:flex-start;margin:16px 0;}
+  .note .badge{font-family:var(--mono);font-size:10.5px;font-weight:800;letter-spacing:.06em;
+    padding:3px 8px;border-radius:6px;flex:none;text-transform:uppercase;white-space:nowrap;}
+  .note.safe .badge{color:var(--o);background:var(--o-soft);border:1px solid color-mix(in srgb,var(--o) 35%,transparent);}
+  .note.warn .badge{color:var(--s);background:var(--s-soft);border:1px solid color-mix(in srgb,var(--s) 35%,transparent);}
+  .note.bad .badge{color:var(--c);background:var(--c-soft);border:1px solid color-mix(in srgb,var(--c) 35%,transparent);}
+  .note.info .badge{color:var(--accent-2);background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent-2) 35%,transparent);}
+  .note p{margin:0;color:var(--muted);max-width:none;}
+  .note b{color:var(--ink);}
+  .x{color:var(--c);font-weight:700}
+  .ok{color:var(--o);font-weight:700}
+  .wn{color:var(--s);font-weight:700}
+  .src{font-family:var(--mono);font-size:12px;color:var(--faint);}
+  .fig{background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);
+    padding:18px;margin:16px 0;overflow-x:auto;}
+  .fig svg{display:block;min-width:680px;width:100%;height:auto;}
+  .fig text{font-family:var(--sans);fill:var(--ink);font-size:13px;}
+  .fig .t-mono{font-family:var(--mono);font-size:11.5px;fill:var(--muted);}
+  .fig .t-h{font-weight:700;font-size:14px;}
+  .fig .box{fill:var(--surface-2);stroke:var(--line-strong);}
+  .fig .box-a{fill:var(--accent-soft);stroke:var(--accent-2);}
+  .fig .ln{stroke:var(--muted);stroke-width:1.4;fill:none;}
+  .fig .ln-d{stroke:var(--faint);stroke-width:1.2;fill:none;stroke-dasharray:5 4;}
+  .fig .ah{fill:var(--muted);}
+  footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);
+    font-size:13px;color:var(--faint);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;
+    font-family:var(--mono);letter-spacing:.02em;}
+  @media print{ body{background:#fff;} .tldr,pre,.twrap,.fig{box-shadow:none;} }
+</style>
+
+
+<div class="wrap">
+
+  <header class="doc">
+    <div class="eyebrow">연동 설계 · Mpower v11 Decrypt Bridge</div>
+    <h1 class="title">엠파워 v11 암호화 문서 복호화 연동<br>— 잠긴 파일을 풀어서 분류하고, 푼 파일은 바로 지운다</h1>
+    <p class="lede">엠파워 v11 저장소의 문서는 <b>암호화·압축된 채</b> 디스크에 놓여 있다. 그대로 읽으면 분류기는 깨진 글자만 본다.
+    분류하기 직전에 엠파워의 <code class="inl">removeenc.sh</code> 로 <b>한 건씩 풀고</b>, 분류가 끝나면 <b>푼 파일을 곧바로 지우는</b> 길을 만든다.</p>
+    <div class="meta">
+      <span class="chip"><b>대상</b> Rust 판(MpowerClassify-rs) 먼저 · Python 판 같은 계약</span>
+      <span class="chip"><b>범위</b> --filelist 칸 추가 · 단일 파일 옵션 · 새 decrypt 모듈</span>
+      <span class="chip"><b>기존 실행</b> 변화 없음(복호화 정보를 안 주면 지금과 같다)</span>
+      <span class="chip"><b>상태</b> 설계 · <b class="ok">구현 완료 2026-10-12</b> (§14)</span>
+      <span class="chip"><b>작성일</b> 2026-10-12</span>
+    </div>
+  </header>
+
+  <div class="tldr">
+    <div class="k">한 줄 요약</div>
+    <p><b>다량 처리</b>는 <code class="inl">--filelist</code> 의 각 줄에 <code class="inl">mrk · enc_mode · zip_mode</code> 를 적어 주면 그 줄의 파일만 풀어서 분류한다.
+    <b>단일 처리</b>는 <code class="inl">--file</code> 에 <code class="inl">--decrypt --mrk … --enc-mode … --zip-mode …</code> 를 붙일 때만 푼다 — 안 붙이면 지금처럼 그대로 읽는다(이미 풀어 둔 파일용).
+    푼 파일은 임시 폴더에 <b>한 번에 한 건만</b> 존재하고, 분류가 끝나는 즉시 지운다.
+    복호화가 실패하거나 <b>풀린 결과가 수상하면 분류하지 않고</b> 오류 레코드로 남긴다 — 깨진 내용을 "공개 문서"로 판정하는 것이 가장 나쁜 사고이기 때문이다.</p>
+  </div>
+
+  <!-- 1 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>왜 필요한가 — 금고 안의 문서</h2></div>
+    <p>엠파워 v11 은 올라온 문서를 <b>금고에 넣어</b> 보관한다. 디스크에 있는 파일은 원본이 아니라 "암호화(+압축)된 덩어리"이고,
+    파일마다 다른 열쇠(<b>MRK</b>)로 잠겨 있다. 이름도 <code class="inl">급여대장.xlsx</code> 가 아니라 저장용 이름(<code class="inl">RFILE_NAME</code>)이다.</p>
+    <p>지금 MpowerClassify 에 이 파일을 그대로 주면 이렇게 된다.</p>
+    <pre><span class="cm"># 저장소의 파일을 그대로 분류하면</span>
+./MpowerClassify-rs --file /MOCOMSYS/storage/vol01/2026/10/SF_4958ef1c --simple
+<span class="cm"># → 본문을 못 읽는다. 주민번호 3,000건이 든 급여대장인데도 "신호 없음"으로 끝난다</span></pre>
+    <p>그래서 분류 직전에 <b>금고에서 꺼내는 단계</b>가 필요하다. 꺼내는 도구는 엠파워가 이미 갖고 있다.</p>
+    <pre>/MOCOMSYS/MpowerScript/removeenc/removeenc.sh \
+  -s <span class="kw">"저장된 파일의 전체 경로"</span> \
+  -t <span class="kw">"복호화 결과 파일의 전체 경로"</span> \
+  -k <span class="kw">"평문 MRK 값"</span> \
+  -e <span class="kw">"ENC_MODE 값"</span> \
+  -z <span class="kw">"ZIP_MODE 값"</span></pre>
+    <p>이 설계는 <b>이 명령을 MpowerClassify 가 대신 불러 주는 것</b>이다. 엠파워 쪽은 "파일 풀기 → 분류 → 지우기"를 직접 짜지 않고,
+    열쇠 정보만 넘기면 된다.</p>
+  </section>
+
+  <!-- 2 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>복호화 도구를 읽고 알게 된 것</h2></div>
+    <p>설계의 근거는 <code class="inl">C:\svn\Mpower_v11\PHP\Mpower_11.0\MpowerScript\removeenc</code> 의 소스다. 읽어서 확인한 사실만 적는다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>확인한 사실</th><th>어디서</th><th>설계에 주는 영향</th></tr></thead>
+        <tbody>
+          <tr><td><code class="inl">removeenc.sh</code> 는 <code class="inl">/MOCOMSYS/.bash_profile</code> 을 읽고 <code class="inl">php removeenc.php -- "$@"</code> 를 실행한다</td>
+              <td class="src">removeenc.sh</td>
+              <td>리눅스 전용이다. 파일 한 건마다 bash + php 프로세스가 하나씩 뜬다(§10 성능)</td></tr>
+          <tr><td>끝날 때 <b>종료코드를 화면(stdout)에도 한 줄 찍는다</b> (<code class="inl">echo $OUT</code>)</td>
+              <td class="src">removeenc.sh</td>
+              <td>우리 stdout 은 결과 JSON 이 나가는 자리다. 자식의 출력을 <b>그대로 흘리면 JSON 이 깨진다</b> → 반드시 가로챈다</td></tr>
+          <tr><td>실제 복호화는 PHP 확장 함수 <code class="inl">mpower_decrypt(원본, 대상, encMode, zipMode, mrk)</code> 한 번이다. <b>복호화와 압축 해제를 한 번에</b> 한다</td>
+              <td class="src">removeenc.php</td>
+              <td>압축 해제를 우리가 따로 할 필요가 없다. <code class="inl">-z</code> 만 정확히 넘기면 된다</td></tr>
+          <tr><td><code class="inl">-e</code> · <code class="inl">-z</code> 는 <b>0 도 올바른 값</b>이다(빈 값만 오류)</td>
+              <td class="src">removeenc.php</td>
+              <td>"0 이면 없는 것"으로 취급하면 안 된다. <b>칸이 없는 것</b>과 <b>값이 0 인 것</b>을 구분한다</td></tr>
+          <tr><td>실패는 종료코드로 알린다 — 254 인자 오류 · 56 PHP 확장 없음 · 14 MRK 문제 · 4 원본 못 엶 · 5 대상 못 엶 · 9 복호화 실패 · 10 압축 해제 실패 등</td>
+              <td class="src">removeenc.php</td>
+              <td>코드를 그대로 결과에 싣는다(§7). 엠파워 담당자가 번호만 보고 원인을 안다</td></tr>
+          <tr><td><b>KEK 로 감싼 MRK(<code class="inl">v2:</code> 로 시작)는 거부한다</b>(코드 14). 감싼 키를 그대로 쓰면 <code class="inl">mpower_decrypt</code> 가
+              <b>성공(0)을 돌려주면서 원본과 같은 크기의 무작위 바이트</b>를 낸다(2026-09-29 실측, 소스 주석)</td>
+              <td class="src">removeenc.php</td>
+              <td><b>"성공했다"는 말만 믿으면 안 된다.</b> 풀린 결과가 진짜 문서인지 한 번 더 본다(§6)</td></tr>
+          <tr><td>엠파워 DB 에는 파일마다 <code class="inl">SFILE_ID · MRK · ENC_MODE · ZIP_MODE · LFILE_NAME · LFILE_EXT · LFILE_SIZE · RFILE_PATH · RFILE_NAME · VOL_PATH</code> 가 있다</td>
+              <td class="src">SDR_Indexing_for_node_id.php</td>
+              <td>목록에 넣을 값이 전부 한 테이블(<code class="inl">SHARE_FILE_INFO</code>)에서 나온다. <b>원래 파일 이름</b>도 함께 받을 수 있다(§3)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note warn">
+      <span class="badge">핵심</span>
+      <p>열쇠가 틀려도 도구가 "성공"이라고 답할 수 있다. 그 결과를 분류하면 <b>아무 신호도 없으니 낮은 등급</b>이 나온다 —
+      기밀 문서가 공개 문서로 기록되는 것이다. 이 설계에서 가장 공들인 부분이 이 한 가지를 막는 것이다.</p>
+    </div>
+  </section>
+
+  <!-- 3 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>방식 1 — 다량 파일 처리 (--filelist)</h2></div>
+    <p>지금도 <code class="inl">--filelist</code> 는 <code class="inl">{path, sfile_id}</code> 를 한 줄씩 적은 목록을 받는다.
+    여기에 <b>열쇠 칸 세 개</b>와 <b>보조 칸 두 개</b>를 더한다. 옵션은 새로 생기지 않는다 — 목록에 열쇠가 적혀 있으면 풀고, 없으면 지금처럼 그대로 읽는다.</p>
+
+    <h3>목록 한 줄의 모양</h3>
+    <pre><span class="cm"># filelist.jsonl — 한 줄에 문서 하나</span>
+{"path":"/MOCOMSYS/storage/vol01/2026/10/SF_4958ef1c","sfile_id":"SF_4958ef1c…","<span class="hi">mrk</span>":"9f2c…e1","<span class="hi">enc_mode</span>":1,"<span class="hi">zip_mode</span>":1,"<span class="kw">name</span>":"2026년 10월 급여대장.xlsx","<span class="kw">size</span>":48211}
+{"path":"/MOCOMSYS/storage/vol01/2026/10/SF_77aa01b2","sfile_id":"SF_77aa01b2…","<span class="hi">mrk</span>":"41bd…07","<span class="hi">enc_mode</span>":1,"<span class="hi">zip_mode</span>":0,"<span class="kw">name</span>":"회의록_영업1팀.hwp"}
+<span class="cm"># 열쇠 칸이 없는 줄 = 이미 평문인 파일. 지금과 똑같이 그대로 읽는다</span>
+{"path":"/data/plain/사내규정.pdf","sfile_id":"SF_0c11d9aa…"}</pre>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>칸</th><th>필수</th><th>뜻</th><th>엠파워 DB 의 어느 값</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">path</td><td>필수(기존)</td><td>디스크에 <b>저장된</b> 파일의 전체 경로 → <code class="inl">-s</code></td><td class="mono">VOL_PATH + RFILE_PATH + RFILE_NAME</td></tr>
+          <tr><td class="mono">sfile_id</td><td>필수(기존)</td><td>문서 ID. 결과의 <code class="inl">doc_id</code> 로 그대로 나간다</td><td class="mono">SFILE_ID</td></tr>
+          <tr><td class="mono hi">mrk</td><td>복호화 시</td><td><b>평문</b> 열쇠 → <code class="inl">-k</code>. <code class="inl">v2:</code> 로 시작하면(감싼 키) 받지 않는다</td><td class="mono">MRK (KEK 를 벗긴 값)</td></tr>
+          <tr><td class="mono hi">enc_mode</td><td>복호화 시</td><td>암호화 방식 → <code class="inl">-e</code>. 숫자·문자열 모두 받는다. 0 도 올바른 값</td><td class="mono">ENC_MODE</td></tr>
+          <tr><td class="mono hi">zip_mode</td><td>복호화 시</td><td>저장소 압축 방식 → <code class="inl">-z</code>. 위와 같다</td><td class="mono">ZIP_MODE</td></tr>
+          <tr><td class="mono">name</td><td>권장</td><td><b>원래 파일 이름</b>. 저장 이름에는 확장자도 뜻도 없어서, 이것이 있어야 형식 판별과 파일명 신호가 제대로 돈다</td><td class="mono">LFILE_NAME</td></tr>
+          <tr><td class="mono">size</td><td>권장</td><td>원래 파일 크기(바이트). 풀린 결과와 견줘 덜 풀린 파일을 잡는다</td><td class="mono">LFILE_SIZE</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>csv 목록도 같다 — 첫 줄 헤더에 <code class="inl">path,sfile_id,mrk,enc_mode,zip_mode,name,size</code> 를 적으면 된다(칸 순서 무관).</p>
+
+    <h3>왜 name 을 받아야 하나 — 예</h3>
+    <p>저장된 파일 이름은 <code class="inl">SF_4958ef1c</code> 같은 값이다. 분류기는 파일 이름에서도 단서를 얻는데(예: 이름에 "급여대장"·"대외비"가 있으면 등급 신호),
+    저장 이름에는 그런 단서가 하나도 없다. 확장자가 없으니 xlsx 인지 hwp 인지도 이름으로는 알 수 없다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>name 을</th><th>임시 파일 이름</th><th>파일명 신호</th><th>결과</th></tr></thead>
+        <tbody>
+          <tr><td>줬다 — <code class="inl">2026년 10월 급여대장.xlsx</code></td><td class="mono">000001.xlsx</td><td class="ok">"급여대장" 을 본다</td><td>본문 + 파일명 신호 모두 반영</td></tr>
+          <tr><td>안 줬다</td><td class="mono">000001 (확장자 없음)</td><td class="x">볼 것이 없다</td><td>본문만으로 판정. 형식은 파일 앞머리(시그니처)로 추정</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>줄마다 일어나는 일</h3>
+    <ol class="plain">
+      <li><b>목록 읽기</b> — 시작할 때 목록 전체를 읽어 형식을 검사한다(지금과 같다).</li>
+      <li><b>풀기</b> — 이 줄에 열쇠가 있으면 <code class="inl">removeenc.sh</code> 를 불러 임시 폴더에 푼다.</li>
+      <li><b>확인</b> — 풀린 파일이 진짜 문서인지 본다(§6).</li>
+      <li><b>분류</b> — 풀린 파일로 추출·규칙·전파를 돈다. 결과의 <code class="inl">hash</code> 는 <b>풀린 내용</b>의 지문이다.</li>
+      <li><b>지우기</b> — 성공이든 실패든 <b>이 줄의 임시 파일을 지우고</b> 다음 줄로 간다.</li>
+    </ol>
+    <div class="note info">
+      <span class="badge">원칙</span>
+      <p><b>"한 번에 한 건만 풀려 있다."</b> 1만 건을 먼저 다 풀어 놓고 분류하면 평문 1만 건이 디스크에 한꺼번에 놓이고(용량·유출 위험),
+      중간에 죽으면 그대로 남는다. 그래서 풀기–분류–지우기를 한 건 단위로 묶는다.</p>
+    </div>
+
+    <h3>실행 예</h3>
+    <pre>./MpowerClassify-rs --filelist /tmp/job_20261012/filelist.jsonl \
+    --simple --format jsonl --out /tmp/job_20261012/result.jsonl --json-errors --progress
+
+<span class="cm"># 화면(stderr)</span>
+[MpowerClassify-rs] 목록 filelist.jsonl: 3건 적재(데이터 3줄) · 복호화 대상 2건
+[progress] 1/3 /MOCOMSYS/storage/vol01/2026/10/SF_4958ef1c
+[progress] 2/3 /MOCOMSYS/storage/vol01/2026/10/SF_77aa01b2
+[progress] 3/3 /data/plain/사내규정.pdf
+[summary] 총 3개 / … C=1 S=1 O=1 … <span class="kw">복호화 2건(실패 0)</span>, 총시간=…</pre>
+    <pre><span class="cm"># result.jsonl — file 은 목록에 준 path 그대로. 임시 경로는 어디에도 나가지 않는다</span>
+{"file":"/MOCOMSYS/storage/vol01/2026/10/SF_4958ef1c","hash":"7b1e…","doc_id":"SF_4958ef1c…","name":"2026년 10월 급여대장.xlsx","grade":"C","doctype":[…]}</pre>
+
+    <h3>목록 검사에 더해지는 규칙</h3>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>상황</th><th>처리</th><th>왜</th></tr></thead>
+        <tbody>
+          <tr><td>열쇠 칸 셋이 모두 있다</td><td class="ok">복호화 후 분류</td><td>—</td></tr>
+          <tr><td>열쇠 칸 셋이 모두 없다</td><td>그대로 분류(지금과 같다)</td><td>기존 목록이 그대로 돌아야 한다</td></tr>
+          <tr><td><code class="inl">enc_mode</code> 와 <code class="inl">zip_mode</code> 가 <b>둘 다 0</b></td><td>removeenc 를 부르지 않고 그대로 분류. <code class="inl">mrk</code> 는 없어도 된다</td>
+              <td>암호화·압축이 안 된 파일이다. 엠파워도 이 경우 복사만 한다(§12 확인 결과 ①)</td></tr>
+          <tr><td><b>일부만 있다</b> (예: mrk 는 있는데 zip_mode 가 없다)</td><td class="x">그 줄만 오류 레코드(F8)</td>
+              <td>"그대로 읽기"로 넘어가면 암호문을 분류한다. 목록을 만든 쪽이 빠뜨린 것이므로 조용히 넘기지 않는다</td></tr>
+          <tr><td>mrk 가 <code class="inl">v2:</code> 로 시작한다</td><td class="x">그 줄만 오류 레코드</td>
+              <td>감싼 키다. removeenc 를 부르기 전에 걸러 헛도는 프로세스를 줄인다</td></tr>
+          <tr><td>같은 path 에 sfile_id 가 둘(F3, 기존)</td><td class="x">전체 중단(지금과 같다)</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note safe">
+      <span class="badge">끄기</span>
+      <p>목록에 열쇠가 적혀 있어도 <code class="inl">--no-decrypt</code> 를 주면 풀지 않는다. 같은 목록으로 "이미 풀어 둔 사본 폴더"를 다시 분류해 볼 때 쓴다.</p>
+    </div>
+  </section>
+
+  <!-- 4 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>방식 2 — 단일 파일 처리 (--file)</h2></div>
+    <p>파일 하나를 분류할 때는 <b>풀지 말지를 부르는 쪽이 고른다.</b> 기본은 "풀지 않는다"다 — 그래야 지금 쓰는 명령이 하나도 바뀌지 않는다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>옵션</th><th>뜻</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">--decrypt</td><td>이 파일을 풀어서 분류한다. 아래 셋이 함께 있어야 한다</td></tr>
+          <tr><td class="mono">--mrk &lt;값&gt;</td><td>평문 MRK. 대신 환경변수 <code class="inl">CSOCLASSIFY_MRK</code> 로 줄 수도 있다(명령줄에 열쇠를 남기지 않는 길, §8)</td></tr>
+          <tr><td class="mono">--enc-mode &lt;값&gt;</td><td>ENC_MODE</td></tr>
+          <tr><td class="mono">--zip-mode &lt;값&gt;</td><td>ZIP_MODE</td></tr>
+          <tr><td class="mono">--name &lt;이름&gt;</td><td>(권장) 원래 파일 이름. 목록의 <code class="inl">name</code> 칸과 같은 역할</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>예 ① 저장소의 암호화 파일을 바로 분류</h3>
+    <pre>./MpowerClassify-rs --file /MOCOMSYS/storage/vol01/2026/10/SF_4958ef1c \
+    <span class="hi">--decrypt</span> --mrk "9f2c…e1" --enc-mode 1 --zip-mode 1 \
+    --name "2026년 10월 급여대장.xlsx" \
+    --simple --json-errors --daemon</pre>
+    <p>안에서 일어나는 일: 임시 폴더에 <code class="inl">000001.xlsx</code> 로 풀기 → 확인 → 분류 → 임시 파일 삭제 → 결과 출력.</p>
+
+    <h3>예 ② 이미 풀어 둔 파일을 분류 (추가 복호화 없음)</h3>
+    <pre><span class="cm"># 엠파워가 다른 용도(미리보기·색인)로 이미 풀어 둔 파일이 있다면 그대로 쓴다</span>
+./MpowerClassify-rs --file "/MOCOMSYS/tmp/dec/2026년 10월 급여대장.xlsx" --simple --json-errors</pre>
+    <p><code class="inl">--decrypt</code> 가 없으므로 removeenc 를 부르지 않는다. <b>지금과 완전히 같은 동작</b>이고, 이 파일은 우리가 만든 것이 아니므로 <b>지우지 않는다</b>.</p>
+
+    <h3>옵션 조합 규칙</h3>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>준 것</th><th>결과</th></tr></thead>
+        <tbody>
+          <tr><td><code class="inl">--file</code> 만</td><td>그대로 분류(지금과 같다)</td></tr>
+          <tr><td><code class="inl">--file --decrypt</code> + 열쇠 셋</td><td class="ok">풀어서 분류</td></tr>
+          <tr><td><code class="inl">--decrypt</code> 인데 열쇠 셋 중 빠진 것이 있다</td><td class="x">시작 전에 오류로 종료(코드 3, <code class="inl">decrypt_args_invalid</code>)</td></tr>
+          <tr><td><code class="inl">--mrk</code> 는 줬는데 <code class="inl">--decrypt</code> 가 없다</td><td class="x">같은 오류. "풀릴 줄 알았는데 안 풀린" 상태를 만들지 않는다</td></tr>
+          <tr><td><code class="inl">--dir --decrypt</code></td><td class="x">같은 오류. 폴더에는 파일마다 다른 열쇠를 줄 방법이 없다 → <code class="inl">--filelist</code> 를 쓴다</td></tr>
+          <tr><td><code class="inl">--file X --filelist L</code> (목록에 X 의 열쇠가 있다)</td><td>목록은 지금처럼 "사전" 역할 — sfile_id 와 함께 <b>열쇠도 목록에서</b> 가져와 푼다. 명령줄에 준 값이 있으면 그것이 우선</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 5 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h2>removeenc.sh 를 부르는 방법</h2></div>
+    <h3>명령 조립 — 셸을 거치지 않는다</h3>
+    <p>문자열을 이어 붙여 <code class="inl">sh -c "…"</code> 로 실행하지 않는다. 실행 파일과 인자를 <b>낱개로</b> 넘긴다
+    (Rust <code class="inl">Command::new(cmd).arg("-s").arg(path)…</code> · Python <code class="inl">subprocess.run([cmd, "-s", path, …])</code>).</p>
+    <p>이유는 파일 이름이다. 엠파워에는 <code class="inl">보고서 (최종) "수정본".hwp</code> 처럼 공백·따옴표·괄호가 든 이름이 흔하고,
+    <code class="inl">$(rm -rf …)</code> 같은 글자가 든 이름도 올릴 수 있다. 낱개로 넘기면 이런 글자가 <b>명령으로 해석될 길이 없다</b>.</p>
+
+    <h3>도구 위치</h3>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>우선순위</th><th>어디서</th><th>값</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td><code class="inl">--decrypt-cmd &lt;경로&gt;</code></td><td>이번 실행에만</td></tr>
+          <tr><td>2</td><td>환경변수 <code class="inl">CSOCLASSIFY_DECRYPT_CMD</code></td><td>서버에 한 번 설정</td></tr>
+          <tr><td>3</td><td>기본값</td><td class="mono">/MOCOMSYS/MpowerScript/removeenc/removeenc.sh</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>복호화할 문서가 한 건이라도 있으면 <b>시작할 때</b> 이 파일이 있고 실행할 수 있는지 먼저 본다. 없으면 한 건도 읽지 않고 끝낸다
+    (<code class="inl">decrypt_cmd_missing</code>). 1만 건이 전부 같은 이유로 실패한 결과 파일을 만드는 것보다 낫다.</p>
+    <div class="note info">
+      <span class="badge">윈도우</span>
+      <p><code class="inl">removeenc.sh</code> 는 리눅스 서버에만 있다. 윈도우의 <code class="inl">MpowerClassify.exe</code> 에서 <code class="inl">--decrypt</code> 를 주면 도구를 못 찾아 위 오류로 끝난다.
+      윈도우에서는 방식 2의 예 ②(이미 풀어 둔 파일)만 쓸 수 있다. <code class="inl">--decrypt-cmd</code> 를 둔 덕에 개발 PC 에서는 <b>가짜 도구</b>(파일을 복사만 하는 스크립트)로 흐름을 시험할 수 있다(§11).</p>
+    </div>
+
+    <h3>출력과 종료코드</h3>
+    <ul class="plain">
+      <li><b>자식의 stdout·stderr 는 가로채서 버퍼에 담는다.</b> removeenc.sh 가 찍는 종료코드 숫자 한 줄과 사용법 문구가 우리 결과 JSON 에 섞이지 않게 한다.</li>
+      <li><b>성공 여부는 프로세스 종료코드로만</b> 판단한다(0 = 성공). 화면에 찍힌 숫자를 해석하지 않는다.</li>
+      <li>실패하면 가로챈 문구의 첫 줄을 오류 사유에 붙인다(예: <code class="inl">mrk is KEK-wrapped (v2:)…</code>). removeenc 는 열쇠 값을 출력하지 않으므로 그대로 실어도 열쇠가 새지 않는다.</li>
+      <li><b>시간 제한</b> — <code class="inl">--decrypt-timeout &lt;초&gt;</code>(기본 60, 기존 <code class="inl">--parser-timeout</code> 과 같은 값). 넘으면 자식을 죽이고 그 문서만 실패로 남긴다.</li>
+    </ul>
+  </section>
+
+  <!-- 6 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">06</span><h2>"성공"을 한 번 더 확인한다</h2></div>
+    <p>§2 에서 본 대로, 열쇠가 잘못돼도 도구는 0(성공)을 돌려줄 수 있다. 그래서 풀린 파일을 분류기에 넘기기 전에 세 가지를 본다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>#</th><th>검사</th><th>잡아내는 것</th><th>실패 시</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>결과 파일이 있고 0바이트가 아니다</td><td>도구가 아무것도 쓰지 않은 경우</td><td class="mono">decrypt_failed / empty_output</td></tr>
+          <tr><td>2</td><td>목록에 <code class="inl">size</code> 가 있으면 크기가 같다</td><td>쓰다 만 파일 · 압축이 안 풀린 파일</td><td class="mono">decrypt_failed / size_mismatch</td></tr>
+          <tr><td>3</td><td><b>파일 앞머리(시그니처)가 확장자와 맞는다</b></td><td><b>틀린 열쇠로 풀린 무작위 바이트</b></td><td class="mono">decrypt_failed / signature_mismatch</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>시그니처 검사 — 예</h3>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>확장자(name 에서)</th><th>정상이라면 파일의 첫 바이트</th></tr></thead>
+        <tbody>
+          <tr><td>docx · xlsx · pptx · hwpx · zip</td><td class="mono">50 4B ("PK")</td></tr>
+          <tr><td>pdf</td><td class="mono">25 50 44 46 ("%PDF")</td></tr>
+          <tr><td>hwp · doc · xls · ppt</td><td class="mono">D0 CF 11 E0 (OLE 복합 문서)</td></tr>
+          <tr><td>txt · csv 등 글자 파일</td><td>시그니처가 없다 → 검사 3은 건너뛴다(아래 한계)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><b>예:</b> <code class="inl">급여대장.xlsx</code> 를 풀었는데 첫 바이트가 <code class="inl">A7 3E 91 0C</code> 였다 → xlsx 는 반드시 "PK" 로 시작하므로 제대로 풀린 것이 아니다 →
+    분류하지 않고 <code class="inl">decrypt_failed(signature_mismatch)</code> 레코드를 낸다. 등급 칸은 비운다(<code class="inl">null</code>).</p>
+    <div class="note warn">
+      <span class="badge">한계</span>
+      <p>크기 검사(2)는 틀린 열쇠를 못 잡는다 — 무작위 바이트도 원본과 크기가 같기 때문이다. 틀린 열쇠를 잡는 것은 시그니처 검사(3)이고,
+      <b>txt 처럼 시그니처가 없는 형식</b>과 <b>name 을 안 준 경우</b>에는 이 검사가 약해진다. 이때는 추출 단계가 "글자로 읽히지 않는다"고 판단하면 추출 실패로 남는다.
+      그래서 <code class="inl">name</code> 칸을 "권장"으로 둔다.</p>
+    </div>
+  </section>
+
+  <!-- 7 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">07</span><h2>실패했을 때 — 파일 문제와 환경 문제를 나눈다</h2></div>
+    <p>기준은 하나다. <b>"다음 파일도 똑같이 실패할 것인가?"</b></p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>갈래</th><th>예</th><th>처리</th></tr></thead>
+        <tbody>
+          <tr><td><b>파일 문제</b> — 이 파일만의 사정</td><td>열쇠가 틀림(9) · 원본이 없음(4) · 압축 해제 실패(10) · 감싼 키(14) · 시그니처 불일치 · 시간 초과</td>
+              <td>그 문서만 오류 레코드로 남기고 <b>다음으로 계속</b>. 끝나면 종료코드 1(일부 실패)</td></tr>
+          <tr><td><b>환경 문제</b> — 서버의 사정</td><td>도구 파일이 없음 · PHP 확장을 못 읽음(56) · 임시 폴더를 못 만듦</td>
+              <td><b>즉시 전체 중단.</b> 남은 9,999건도 같은 이유로 실패할 것이므로 계속할 이유가 없다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>새 오류 이름·번호 (기존 오류 계약 <span class="src">plan/CLI-오류출력-설계.html</span> 에 추가)</h3>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>kind</th><th>code</th><th>종료코드</th><th>언제</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">decrypt_args_invalid</td><td class="mono">1014</td><td class="mono">3</td><td><code class="inl">--decrypt</code> 조합이 틀렸다(§4 표)</td></tr>
+          <tr><td class="mono">decrypt_cmd_missing</td><td class="mono">1015</td><td class="mono">3</td><td>복호화 도구가 없거나 실행 권한이 없다</td></tr>
+          <tr><td class="mono">decrypt_failed</td><td class="mono">3005</td><td class="mono">1</td><td>이 문서를 풀지 못했다(파일 문제). 레코드 단위</td></tr>
+          <tr><td class="mono">decrypt_unavailable</td><td class="mono">3006</td><td class="mono">2</td><td>복호화 환경이 고장이다(환경 문제). 실행 전체 중단</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>오류 레코드의 모양</h3>
+    <pre>{
+  "file": "/MOCOMSYS/storage/vol01/2026/10/SF_77aa01b2",
+  "name": "회의록_영업1팀.hwp",
+  "doc_id": "SF_77aa01b2…", "doc_id_source": "sfile_id",
+  <span class="hi">"grade": null</span>,
+  "error": {
+    "stage": "decrypt",
+    "kind": "decrypt_failed",
+    "detail": "signature_mismatch",          <span class="cm">// 또는 removeenc_exit · timeout · empty_output · size_mismatch · key_wrapped · info_incomplete</span>
+    "rc": 0,                                  <span class="cm">// removeenc 종료코드(부르지 않았으면 null)</span>
+    "reason": "hwp 파일인데 앞머리가 OLE 형식이 아닙니다 — 열쇠(mrk)와 모드가 맞는지 확인하세요"
+  }
+}</pre>
+    <p><span class="src">[구현 시 조정]</span> 처음 설계는 <code class="inl">reason</code> 에 사유 이름을, <code class="inl">message</code> 에 문장을 뒀다.
+    기존 실패 레코드(<code class="inl">extract_failed</code> 등)는 <code class="inl">reason</code> 이 사람이 읽는 문장이고 <code class="inl">--simple</code> 이 그 값을 그대로 싣는다.
+    같은 틀을 지키려고 문장은 <code class="inl">reason</code>, 사유 이름은 <code class="inl">detail</code> 로 옮겼다.</p>
+    <p>기존 "목록에 있으나 파일이 없음"(<code class="inl">file_missing</code>) 레코드와 같은 틀이다. 엠파워는 <code class="inl">doc_id</code> 로 어느 문서가 실패했는지,
+    <code class="inl">rc</code> 로 removeenc 의 어느 오류였는지 바로 안다.</p>
+    <div class="note bad">
+      <span class="badge">금지</span>
+      <p>복호화에 실패한 문서를 <b>"그러면 암호문 그대로라도 분류해 보자"로 넘기지 않는다.</b> 등급이 나와 버리면 그것이 정상 결과처럼 DB 에 들어간다.
+      실패는 언제나 <code class="inl">grade: null</code> + <code class="inl">error</code> 다.</p>
+    </div>
+  </section>
+
+  <!-- 8 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">08</span><h2>열쇠와 평문을 다루는 규칙</h2></div>
+    <p>이 기능은 두 가지 민감한 것을 손에 쥔다 — <b>열쇠(MRK)</b>와 <b>풀린 원문</b>. 둘 다 "쓰는 순간에만 있고, 흔적은 남기지 않는다"가 원칙이다.</p>
+
+    <h3>풀린 원문 (임시 파일)</h3>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>항목</th><th>설계</th></tr></thead>
+        <tbody>
+          <tr><td>위치</td><td><code class="inl">--decrypt-tmp &lt;폴더&gt;</code> → 환경변수 <code class="inl">CSOCLASSIFY_DECRYPT_TMP</code> → 시스템 임시 폴더.
+              그 아래에 <code class="inl">cso_dec_&lt;프로세스번호&gt;/</code> 를 만든다(기존 압축 해제 폴더 <code class="inl">cso_zip_&lt;pid&gt;</code> 와 같은 관례)</td></tr>
+          <tr><td>권한</td><td>폴더 0700 · 파일 0600. 같은 서버의 다른 계정이 읽지 못하게</td></tr>
+          <tr><td>파일 이름</td><td><code class="inl">&lt;일련번호&gt;.&lt;확장자&gt;</code> (예: <code class="inl">000012.hwp</code>). 원래 이름을 쓰지 않는다 — 이름 자체가 민감할 수 있고, 특수문자로 경로가 깨질 수 있다</td></tr>
+          <tr><td>지우는 때</td><td>① <b>문서 한 건이 끝날 때마다</b>(성공·실패 무관) ② 실행이 끝날 때 폴더째 ③ Ctrl+C 를 받았을 때(기존 중단 처리에 <code class="inl">cso_dec_</code> 추가) ④ 내부 오류(패닉)로 죽을 때</td></tr>
+          <tr><td>강제 종료(kill -9) 뒤</td><td>지울 기회가 없다. 다음 실행이 시작할 때 <b>주인 프로세스가 죽은 <code class="inl">cso_dec_*</code> 폴더</b>를 찾아 지운다</td></tr>
+          <tr><td>결과·로그</td><td>임시 경로는 결과 레코드·로그·<code class="inl">--textsave</code> 색인 어디에도 쓰지 않는다. 언제나 목록의 <code class="inl">path</code> 를 쓴다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note safe">
+      <span class="badge">운영 팁</span>
+      <p>임시 폴더를 메모리 디스크로 잡으면(<code class="inl">--decrypt-tmp /dev/shm/cso</code>) 풀린 원문이 <b>물리 디스크에 한 번도 닿지 않는다</b>.
+      한 번에 한 건만 풀려 있으므로 필요한 메모리는 "가장 큰 문서 하나"만큼이다(기본 상한 100MB).</p>
+    </div>
+
+    <h3>열쇠 (MRK)</h3>
+    <ul class="plain">
+      <li><b>로그에 쓰지 않는다.</b> 지금 일반 로그(<code class="inl">class_날짜.log</code>)는 실행 명령을 통째로 기록한다 → <code class="inl">--mrk</code> 뒤의 값은 <code class="inl">****</code> 로 가려서 기록한다. 오류 문구·디버그 출력도 같다.</li>
+      <li><b>결과에 쓰지 않는다.</b> 레코드에는 "복호화했다"는 사실(<code class="inl">meta.decrypted: true</code>)만 남긴다.</li>
+      <li><b>목록 파일은 부른 쪽의 것</b>이다. 우리는 읽기만 하고 지우지 않는다. 엠파워 쪽에서 <b>권한 600 으로 만들고, 분류가 끝나면 지우는 것</b>을 연동 규칙으로 둔다(§12).</li>
+      <li><b>명령줄 노출</b> — <code class="inl">--mrk</code> 와 removeenc 의 <code class="inl">-k</code> 는 실행 중에 <code class="inl">ps</code> 로 같은 서버의 다른 계정에게 보일 수 있다.
+        우리 쪽은 <code class="inl">CSOCLASSIFY_MRK</code> 환경변수나 목록 방식으로 피할 수 있지만, <b>removeenc.sh 의 <code class="inl">-k</code> 는 엠파워 도구의 인터페이스라 이 설계에서 바꿀 수 없다</b>.
+        분류 서버를 전용 계정으로 운영하는 것으로 대응하고, 도구 개선은 §12 의 논의 항목으로 넘긴다.</li>
+    </ul>
+  </section>
+
+  <!-- 9 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">09</span><h2>기존 기능과 만나는 자리</h2></div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>기존 기능</th><th>복호화와 함께일 때</th></tr></thead>
+        <tbody>
+          <tr><td><b>압축파일 펼치기</b> (zip·7z·rar…)</td>
+              <td>순서는 <b>복호화 → 펼치기 → 분류</b>. 헷갈리기 쉬운 점: <code class="inl">zip_mode</code> 는 <b>엠파워가 저장할 때 건 압축</b>이라 removeenc 가 푼다.
+              사용자가 올린 <code class="inl">자료.zip</code> 은 그와 별개로, 풀린 뒤 지금처럼 우리가 내부 문서로 펼친다</td></tr>
+          <tr><td><b>문서 크기 상한</b> (<code class="inl">--max-file-mb</code>)</td>
+              <td>두 번 본다. ① 풀기 전 저장 파일 크기 — 터무니없이 크면 풀지도 않는다 ② 풀린 뒤 실제 크기 — 지금과 같은 판정</td></tr>
+          <tr><td><b>hash · doc_id</b></td>
+              <td><code class="inl">hash</code> 는 <b>풀린 내용</b>의 SHA-256 이다(같은 문서는 어디에 저장돼 있든 같은 값). <code class="inl">doc_id</code> 는 지금처럼 목록의 <code class="inl">sfile_id</code></td></tr>
+          <tr><td><b>목록에만 있고 파일이 없음</b> (<code class="inl">file_missing</code>)</td><td>지금과 같다. 풀기 전에 원본이 있는지 먼저 본다</td></tr>
+          <tr><td><b>임베딩 상주 서버</b> (<code class="inl">--daemon</code>)</td><td>관계없다. 서버는 텍스트만 받는다 — 열쇠도 파일도 서버로 가지 않는다</td></tr>
+          <tr><td><b>본문 저장</b> (<code class="inl">--textsave</code>)</td><td>그대로 동작한다. 단, 복호화한 문서의 본문이 평문으로 남는다는 점은 기존 경고와 같다</td></tr>
+          <tr><td><b><code class="inl">--text-only</code></b></td><td>복호화를 똑같이 지원한다(추출만 확인해 볼 때 쓴다)</td></tr>
+          <tr><td><b><code class="inl">--dir</code> · <code class="inl">--files-from</code></b></td><td>변화 없다. 목록을 "사전"으로 함께 주면 목록에 열쇠가 있는 파일만 푼다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note warn">
+      <span class="badge">구조 변경</span>
+      <p>지금 코드는 <b>"대상 전부 모으기 → 압축 전부 펼치기 → 한 건씩 분류"</b> 순서다(<span class="src">Rust/src/main.rs — collect_files → archive::expand_paths → 루프</span>).
+      복호화를 "펼치기" 앞에 그대로 끼우면 <b>모든 문서를 먼저 다 풀게 된다</b> — §3 의 원칙에 어긋난다.
+      그래서 복호화 대상은 <b>루프 안에서</b> 풀기 → (압축이면) 펼치기 → 분류 → 지우기로 처리하도록 이 부분을 손본다. 구현에서 가장 큰 변경이다.</p>
+    </div>
+  </section>
+
+  <!-- 10 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">10</span><h2>성능 — 아직 재지 않은 것</h2></div>
+    <p>문서 한 건마다 <b>bash 하나 + php 하나</b>가 새로 뜬다(<code class="inl">.bash_profile</code> 읽기, PHP 확장 로딩 포함). 이 비용은 <b>아직 측정하지 않았다</b> —
+    구현 뒤 운영 서버에서 건당 시간을 재서 이 절에 채운다.</p>
+    <ul class="plain">
+      <li>분류 자체는 <code class="inl">--filelist</code> 로 한 프로세스에 몰면 모델을 한 번만 읽으므로 빠르다. 그러면 <b>전체 시간에서 복호화 호출이 차지하는 몫</b>이 커질 수 있다.</li>
+      <li>건당 비용이 크게 나오면 다음 단계 후보는 "removeenc 를 여러 건 한 번에 받는 모드"다. 엠파워 도구를 고쳐야 하므로 이번 범위가 아니다(§12).</li>
+      <li>이번 설계는 <b>순차 처리</b>다. 병렬 복호화는 "한 번에 한 건만 풀려 있다"는 원칙과 부딪히므로 측정 결과를 보고 따로 정한다.</li>
+    </ul>
+  </section>
+
+  <!-- 11 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">11</span><h2>구현 범위와 순서</h2></div>
+    <p>리눅스 서버에서 도는 것이 Rust 판이므로 <b>Rust 를 먼저</b> 하고, Python 판은 같은 옵션·같은 오류 번호로 맞춘다(두 판의 목록 해석이 달라지면 같은 목록이 다르게 읽힌다).</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>단계</th><th>내용</th><th>파일</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>목록에 <code class="inl">mrk · enc_mode · zip_mode · name · size</code> 칸 읽기 + F8(일부만 있음) 판정. 열쇠가 디버그 출력에 찍히지 않게 가림</td>
+              <td class="src">Rust/src/filelist.rs · src/csoclassify/filelist.py</td></tr>
+          <tr><td>2</td><td><b>새 decrypt 모듈</b> — 도구 위치 찾기 · 사전 점검 · 낱개 인자로 실행 · 출력 가로채기 · 시간 제한 · 결과 확인(§6) · 임시 파일 관리</td>
+              <td class="src">Rust/src/decrypt.rs(신규) · src/csoclassify/decrypt.py(신규)</td></tr>
+          <tr><td>3</td><td>옵션 추가(<code class="inl">--decrypt --mrk --enc-mode --zip-mode --name --no-decrypt --decrypt-cmd --decrypt-tmp --decrypt-timeout</code>) · 조합 검사 · 도움말 · 로그의 열쇠 가림</td>
+              <td class="src">Rust/src/main.rs · src/csoclassify/cli.py</td></tr>
+          <tr><td>4</td><td>처리 루프 손보기 — 한 건씩 풀기→펼치기→분류→지우기. 중단 처리에 <code class="inl">cso_dec_</code> 추가 · 죽은 폴더 청소</td>
+              <td class="src">Rust/src/main.rs · src/csoclassify/cli.py</td></tr>
+          <tr><td>5</td><td>오류 이름 4개 추가(§7) · 오류 레코드 · 요약줄에 "복호화 N건(실패 M)"</td>
+              <td class="src">Rust/src/errcodes.rs · src/csoclassify/errcodes.py</td></tr>
+          <tr><td>6</td><td>실행가이드(리눅스)에 "엠파워 v11 암호화 문서 분류" 절 추가</td>
+              <td class="src">doc/MpowerClassify-실행가이드-linux.html</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>시험 — 가짜 도구로 흐름을 먼저 검증한다</h3>
+    <p>개발 PC 에는 removeenc.sh 도, 엠파워 PHP 확장도 없다. <code class="inl">--decrypt-cmd</code> 로 <b>같은 인자를 받는 가짜 도구</b>를 끼워 시험한다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>가짜 도구의 동작</th><th>확인하는 것</th></tr></thead>
+        <tbody>
+          <tr><td><code class="inl">-s</code> 를 <code class="inl">-t</code> 로 복사하고 0</td><td>정상 흐름 · 결과의 file/hash/doc_id · <b>끝난 뒤 임시 폴더가 비어 있는지</b></td></tr>
+          <tr><td>무작위 바이트를 쓰고 0</td><td>시그니처 검사가 잡는지 · <code class="inl">grade</code> 가 null 인지(§6)</td></tr>
+          <tr><td>아무것도 안 쓰고 0 / 쓰고 9</td><td><code class="inl">empty_output</code> · <code class="inl">removeenc_exit</code>, 다음 문서로 계속 가는지</td></tr>
+          <tr><td>56 으로 종료</td><td>즉시 전체 중단(<code class="inl">decrypt_unavailable</code>, 종료코드 2)</td></tr>
+          <tr><td>stdout 에 잡다한 글자를 찍음</td><td>결과 JSON 이 깨지지 않는지</td></tr>
+          <tr><td>120초 동안 잠</td><td>시간 제한으로 끊고 임시 파일을 지우는지</td></tr>
+          <tr><td>(파일 이름에 공백·따옴표·<code class="inl">$( )</code>)</td><td>인자가 글자 그대로 전달되는지</td></tr>
+          <tr><td>(열쇠를 넣고 실행한 뒤 로그 검색)</td><td>로그·결과·오류 어디에도 열쇠 값이 없는지</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>마지막으로 운영 서버에서 <b>진짜 removeenc.sh</b> 로 형식별(hwp·hwpx·docx·xlsx·pptx·pdf·txt) 한 건씩, 그리고 일부러 틀린 열쇠 한 건을 돌려 확인한다.</p>
+  </section>
+
+  <!-- 12 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">12</span><h2>엠파워 v11 쪽과 확인할 것</h2></div>
+    <p>소스만으로는 알 수 없어서 <b>가정으로 둔 것</b>들이다. 구현 전에 답을 받아야 한다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>#</th><th>질문</th><th>지금의 가정</th><th>답에 따라 바뀌는 것</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td><code class="inl">ENC_MODE=0</code> · <code class="inl">ZIP_MODE=0</code> 은 "암호화·압축 없음"인가?</td>
+              <td><b class="ok">확인됨(2026-10-12, 소스)</b> — 맞다. 아래 "확인 결과 ①"</td>
+              <td>둘 다 0 이면 removeenc 를 <b>부르지 않고 그대로 읽는다</b>(엠파워 자신도 그렇게 한다)</td></tr>
+          <tr><td>2</td><td>목록의 <code class="inl">path</code> 는 <code class="inl">VOL_PATH + RFILE_PATH + RFILE_NAME</code> 이 맞는가? <code class="inl">LFILE_NAME</code> · <code class="inl">LFILE_SIZE</code> 도 줄 수 있는가?</td>
+              <td><b class="ok">확인됨(소스)</b> — 맞다. 아래 "확인 결과 ②"</td>
+              <td><code class="inl">size</code> 를 "선택"에서 <b>"권장"</b>으로 올린다(엠파워도 풀린 크기를 LFILE_SIZE 와 견준다)</td></tr>
+          <tr><td>3</td><td>DB 의 MRK 가 KEK 로 감싸여 있을 때(<code class="inl">v2:</code>), <b>벗기는 것은 엠파워 쪽</b>이 맞는가?</td>
+              <td><b class="ok">확인됨(소스)</b> — 맞다. 아래 "확인 결과 ③"</td>
+              <td>목록을 만드는 엠파워 코드가 <code class="inl">decryptMRKWithKEK()</code> 를 거쳐야 한다. 우리 쪽 <code class="inl">v2:</code> 거부 규칙은 그대로 둔다</td></tr>
+          <tr><td>4</td><td>분류를 돌리는 계정이 저장소 파일을 읽고 removeenc.sh 를 실행할 수 있는가?</td>
+              <td>가능하다(엠파워 서비스 계정으로 실행)</td>
+              <td>아니면 권한 설정 절차를 실행가이드에 적어야 한다</td></tr>
+          <tr><td>5</td><td>열쇠가 든 목록 파일을 <b>권한 600 으로 만들고 분류 뒤 지우는 것</b>을 엠파워 쪽 규칙으로 둘 수 있는가?</td>
+              <td>가능하다</td>
+              <td>—</td></tr>
+          <tr><td>6</td><td>(다음 단계) removeenc 가 열쇠를 명령줄 대신 표준입력으로 받거나, 여러 건을 한 번에 받게 고칠 수 있는가?</td>
+              <td>이번 범위 아님</td>
+              <td>가능하면 <code class="inl">ps</code> 노출(§8)과 건당 비용(§10)이 함께 풀린다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>확인 결과 ① — ENC_MODE=0 · ZIP_MODE=0 은 "그냥 복사"다</h3>
+    <p>엠파워의 복호화 공통 함수는 둘 다 0 이면 <b>복호화 함수를 부르지 않고 파일을 복사</b>한다. 0 바이트 파일도 같다.</p>
+    <pre><span class="cm">// www/classes/class.MCrypt.php:1021  (mpowerDecrypt)</span>
+if ($srcFileSize == 0 || (<span class="hi">$encMode == 0 &amp;&amp; $zipMode == 0</span>)) {
+    <span class="cm">// 복사를 수행한다.</span>
+    $this-&gt;utilClass-&gt;copyFile($srcFilePath, $tgtFilePath);
+} else {
+    $MRK = $this-&gt;decryptMRKWithKEK(trim($MRK));
+    $nativeCode = mpower_decrypt($srcFilePath, $tgtFilePath, $encMode, $zipMode, $MRK);
+}</pre>
+    <ul class="plain">
+      <li>암호화할 때도 같은 판정이다(<span class="src">class.MCrypt.php:884</span>). 썸네일·압축 작업 등도 <code class="inl">ENC_MODE != 0 || ZIP_MODE != 0</code> 일 때만 복호화한다(<span class="src">class.MImage.php:564 · class.MShaCompressWorker.php:567</span>).</li>
+      <li>둘은 <b>따로 논다</b> — <code class="inl">ENC_MODE=0, ZIP_MODE≠0</code>(압축만) 이나 <code class="inl">ENC_MODE≠0, ZIP_MODE=0</code>(암호화만)이면 removeenc 가 필요하다.</li>
+      <li>0 이 아닌 ENC_MODE 는 알고리즘 번호다(예: 3 = CTR 계열, 8·9·18·19 = 256비트 키 — <span class="src">class.MCryptStreamReader.php:30-36</span>). 우리는 값을 해석하지 않고 그대로 넘긴다.</li>
+      <li>개발 DB 실측 기록: <code class="inl">(0,0)</code> 5건 · <code class="inl">(3,0)</code> 53건, <code class="inl">ZIP_MODE≠0</code> 은 없음 — 운영 사이트에는 있을 수 있다(<span class="src">specs/033-file-compress-zip/streaming-archive/handoff.md</span>).</li>
+    </ul>
+    <div class="note warn">
+      <span class="badge">설계 변경</span>
+      <p><b>둘 다 0 인 줄은 removeenc 를 부르지 않고 저장 파일을 그대로 읽는다.</b> 시간을 아끼는 것만이 아니다 — <code class="inl">removeenc.php</code> 는 <code class="inl">-k</code> 가 비어 있으면
+      인자 오류(254)로 끝나므로, 암호화되지 않은 파일에 MRK 가 없을 때 부르면 <b>멀쩡한 파일이 실패로 기록된다</b>.
+      따라서 이 경우 <code class="inl">mrk</code> 칸은 없어도 되고(F8 예외), 임시 파일도 만들지 않는다. 0 바이트 파일도 같은 길로 간다.</p>
+    </div>
+
+    <h3>확인 결과 ② — 경로와 이름·크기</h3>
+    <ul class="plain">
+      <li>저장 파일 경로는 엠파워 전체에서 <code class="inl">VOL_PATH . '/' . RFILE_PATH . '/' . RFILE_NAME</code> 로 만든다
+        (<span class="src">www/updown/reqWebDownloadFileWithParam.php:193 · class.MSDR.php:461 · class.MShaDownload.php:1126 외 다수</span>). <code class="inl">VOL_PATH</code> 는 <code class="inl">STORAGE_INFO</code> 를 <code class="inl">VOL_ID</code> 로 이어서 얻는다.</li>
+      <li><code class="inl">LFILE_NAME · LFILE_EXT · LFILE_SIZE · MRK · ENC_MODE · ZIP_MODE</code> 는 모두 <code class="inl">SHARE_FILE_INFO</code> 한 행에 있어 같은 조회로 나온다(<span class="src">removeenc/SDR_Indexing_for_node_id.php</span> 의 SELECT).</li>
+      <li>엠파워는 풀린 파일 크기가 <code class="inl">LFILE_SIZE</code> 와 다르면 실패로 본다(<span class="src">class.MCrypt.php:1089, ERR_UNMATCHED_FILE_SIZE</span>). <code class="inl">removeenc.php</code> 에는 이 검사가 없으므로 <b>우리가 <code class="inl">size</code> 로 대신 한다</b>.</li>
+      <li><b>예외</b> — 볼륨이 S3 인 경우에는 로컬 경로가 없다(<span class="src">class.MCrypt.php mpowerDecrypt2 설명: "S3 에 파일이 있는 경우 VOL_ID, RFILE_NAME"</span>). removeenc.sh 는 로컬 파일만 받으므로 <b>S3 볼륨 문서는 이 방식의 대상이 아니다</b>. 대상 사이트가 S3 를 쓰면 따로 정해야 한다.</li>
+    </ul>
+
+    <h3>확인 결과 ③ — KEK 는 엠파워 쪽에서 벗긴다</h3>
+    <ul class="plain">
+      <li><code class="inl">MCrypt::decryptMRKWithKEK()</code> 는 <code class="inl">v2:</code> 로 시작하면 KEK(AES-256-GCM)로 풀고, <b>아니면 그대로 돌려준다</b>(옛 평문 MRK). 모든 MRK 에 무조건 불러도 안전하다(<span class="src">class.MCrypt.php:328</span>).</li>
+      <li>KEK 는 서버의 키 파일(<code class="inl">__MRK_KEK_FILE</code>, 권한 0600, 웹 루트 밖)에서 읽는다. <b>MpowerClassify 는 이 키에 접근할 수 없고, 접근해서도 안 된다.</b></li>
+      <li><code class="inl">removeenc.php</code> 스스로 "감싼 키는 호출자가 벗겨서 넘겨야 한다"고 적고 거부한다(코드 14).</li>
+      <li>같은 일을 하는 기존 코드가 본보기다 — 검색 색인(<span class="src">class.MSDR.php:478 sfileRemoveEnc</span>)이 <code class="inl">decryptMRKWithKEK</code> 로 벗긴 뒤 <code class="inl">removeenc.sh</code> 를 부른다. 엠파워가 목록을 만들 때 이 순서를 그대로 따르면 된다.</li>
+      <li>v11 은 MRK KEK 가 필수 적용이다(<span class="src">www/admin/batch/gen_mrk_kek.php</span>). 즉 <b>새로 올라온 파일의 DB 값은 거의 다 <code class="inl">v2:</code></b> 이므로, DB 값을 그대로 목록에 넣으면 전부 실패한다.</li>
+    </ul>
+    <div class="note info">
+      <span class="badge">범위</span>
+      <p>위 세 가지는 <b>소스로 확인</b>한 것이다. 접속 서버(10.10.19.40)의 실제 DB 에 어떤 ENC_MODE·ZIP_MODE 조합이 있는지, 볼륨이 로컬인지 S3 인지는 웹 화면으로는 볼 수 없어 확인하지 못했다(DB 조회가 필요하다).</p>
+    </div>
+  </section>
+
+  <!-- 13 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">13</span><h2>한눈에 — 옵션 정리</h2></div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>옵션 / 환경변수</th><th>기본</th><th>뜻</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">(목록의 mrk·enc_mode·zip_mode)</td><td>—</td><td>그 줄의 파일을 풀어서 분류</td></tr>
+          <tr><td class="mono">--decrypt</td><td>꺼짐</td><td><code class="inl">--file</code> 한 건을 풀어서 분류</td></tr>
+          <tr><td class="mono">--mrk · CSOCLASSIFY_MRK</td><td>—</td><td>평문 MRK</td></tr>
+          <tr><td class="mono">--enc-mode · --zip-mode</td><td>—</td><td>ENC_MODE · ZIP_MODE</td></tr>
+          <tr><td class="mono">--name</td><td>—</td><td>원래 파일 이름(확장자 판별 · 파일명 신호)</td></tr>
+          <tr><td class="mono">--no-decrypt</td><td>꺼짐</td><td>목록에 열쇠가 있어도 풀지 않는다</td></tr>
+          <tr><td class="mono">--decrypt-cmd · CSOCLASSIFY_DECRYPT_CMD</td><td class="mono">/MOCOMSYS/MpowerScript/removeenc/removeenc.sh</td><td>복호화 도구 경로</td></tr>
+          <tr><td class="mono">--decrypt-tmp · CSOCLASSIFY_DECRYPT_TMP</td><td>시스템 임시 폴더</td><td>풀린 파일을 잠깐 둘 곳</td></tr>
+          <tr><td class="mono">--decrypt-timeout</td><td class="mono">60</td><td>복호화 한 건의 시간 제한(초)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 14 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">14</span><h2>구현 결과 (2026-10-12)</h2></div>
+    <p>Rust 판과 Python 판에 같은 옵션·같은 오류 번호로 넣었다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>무엇</th><th>Rust</th><th>Python</th></tr></thead>
+        <tbody>
+          <tr><td>목록의 열쇠 칸 읽기 · F8</td><td class="src">Rust/src/filelist.rs</td><td class="src">src/csoclassify/filelist.py</td></tr>
+          <tr><td>복호화 모듈(도구 실행 · 결과 확인 · 임시 파일)</td><td class="src">Rust/src/decrypt.rs (신규)</td><td class="src">src/csoclassify/decrypt.py (신규)</td></tr>
+          <tr><td>옵션 · 조합 검사 · 분류 루프(한 건씩 풀기→펼치기→분류→지우기) · 요약</td><td class="src">Rust/src/main.rs</td><td class="src">src/csoclassify/cli.py</td></tr>
+          <tr><td>오류 이름 4개</td><td class="src">Rust/src/errcodes.rs</td><td class="src">src/csoclassify/errcodes.py</td></tr>
+          <tr><td>시험용 가짜 도구</td><td class="src">Rust/examples/fake_removeenc.rs</td><td class="src">tests/fake_removeenc.py</td></tr>
+          <tr><td>시험</td><td class="src">Rust/tests/cli_decrypt.rs (12건) · decrypt.rs 단위 7건</td><td class="src">tests/test_decrypt.py (18건)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>설계와 달라진 점</h3>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>항목</th><th>설계</th><th>구현</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>오류 레코드의 칸 이름</td><td><code class="inl">reason</code>(사유 이름) · <code class="inl">message</code>(문장)</td><td><code class="inl">detail</code>(사유 이름) · <code class="inl">reason</code>(문장)</td>
+              <td>기존 실패 레코드와 같은 틀. <code class="inl">--simple</code> 이 <code class="inl">reason</code> 을 그대로 싣는다(§7)</td></tr>
+          <tr><td><code class="inl">name</code> 칸의 자리</td><td><code class="inl">file</code> 바로 뒤</td><td><code class="inl">doc_id</code> 뒤</td>
+              <td>"신원 세 칸(file · hash · doc_id)이 맨 앞"이라는 기존 출력 약속(시험으로 고정돼 있다)을 지키려고</td></tr>
+          <tr><td>복호화에 실패한 문서의 <code class="inl">hash</code></td><td>(정하지 않음)</td><td>싣지 않는다</td>
+              <td>읽을 수 있는 것이 암호문뿐이라, 그 지문은 "이 문서가 무엇인가"를 말해 주지 않는다</td></tr>
+          <tr><td><code class="inl">--file X --decrypt</code> 인데 명령줄에도 목록에도 열쇠가 없다</td><td>시작 전 오류</td><td>목록(<code class="inl">--filelist</code>)을 함께 준 경우에는 그 문서의 오류 레코드(<code class="inl">info_incomplete</code>)</td>
+              <td>목록을 읽은 뒤에야 알 수 있다. 목록도 없으면 설계대로 시작 전 오류다</td></tr>
+          <tr><td>시간 초과 때 끝내는 범위</td><td>자식을 죽인다</td><td><b>자식과 그 아래를 모두</b> 죽인다</td>
+              <td><code class="inl">removeenc.sh</code> 는 bash 가 php 를 띄운다. bash 만 죽이면 php 가 출력 파이프를 붙잡고 남아 제한이 듣지 않는다(시험 중 발견)</td></tr>
+          <tr><td>둘 다 0 인 파일</td><td>그대로 읽는다</td><td>임시 폴더에 <b>복사</b>해서 읽는다</td>
+              <td>저장 이름(<code class="inl">F_….SMF</code>)에 확장자가 없어 압축파일인지 알 수 없다. 원래 이름의 확장자를 붙인 사본이 있어야 내부 문서로 펼쳐진다. 엠파워도 이 경우 복사한다</td></tr>
+          <tr><td>옛 임시 폴더 청소(강제 종료 뒤)</td><td>다음 실행이 지운다</td><td>리눅스에서만</td>
+              <td>주인 프로세스가 살아 있는지를 <code class="inl">/proc</code> 로 본다. 윈도우에서는 알 수 없어 남의 폴더를 지우지 않는다</td></tr>
+          <tr><td>Python 판의 로그</td><td>임시 경로를 쓰지 않는다</td><td>로그 필터로 임시 경로를 원래 경로로 바꿔 적는다</td>
+              <td>추출기 여러 곳이 "읽은 경로"를 직접 로그에 적는다. 한 곳에서 막는 편이 빠뜨릴 위험이 없다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>확인한 것 · 확인하지 못한 것</h3>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>항목</th><th>결과</th></tr></thead>
+        <tbody>
+          <tr><td>가짜 도구로 본 흐름(정상 · 틀린 열쇠 · 일부 칸 누락 · 감싼 열쇠 · 도구 실패 · 환경 문제 · 도구 없음 · 시간 초과 · 압축 · 단일 파일 · 인자 조합 · <code class="inl">--no-decrypt</code>)</td>
+              <td class="ok">두 판 모두 통과</td></tr>
+          <tr><td>끝난 뒤 임시 폴더가 비어 있는가 · 열쇠와 임시 경로가 결과·로그에 없는가</td><td class="ok">두 판 모두 통과</td></tr>
+          <tr><td>기존 시험(회귀)</td><td class="ok">Rust 305건 · Python 1,052건 통과</td></tr>
+          <tr><td>테스트 서버(10.10.19.40)에서 받은 <b>실제 암호화 파일 6건</b>, 윈도우 배포 exe</td>
+              <td>둘 다 0 인 zip 은 도구 없이 내부 문서 3건으로 펼쳐 분류됨. 암호화된 5건은 가짜 도구가 못 풀어 hwp·docx·xlsx·pptx 는 <code class="inl">signature_mismatch</code>, txt 는 추출 실패로 걸러짐(등급 없음)</td></tr>
+          <tr><td><b>진짜 <code class="inl">removeenc.sh</code> 로 푼 결과</b> — 윈도우 exe 가 중계 스크립트(<code class="inl">sample/enc_test/relay_removeenc.cmd</code>)로 테스트 서버의 도구를 부름</td>
+              <td><b class="ok">확인함(2026-10-12)</b>. 암호화된 5건(hwp · docx · xlsx · pptx · txt) 모두 풀렸고 결과의 <code class="inl">hash</code> 가 원본 지문과 같다. 복호화 5건 · 실패 0, 끝난 뒤 임시 폴더 비어 있음, 결과·로그에 열쇠와 임시 경로 없음. Python 판도 같은 결과(5건 일치)</td></tr>
+          <tr><td><b>진짜 도구에 틀린 열쇠</b>(마지막 글자만 바꿈)</td>
+              <td><b class="ok">확인함</b>. 도구는 종료코드 0 을 돌려줬고(<code class="inl">rc: 0</code>), docx 는 <code class="inl">signature_mismatch</code> 로, txt 는 본문을 글자로 읽지 못해 추출 실패로 걸러졌다. 둘 다 등급 없음 — §6 의 설계가 실제 도구에서도 맞았다</td></tr>
+          <tr><td><b>리눅스 빌드</b></td>
+              <td><b class="ok">빌드 성공</b>(2026-10-12 16:48, <code class="inl">scripts/build/linux-build.sh both</code> — Rust · Python 두 판). 리눅스 전용 코드(프로세스 무리 종료 · 권한 0700/0600 · 실행 권한 검사 · 옛 폴더 청소)가 컴파일됨.
+              <b class="x">리눅스에서 실행해 보지는 못함</b> — 이 코드들이 실제로 기대대로 도는지는 서버에서 돌려 봐야 안다</td></tr>
+          <tr><td>복호화 한 건의 시간(§10)</td><td class="x">재지 못함</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note warn">
+      <span class="badge">남은 일</span>
+      <p>(윈도우에서 중계로 본 것과 별개로) ① 새 리눅스 빌드(<code class="inl">Rust/dist-onedir/linux/MpowerClassify-rs-linux.tgz</code>)를 테스트 서버에 올리고, <code class="inl">sample/enc/filelist.jsonl</code> 의 <code class="inl">server_path</code> 로 실제 복호화를 돌려 <code class="inl">hash</code> 가 원본 지문과 같은지 본다.
+      ② 압축파일의 집계 레코드(<code class="inl">archive: true</code>)에는 지금도 <code class="inl">doc_id</code> 가 붙지 않는다 — 엠파워가 zip 문서의 결과를 sfile_id 로 받으려면 따로 정해야 한다(이번 변경 범위 밖의 기존 동작).</p>
+    </div>
+  </section>
+
+  <footer>
+    <span>MpowerClassify · plan/엠파워v11-암호화문서-복호화연동-설계-20261012.html</span>
+    <span>관련: plan/문서분류체계-연동-분류규칙-설계.html(§7-5 filelist) · plan/CLI-오류출력-설계.html · Mpower_11.0/MpowerScript/removeenc</span>
+  </footer>
+
+</div>
+</body>
+</html>

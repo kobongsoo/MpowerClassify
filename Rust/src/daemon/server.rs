@@ -99,7 +99,12 @@ pub fn run(spec: &'static ModelSpec, idle_timeout: u64) -> i32 {
         Ok(true) => {}
         Ok(false) => {
             linfo!("서버 기동 취소: 이미 {} 서버가 있음", model);
-            println!("model={}: 이미 실행 중인 데몬이 있습니다", model);
+            // 이미 떠 있는 서버의 pid·port 를 함께 알려 준다(막 뜨는 중이라 아직 못 읽으면 이름만).
+            let d = match super::client::status(model) {
+                Some((rec, ready)) => super::info(&rec, ready),
+                None => json!({"running": true, "model": model, "ready": false}),
+            };
+            super::report(&format!("model={}: 이미 실행 중인 데몬이 있습니다", model), d);
             return 0;
         }
         Err(why) => errcodes::fail("internal_error",
@@ -176,7 +181,8 @@ pub fn run(spec: &'static ModelSpec, idle_timeout: u64) -> i32 {
         }
     }
     linfo!("모델 상주 준비 완료 port={} — 요청 대기(유휴 {})", port, idle_disp);
-    println!("model={} pid={} port={} 준비 완료", model, std::process::id(), port);
+    super::report(&format!("model={} pid={} port={} 준비 완료", model, std::process::id(), port),
+                  super::info(&record, true));
 
     // (4) 정지 요청이나 유휴 시간을 기다린다. 요청은 다른 스레드들이 받고 있다.
     loop {

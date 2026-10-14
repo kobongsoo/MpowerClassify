@@ -22,6 +22,56 @@ pub mod server;
 
 use std::time::Duration;
 
+use serde_json::{json, Value};
+
+//------------------------------------------------------------------
+// 서버 명령(--serve / --status / --stop)의 결과를 JSON 한 줄로 내보낸다
+//=> 이 세 명령은 다른 프로그램(연동 서비스)이 불러서 결과를 읽는다. 사람이 읽는
+//   문장만 내면 받는 쪽이 문구를 잘라 읽어야 하고, 문구가 한 글자만 바뀌어도 깨진다.
+//   그래서 분류 실행의 상태 줄(--json-errors)과 **같은 모양**으로 낸다:
+//     {"error":{"code":0,"kind":"success","message":"…"},"daemon":{…}}
+//    · error.code 0 = 명령이 정상으로 끝났다(서버가 없다는 답도 정상이다)
+//    · error.message = 사람이 읽는 한 줄(예전에 화면에 내던 문구 그대로)
+//    · daemon = 기계가 읽는 값(running·pid·port·ready …)
+//   실패는 이 함수가 아니라 errcodes::fail 이 같은 모양(code≠0)으로 낸다.
+//
+// -in: message = 사람이 읽는 한 줄
+// -in: daemon  = 서버 상태 값들(JSON 객체)
+//
+// -out: 없음(stdout 에 한 줄)
+// -out: error = 없음
+//------------------------------------------------------------------
+pub fn report(message: &str, daemon: Value) {
+    println!("{}", json!({
+        "error": {"code": 0, "kind": "success", "message": message},
+        "daemon": daemon,
+    }));
+}
+
+//------------------------------------------------------------------
+// 떠 있는 서버의 상태 값 묶음
+//=> 기록 파일의 내용에서 밖에 알려도 되는 칸만 고른다. **토큰은 넣지 않는다** —
+//   토큰은 임베딩·정지 요청의 열쇠라 화면이나 로그로 흘러나가면 안 된다.
+//
+// -in: rec   = 서버 기록(registry 의 기록 파일 내용)
+// -in: ready = 모델을 다 올렸는가
+//
+// -out: Value = {running:true, model, pid, port, version, idle_timeout, ready}
+//               idle_timeout 은 초 단위 숫자이고 0 이면 무한(자동 종료 없음)
+// -out: error = 없음(없는 칸은 null)
+//------------------------------------------------------------------
+pub fn info(rec: &Value, ready: bool) -> Value {
+    json!({
+        "running": true,
+        "model": rec.get("model"),
+        "pid": rec.get("pid"),
+        "port": rec.get("port"),
+        "version": rec.get("version"),
+        "idle_timeout": rec.get("idle_timeout").and_then(Value::as_u64).unwrap_or(0),
+        "ready": ready,
+    })
+}
+
 /// 서버는 반드시 내 PC 안에서만 받는다(외부 주소 금지).
 pub const HOST: &str = "127.0.0.1";
 

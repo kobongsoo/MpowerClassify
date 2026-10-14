@@ -158,15 +158,27 @@ def _is_comment(line):
 # -필드: path     = 목록에 적혀 있던 원본 경로(오류 메시지용)
 # -필드: sfile_id = MpowerV11 문서 고유 ID
 # -필드: hash     = 목록이 함께 준 파일 해시(선택). 없으면 None
+# -필드: dec      = 복호화 정보(decrypt.DecInfo). 열쇠 칸(mrk·enc_mode·zip_mode)이
+#                   없으면 None — 그대로 읽는 문서다(설계: 엠파워v11-암호화문서-복호화연동 §3)
+# -필드: dec_problem = 열쇠 칸이 '일부만' 있거나 감싼 열쇠(v2:)가 온 줄의 사유
+#                   (decrypt.DecError, F8). 이 줄은 분류하지 않고 오류 레코드로 남긴다 —
+#                   그대로 읽으면 암호문을 분류하게 된다
+# -필드: name     = 원래 파일 이름(LFILE_NAME). 저장 이름에는 확장자도 뜻도 없다
+# -필드: size     = 원래 파일 크기(LFILE_SIZE). 풀린 결과와 견준다
 #------------------------------------------------------------------
 class Entry:
-    __slots__ = ("key", "path", "sfile_id", "hash")
+    __slots__ = ("key", "path", "sfile_id", "hash", "dec", "dec_problem", "name", "size")
 
-    def __init__(self, key, path, sfile_id, hash_=None):
+    def __init__(self, key, path, sfile_id, hash_=None, dec=None, dec_problem=None,
+                 name=None, size=None):
         self.key = key
         self.path = path
         self.sfile_id = sfile_id
         self.hash = hash_
+        self.dec = dec
+        self.dec_problem = dec_problem
+        self.name = name
+        self.size = size
 
 
 #------------------------------------------------------------------
@@ -239,6 +251,19 @@ class FileList:
         return sorted((e for e in self.entries.values() if not os.path.isfile(e.path)),
                       key=lambda e: e.path)
 
+    #--------------------------------------------------------------
+    # 복호화 정보가 붙은 줄 수
+    #=> 열쇠 칸이 있는 줄(둘 다 0 인 '평문' 줄과 F8 줄 포함)을 센다. 적재 안내에 쓴다.
+    #
+    # -in: 없음
+    #
+    # -out: int = 해당 줄 수
+    # -out: error = 없음
+    #--------------------------------------------------------------
+    def dec_count(self):
+        return sum(1 for e in self.entries.values()
+                   if e.dec is not None or e.dec_problem is not None)
+
     def __len__(self):
         return len(self.entries)
 
@@ -265,6 +290,40 @@ def _row_to_entry(row, base):
     if not os.path.isabs(path) and not path.startswith("//") and not path.startswith("\\\\"):
         path = os.path.join(base, path)
     return path, sfile_id, file_hash
+
+
+#------------------------------------------------------------------
+# 목록 한 줄(dict) → 복호화 관련 칸
+#=> 엠파워 v11 암호화 문서용 칸(mrk · enc_mode · zip_mode · name · size)을 읽는다.
+#   설계: plan/엠파워v11-암호화문서-복호화연동-설계-20261012.html §3
+#    1) 열쇠 세 칸을 decrypt.parse_dec_info 로 해석한다
+#    2) 일부만 있거나 감싼 열쇠(v2:)면 건너뛰지 않고 사유만 달아 둔다(F8) —
+#       건너뛰면 그 문서가 결과에서 사라지고, 그대로 읽으면 암호문을 분류한다
+#    3) name 은 글자로, size 는 정수로(못 읽으면 None)
+#
+#   [Rust 판과의 관계] Rust/src/filelist.rs 의 같은 자리와 판정이 같아야 한다.
+#
+# -in: row = 한 줄을 해석한 dict
+#
+# -out: (dec, dec_problem, name, size) = DecInfo|None · DecError|None · str|None · int|None
+# -out: error = 없음(해석 실패는 dec_problem 으로 돌려준다)
+#------------------------------------------------------------------
+def _row_dec_fields(row):
+    # 순환 import 를 피하려고 여기서 가져온다(decrypt 는 가벼운 모듈이다).
+    from . import decrypt
+    dec, problem = None, None
+    try:
+        dec = decrypt.parse_dec_info(row.get("mrk"), row.get("enc_mode"), row.get("zip_mode"))
+    except decrypt.DecError as e:
+        problem = e
+    name = row.get("name")
+    name = str(name).strip() if name is not None else ""
+    size = row.get("size")
+    try:
+        size = int(str(size).strip()) if size not in (None, "") else None
+    except (TypeError, ValueError):
+        size = None
+    return dec, problem, (name or None), size
 
 
 #------------------------------------------------------------------
@@ -338,7 +397,8 @@ def load(path):
                 f"  어느 쪽을 골라도 틀리므로 분류를 시작하지 않았습니다. "
                 f"목록을 고쳐 다시 실행하세요.")
         if prev is None:
-            entries[key] = Entry(key, fpath, sfile_id, file_hash)
+            dec, dec_problem, name, size = _row_dec_fields(row)
+            entries[key] = Entry(key, fpath, sfile_id, file_hash, dec, dec_problem, name, size)
             stats["loaded"] += 1
         seen_id.setdefault(sfile_id, []).append(key)
 

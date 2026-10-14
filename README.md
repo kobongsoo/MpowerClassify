@@ -7,8 +7,13 @@
 분류가 **기본 동작**이며, 벡터만 필요하면 `--embed` 를 줍니다. 서버·인터넷 없이 로컬에서 동작하고
 PyInstaller `onedir` 로 패키징합니다.
 
-> 상세: [실행 가이드](doc/MpowerClassify-실행가이드.html) · [규칙셋 필드 레퍼런스](doc/CSO_Rule.html) · [하이브리드 추출 설계](plan/CSO_HybridParse.html) · [설계서](plan/설계서.md)
-> 빌드: [빌드 가이드(Python)](doc/MpowerClassify-빌드가이드-python.html) · [빌드 가이드(Rust 포팅판)](doc/MpowerClassify-빌드가이드-rust.html)
+**엠파워 v11 저장소의 암호화 문서**도 분류합니다. 분류 직전에 한 건씩 풀고, 분류가 끝나면 풀린 사본을 바로 지웁니다
+([아래 장](#엠파워-v11-암호화-문서-분류)).
+같은 기능을 **Python 판**(`src/csoclassify`)과 **Rust 판**(`Rust/`) 두 가지로 제공하며, 두 판은 같은 인자·같은 결과 모양·같은 오류 코드를 씁니다.
+
+> 실행: [실행 가이드](doc/MpowerClassify-실행가이드.html) · [실행 가이드(리눅스)](doc/MpowerClassify-실행가이드-linux.html) · [규칙셋 필드 레퍼런스](doc/CSO_Rule.html) · [업무분류 규칙](doc/DOC_Rule.html)
+> 설계: [설계서](plan/설계서.md) · [하이브리드 추출](plan/CSO_HybridParse.html) · [엠파워 v11 복호화 연동](plan/엠파워v11-암호화문서-복호화연동-설계-20261012.html) · [CLI 오류 출력](plan/CLI-오류출력-설계.html) · [Rust 임베딩 상주 서버](plan/Rust-임베딩모델-상주서비스-설계.html)
+> 빌드: [빌드 가이드(Python)](doc/MpowerClassify-빌드가이드-python.html) · [빌드 가이드(Rust 포팅판)](doc/MpowerClassify-빌드가이드-rust.html) · 리눅스 빌드 스크립트 `scripts/build/linux-build.sh`
 
 ## 빠른 사용
 
@@ -21,10 +26,48 @@ csoclassify.exe --dir "D:\collected" -r --embed-needed --format jsonl --out resu
 
 # 임베딩 벡터만 뽑기(분류 없이)
 csoclassify.exe --embed --file "D:\docs\보고서.hwp"
+
+# [엠파워 v11] 암호화 문서 한 건을 풀어서 분류 (리눅스 서버)
+./csoclassify --file /data/store/0001234 --decrypt --mrk "$MRK" --enc-mode "$ENC_MODE" --zip-mode "$ZIP_MODE" --name "보고서.hwp"
+
+# [엠파워 v11] 목록 파일로 여러 건 — 줄마다 열쇠 칸이 있으면 그 줄만 푼다
+./csoclassify --filelist list.jsonl --format jsonl --out result.jsonl
 ```
 
 `--file` 단건은 JSON 객체 하나, `--dir` 배치는 레코드들의 **JSON 배열**을 출력합니다.
 줄단위 스트리밍/후처리는 `--format jsonl`(문서당 1줄).
+
+## 엠파워 v11 암호화 문서 분류
+
+엠파워 v11 저장소의 문서는 암호화된 채 저장되어 있어 그대로 읽으면 분류할 수 없습니다.
+그래서 분류 직전에 엠파워의 복호화 도구(`removeenc.sh`)로 **한 건씩** 풀고, 분류가 끝나면 풀린 사본을 **바로 지웁니다**.
+
+| 방식 | 주는 법 |
+|---|---|
+| 여러 건 | `--filelist` 의 각 줄에 `mrk` · `enc_mode` · `zip_mode`(+ `name` · `size`)를 적으면 **그 줄만** 풉니다. `enc_mode`·`zip_mode` 가 둘 다 0 인 줄은 도구를 부르지 않고 그대로 읽습니다 |
+| 한 건 | `--file` 에 `--decrypt --mrk --enc-mode --zip-mode [--name]` |
+| 풀지 않기 | `--no-decrypt` — 목록에 열쇠가 있어도 그대로 읽습니다 |
+
+목록 한 줄(jsonl) 예:
+
+```json
+{"path": "/data/store/0001234", "sfile_id": "F0001234", "mrk": "…", "enc_mode": "…", "zip_mode": "…", "name": "보고서.hwp", "size": 52311}
+```
+
+- 저장 이름에는 확장자도 뜻도 없으므로 **`name`(원래 파일 이름)을 주기를 권합니다** — 확장자 판별과 파일명 신호에 씁니다.
+- 열쇠가 틀려도 도구는 성공(0)을 돌려줍니다. 그래서 풀린 파일의 **크기·시그니처를 따로 확인**하고, 이상하면 분류하지 않고
+  `grade: null` + `error.kind = "decrypt_failed"`(이유는 `detail`)로 냅니다.
+- 결과 레코드에는 `name`(원래 이름)과 `meta.decrypted` 가 실립니다.
+- **열쇠(MRK)와 임시 경로는 로그·결과에 남기지 않습니다.** `v2:` 로 시작하는 감싼 MRK 는 받지 않습니다(평문만).
+- 시간 제한(`--decrypt-timeout`, 기본 60초)을 넘기면 하위 프로세스까지 모두 끝냅니다.
+
+| 옵션 | 설명 | 기본 |
+|---|---|---|
+| `--decrypt-cmd` | 복호화 도구 경로 | `/MOCOMSYS/MpowerScript/removeenc/removeenc.sh` |
+| `--decrypt-tmp` | 풀린 파일을 잠깐 둘 곳. `/dev/shm` 을 주면 디스크에 닿지 않습니다 | 시스템 임시 폴더 |
+| `--decrypt-timeout` | 한 건의 시간 제한(초) | 60 |
+
+> 자세히: [복호화 연동 설계](plan/엠파워v11-암호화문서-복호화연동-설계-20261012.html) · [암호화 문서 생성 및 테스트](doc/엠파워v11연계-암호화%20문서%20생성%20및%20테스트.html)
 
 ## 판정 신호 (보수적 max 융합)
 
@@ -74,10 +117,8 @@ csoclassify.exe --embed --file "D:\docs\보고서.hwp"
 | `--embed` | 분류 대신 **임베딩 벡터만** 출력 | — |
 | `--text-only` | 벡터 없이 **추출 텍스트만** | — |
 | `--hybridparse` | **내용 감지 → 포맷별 파서**(사이냅 없이): pdf→pypdfium2, hwp→HWP5, hwpx→zip/OWPML, doc/ppt→자체 olefile 파서, xls→xlrd, docx/xlsx/pptx→zip/OOXML 직접파싱(stdlib), html→태그제거(stdlib), text→직접읽기. 실패 시 snf 폴백(snf 없으면 미분류). 전부 순수py/소형 wheel로 **Win·Linux(CentOS7) 동일 번들**. snf 대비 동급~수십배 빠름 | off(전부 snf) |
-
-> **압축파일 자동 확장** — 입력이 압축파일이면 내부 파일을 임시폴더에 풀어 **파일 하나하나를 개별 분류**한다(중첩 압축도 재귀). 지원: **zip · tar · tar.gz · tar.bz2 · tar.xz · gz · bz2 · xz**(stdlib, 무의존) · **7z**(py7zr) · **rar**(번들 unrar). 결과 JSON 은 파일별 레코드의 배열이고 각 레코드 `file` 은 `"<압축경로>/<내부경로>"` 로 표기돼 **어느 내부 파일이 C/S/O 인지** 알 수 있다. 처리 후 임시폴더는 자동 삭제(민감정보 잔존 방지). ※ docx/xlsx/pptx/hwpx 는 내부가 zip 이라도 '문서 1개'로 취급해 펼치지 않는다(내용 감지로 구분).
->
-> **압축파일 '자체'의 등급(집계)** — 압축은 그 안 파일 중 **가장 높은 위험등급(C>S>O)** 을 자기 등급으로 받는다. 결과에 `"archive": true, "grade": "<최고위험>", "contains": {C,S,O,미분류,total}` 형태의 요약 레코드가 파일별 레코드 뒤에 추가돼, **압축만 봐도 위험도**를 안다. (내부 파일 등급 집계와 별개 레코드라 총계에는 중복 계산되지 않음.)
+| `--filelist` | MpowerV11 이 뽑아 준 `{path, sfile_id}` 목록(jsonl·csv). 결과 레코드의 `doc_id` 를 채우고, 엠파워 v11 열쇠 칸이 있으면 그 줄을 풀어서 분류. `--file`/`--dir` 이 있으면 'ID 사전' 역할만 함 | — |
+| `--decrypt` / `--no-decrypt` | 엠파워 v11 암호화 문서 풀기 / 풀지 않기 ([위 장](#엠파워-v11-암호화-문서-분류)) | 목록에 열쇠가 있을 때만 풂 |
 | `--cso-rules` | 보안등급 규칙셋 경로 | exe 옆 `cso_rule.yaml` |
 | `--failsafe [등급]` | 어느 신호로도 못 정한 문서의 기본등급(값 생략=S) | 미부여(보류) |
 | `--embed-needed` | **보류·seed 후보**에만 임베딩(확정문서 생략 → 빠름) | — |
@@ -95,10 +136,29 @@ csoclassify.exe --embed --file "D:\docs\보고서.hwp"
 | `--nosummary` | 맨 끝 **요약(summary)을 출력에서 제거**(파일별 레코드만) · `--summary`와 배타 | off |
 | `--format` | `text` / `json` / `jsonl` | **`json`** |
 | `--out` | 결과 저장 파일 | stdout |
+| `--model` | 임베딩 모델: `e5-small-ko` · `e5-small` · `ko-sroberta` (두 판 같음) | `e5-small-ko` |
 | `--max-tokens` / `--overlap` | 청크 크기 / 겹침 | 512 / 32 |
-| `--progress` | 진행상황(stderr) 표시 | off |
-| `--daemon` / `--no-daemon` | 상주 데몬 모드 | **on** |
-| `--status` / `--stop` | 데몬 상태 / 정지 | — |
+| `--progress` | 진행상황(stderr) 표시. 2차 패스(전파)도 알림 | off |
+| `--daemon` / `--no-daemon` | 상주 데몬 모드 | Python **on** · Rust off |
+| `--serve` / `--status` / `--stop` | 데몬 기동 / 상태 / 정지 | — |
+
+> **압축파일 자동 확장** — 입력이 압축파일이면 내부 파일을 임시폴더에 풀어 **파일 하나하나를 개별 분류**한다(중첩 압축도 재귀). 지원: **zip · tar · tar.gz · tar.bz2 · tar.xz · gz · bz2 · xz**(stdlib, 무의존) · **7z**(py7zr) · **rar**(번들 unrar). 결과 JSON 은 파일별 레코드의 배열이고 각 레코드 `file` 은 `"<압축경로>/<내부경로>"` 로 표기돼 **어느 내부 파일이 C/S/O 인지** 알 수 있다. 처리 후 임시폴더는 자동 삭제(민감정보 잔존 방지). ※ docx/xlsx/pptx/hwpx 는 내부가 zip 이라도 '문서 1개'로 취급해 펼치지 않는다(내용 감지로 구분).
+>
+> **압축파일 '자체'의 등급(집계)** — 압축은 그 안 파일 중 **가장 높은 위험등급(C>S>O)** 을 자기 등급으로 받는다. 결과에 `"archive": true, "grade": "<최고위험>", "contains": {C,S,O,미분류,total}` 형태의 요약 레코드가 파일별 레코드 뒤에 추가돼, **압축만 봐도 위험도**를 안다. (내부 파일 등급 집계와 별개 레코드라 총계에는 중복 계산되지 않음.)
+
+## 오류 출력
+
+실패는 결과 JSON 의 `error` 칸(`{"code", "kind", "message"}`)과 종료코드로 알립니다. 두 판은 같은 상황에 같은 코드를 냅니다.
+
+| 코드 대역 | 뜻 | 예 |
+|---|---|---|
+| 1000 | 인자 · 입력 | `1010 filelist_missing` · `1014 decrypt_args_invalid` · `1015 decrypt_cmd_missing` |
+| 2000 | 정책 파일(규칙셋 · 분류체계) | `2001 rules_missing` · `2002 rules_invalid` |
+| 3000 | 처리(추출 · 임베딩 · 복호화) | `3001 extract_failed` · `3005 decrypt_failed`(그 문서만) · `3006 decrypt_unavailable`(즉시 멈춤) |
+| 4000 | 출력 | `4001 output_write_failed` |
+| 9000 | 그 밖 | `9001 internal_error` |
+
+> 전체 목록은 `src/csoclassify/errcodes.py`(Rust: `Rust/src/errcodes.rs`), 설계는 [CLI 오류 출력](plan/CLI-오류출력-설계.html).
 
 ## 처리 흐름
 
@@ -120,6 +180,15 @@ csoclassify.exe --embed --file "D:\docs\보고서.hwp"
 - 기동/통신 실패 시 **in-process 자동 폴백** → 멈추지 않음.
 - 단발/디버그는 `--no-daemon`(또는 `CSOCLASSIFY_DAEMON=0`).
 - **데몬 프로세스**는 콘솔 창 없이 뜨며 이름은 `csoclassify.exe`(소스 실행 시 `python.exe`). 찾기: `csoclassify.exe --status`(pid 표시), 작업관리자 **세부 정보** 탭, 또는 `Get-Process csoclassify`.
+
+**Rust 판의 임베딩 상주 서버** — Rust 판은 기본이 직접 로드(`--no-daemon`)이고, `--daemon` 을 주면 임베딩을 상주 서버에
+맡깁니다(서버가 없으면 자동으로 띄움). 인자 이름과 뜻은 Python 판과 같습니다.
+
+- `--serve` 는 이 프로세스가 서버가 됩니다(정지 요청·유휴 종료까지 실행). `--status` · `--stop` 으로 조회·정지.
+- `--serve` · `--status` · `--stop` 의 출력은 언제나 **JSON 한 줄**입니다:
+  `{"error":{"code":0,"kind":"success","message":"…"},"daemon":{"running":true,"pid":…,"port":…,"ready":true,…}}`
+  — 서버가 없다는 답도 `code 0` 이고, `daemon.running` 으로 구분합니다.
+- 설계: [Rust 임베딩 상주 서버](plan/Rust-임베딩모델-상주서비스-설계.html)
 
 ## 개발 셋업
 
@@ -198,6 +267,8 @@ dist-onedir/windows/                    dist-onedir/linux/
 | `CSOCLASSIFY_DAEMON=0` | 데몬 전역 off |
 | `CSOCLASSIFY_HYBRID=1` | 하이브리드 추출(`--hybridparse`) 전역 기본 on |
 | `CSOCLASSIFY_STAMP_HEAD_CHARS` / `_REPEAT_MIN` | 스탬프 머리범위(400) / 반복횟수(2) |
+| `CSOCLASSIFY_MRK` | [엠파워 v11] 평문 MRK(`--mrk` 대신) |
+| `CSOCLASSIFY_DECRYPT_CMD` / `CSOCLASSIFY_DECRYPT_TMP` | [엠파워 v11] 복호화 도구 경로 / 임시 폴더 |
 
 - 기본 로그: `<exe폴더>/log/class_YYYYMMDD.log`(실행 커맨드·파일별 결과 JSON, 벡터는 축약).
   오류만 모은 `<exe폴더>/log/class_err_YYYYMMDD.log` 도 같은 폴더에 남는다.
@@ -218,6 +289,9 @@ streamlit run ui/app.py        # 또는 ui/실행.bat
 ```
 src/csoclassify/
   cli.py            CLI 진입점(모드 분기, 데몬 우선+폴백)
+  filelist.py       입력 목록(--filelist) 읽기 · doc_id 사전 · 엠파워 v11 열쇠 칸
+  decrypt.py        엠파워 v11 복호화(removeenc.sh 호출 · 풀린 파일 검증 · 즉시 삭제)
+  errcodes.py       오류 코드 표(두 판 공통 계약)
   pipeline.py       추출→정제→임베딩 오케스트레이션(+시간기록)
   clean.py chunk.py 텍스트 정제 · 토큰 청킹
   classify/         분류 정책층
@@ -230,9 +304,12 @@ src/csoclassify/
                      + hwp5·hwpx_zip·office_legacy(doc/xls/ppt)·office_ooxml(docx/xlsx/pptx)·pdf_pdfium·plaintext
   embed/            ONNX 임베더(base + onnx_embedder)
   daemon/           상주 데몬(server/client/ipc/registry)
-resources/policy/cso_rule.yaml   C/S/O 규칙셋(외장)
+ui/policy/          규칙의 원본(고객 파일): cso_rule.yaml · doc_rule.yaml · 유의어 사전 · 기준 문서
+resources/policy/   새 고객이 복사해 가는 제품 기본값(동기화 대상 아님)
 ui/                 Streamlit 관리자 화면 "문서자동분류"(검토·판단 기준 편집)
+Rust/               Rust 포팅판(같은 인자·결과·오류 코드, 임베딩 상주 서버 포함)
 build/*.spec        PyInstaller 스펙
+scripts/build/      빌드 스크립트(리눅스 빌드 서버용 linux-build.sh 등)
 doc/                실행 가이드 · 규칙셋 레퍼런스 · 빌드 가이드(Python/Rust) · 작업기록 (HTML)
 ```
 
@@ -248,7 +325,10 @@ doc/                실행 가이드 · 규칙셋 레퍼런스 · 빌드 가이�
   `doc_id_source` 를 심는다. 검토 화면은 `doc_id → 정규화 경로 → 대소문자` 순으로
   결과와 사람의 수정을 잇는다(경로 표기 차이로 수정이 유실되던 문제 해소).
   Python·Rust 동일 동작.
-- ✅ 단위/통합 테스트 통과.
+- ✅ 오류 출력 계약: 두 판이 같은 상황에 같은 코드(1000~9000 대역)를 냄.
+- ✅ Rust 판: 임베딩 모델 세 가지(e5-small-ko · e5-small · ko-sroberta) 지원 · 임베딩 상주 서버(`--serve`/`--daemon`/`--status`/`--stop`).
+- ✅ 엠파워 v11 암호화 문서 복호화 연동(Python·Rust) — 실제 엠파워 서버의 암호화 문서로 풀린 내용이 원본과 같음을 확인.
+- ✅ 단위/통합 테스트 통과(Rust 305건 · Python 1,052건, 2026-10-14 기준).
 
 ## 라이선스 · 주의
 
