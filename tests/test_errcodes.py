@@ -926,7 +926,11 @@ def test_text_only도_계약을_따른다(engine, tmp_path):
     assert (rc, [l["code"] for l in lines]) == (3, [1001]), lines
 
     # (2) 출력 파일을 못 씀 — 인자 오류가 아니라 4001(종료 1)
-    bad_out = str(tmp_path / "없는폴더" / "o.txt")
+    #     상위가 '폴더가 아니라 파일'인 경로를 준다. 없는 폴더는 이제 만들어 주므로
+    #     (아래 test_out의_상위_폴더가_없으면_만든다) 실패하는 경우가 못 된다.
+    blocker = tmp_path / "막는파일.txt"
+    blocker.write_text("x", encoding="utf-8")
+    bad_out = str(blocker / "o.txt")
     rc, lines = _run_lines(engine, ["--text-only", "--dir", str(docs), "--out", bad_out])
     assert (rc, [l["code"] for l in lines]) == (1, [4001]), lines
     assert lines[0]["path"] == bad_out
@@ -1357,12 +1361,46 @@ def test_out을_못쓰면_읽기전에_멈춘다(engine, tmp_path):
     cmd = [RS_EXE] if engine == "rust" else [sys.executable, "-m", "csoclassify"]
     env = dict(os.environ, PYTHONPATH=os.path.join(ROOT, "src"), PYTHONIOENCODING="utf-8",
                CSOCLASSIFY_POLICY_DIR=os.path.join(ROOT, "resources", "policy"))
-    bad = str(tmp_path / "없는폴더" / "o.jsonl")
+    # 상위가 '폴더가 아니라 파일'이라 폴더를 만들 수도, 그 안에 쓸 수도 없는 경로.
+    # (없는 폴더는 이제 만들어 주므로 '못 쓰는 경로'가 아니다.)
+    blocker = tmp_path / "막는파일.txt"
+    blocker.write_text("x", encoding="utf-8")
+    bad = str(blocker / "o.jsonl")
     r = subprocess.run(cmd + ["--dir", str(docs), "--rule-only", "--out", bad, "--json-errors"],
                        cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8")
     lines = [json.loads(l)["error"] for l in r.stdout.splitlines() if l.startswith('{"error"')]
     assert (r.returncode, [l["code"] for l in lines]) == (1, [4001]), lines
     assert "[summary]" not in r.stderr, "스캔을 다 돈 뒤에 멈췄다"
+
+
+#------------------------------------------------------------------
+# --out 의 상위 폴더가 없으면 만들어서 쓴다 — 두 판이 같다
+#=> 예: --out D:\\temp\\o.jsonl 인데 D:\\temp 가 아직 없는 경우. 예전에는 4001 로 멈췄다.
+#   폴더가 없다는 이유만으로 분류를 못 하게 하지 않는다 — 중간 폴더까지 만들고 결과를 쓴다.
+#   분류와 --text-only 두 모드를 함께 본다(출력 파일을 여는 자리가 서로 다르다).
+#    1) 두 단계 아래의 없는 폴더를 --out 으로 준다
+#    2) 실패 없이 끝나고(오류 코드 4001 이 없다), 결과 파일이 생겨 있고 비어 있지 않다
+#
+# -in: engine   = "python" | "rust"
+# -in: mode     = 붙일 모드 인자("--rule-only" 는 분류, "--text-only" 는 본문만)
+# -in: tmp_path = pytest 임시 폴더
+#
+# -out: 없음(단언)
+# -out: error = Rust exe 가 없으면 건너뛴다
+#------------------------------------------------------------------
+@pytest.mark.parametrize("engine", ["python", "rust"])
+@pytest.mark.parametrize("mode", ["--rule-only", "--text-only"])
+def test_out의_상위_폴더가_없으면_만든다(engine, mode, tmp_path):
+    _need(engine)
+    docs = tmp_path / "docs"
+    _plain_doc(docs)
+    # 중간 폴더까지 없는 경로 — 한 단계만 만들면 안 되는지도 함께 본다.
+    out = tmp_path / "없는폴더" / "하위" / "o.jsonl"
+    rc, lines = _run_lines(engine, [mode, "--dir", str(docs), "--out", str(out),
+                                    "--format", "jsonl"])
+    assert 4001 not in [l["code"] for l in lines], lines
+    assert out.is_file(), "결과 파일이 만들어지지 않았다 (rc=%s) %s" % (rc, lines)
+    assert out.stat().st_size > 0, "결과 파일이 비어 있다"
 
 
 #------------------------------------------------------------------

@@ -6,6 +6,7 @@ mod textsave;
 mod axes;
 mod conflict;
 mod daemon;
+mod decrypt;
 mod detect;
 mod districts;
 mod doc_rules;
@@ -121,6 +122,21 @@ struct Opts {
     // 분류 없이 '추출한 본문만' 내보내는 모드(--text-only). 파이썬 판과 같다.
     // 규칙셋도 읽지 않으므로 순수 파서 성능을 재는 데 쓸 수 있다.
     text_only: bool,
+    // 엠파워 v11 암호화 문서 복호화 — 설계: plan/엠파워v11-암호화문서-복호화연동-설계-20261012.html
+    //  · decrypt           : --file 한 건을 풀어서 분류한다(기본은 그대로 읽기)
+    //  · mrk/enc_mode/zip_mode : removeenc.sh 의 -k · -e · -z 로 넘어갈 값
+    //  · name              : 원래 파일 이름(확장자 판별 · 파일명 신호)
+    //  · no_decrypt        : 목록에 열쇠가 있어도 풀지 않는다
+    //  · decrypt_cmd/tmp/timeout : 도구 위치 · 임시 폴더 · 한 건의 시간 제한(초)
+    decrypt: bool,
+    mrk: Option<String>,
+    enc_mode: Option<String>,
+    zip_mode: Option<String>,
+    name: Option<String>,
+    no_decrypt: bool,
+    decrypt_cmd: Option<String>,
+    decrypt_tmp: Option<String>,
+    decrypt_timeout: Option<u64>,
 }
 
 //------------------------------------------------------------------
@@ -193,6 +209,8 @@ fn usage() {
     eprintln!("  --propagate <결과파일>    1차 결과(jsonl/json)를 읽어 전파만 다시 수행");
     eprintln!("                            (문서·모델 불필요). --file/--dir 대신 쓴다");
     eprintln!("  --failsafe [등급]         아무 신호도 없을 때 줄 기본등급. O/S/C 만(값 생략 시 S)");
+    eprintln!("  --model <이름>            임베딩 모델: e5-small-ko(기본) · e5-small · ko-sroberta.");
+    eprintln!("                            seed 도 같은 모델로 만든 것이어야 합니다(차원이 다르면 코드 1013)");
     eprintln!("");
     eprintln!("─── ④ 무엇을 내보내나 (출력) ──────────────────────────────────");
     eprintln!("  --out <파일>              결과 저장(미지정 시 stdout)");
@@ -203,6 +221,7 @@ fn usage() {
     eprintln!("  --hash                    각 문서 SHA-256 포함(--simple 이면 자동)");
     eprintln!("  --with-vector             모든 문서를 임베딩해 vector 필드(384차원)로 포함(RAG 등)");
     eprintln!("  --with-pii                [프라이버시 예외] 검출된 원문 PII 값 포함(pii 필드)");
+    eprintln!("  --with-text               [프라이버시 주의] 추출(정제) 본문을 결과의 text 필드에 포함");
     eprintln!("  --summary / --nosummary   요약만 출력 / 요약 제거(파일별만)");
     eprintln!("  --no-doc-id               결과에 doc_id·key 를 넣지 않는다(보안등급만 볼 때)");
     eprintln!("  --report-missing-id <경로>  sfile_id 를 못 얻어 폴백으로 채운 문서 목록(jsonl).");
@@ -251,6 +270,27 @@ fn usage() {
     eprintln!("  --max-archive-members N   압축 1건당 내부 파일 개수 상한(기본 5000)");
     eprintln!("                            ※ 분할 볼륨은 어느 포맷도 잇지 않는다(사유를 결과에 남긴다)");
     eprintln!("");
+    eprintln!("─── ⑦-2 엠파워 v11 암호화 문서 ───────────────────────────────");
+    eprintln!("  엠파워 v11 저장소의 문서는 암호화된 채 놓여 있습니다. 분류 직전에 엠파워의");
+    eprintln!("  removeenc.sh 로 한 건씩 풀고, 분류가 끝나면 풀린 파일을 바로 지웁니다.");
+    eprintln!("  [다량] --filelist 의 각 줄에 mrk · enc_mode · zip_mode 를 적으면 그 줄만 풉니다.");
+    eprintln!("         name(원래 파일 이름) · size(원래 크기)도 함께 주기를 권합니다.");
+    eprintln!("         enc_mode 와 zip_mode 가 둘 다 0 인 줄은 도구를 부르지 않고 그대로 읽습니다");
+    eprintln!("  [단일] --file 에 아래를 붙일 때만 풉니다(안 붙이면 지금처럼 그대로 읽습니다)");
+    eprintln!("  --decrypt                 이 파일을 풀어서 분류");
+    eprintln!("  --mrk <값>                평문 MRK(환경변수 CSOCLASSIFY_MRK 로도 줄 수 있음).");
+    eprintln!("                            'v2:' 로 시작하는 감싼 값은 받지 않습니다");
+    eprintln!("  --enc-mode <값>  --zip-mode <값>   ENC_MODE · ZIP_MODE(0 도 올바른 값)");
+    eprintln!("  --name <이름>             원래 파일 이름(확장자 판별 · 파일명 신호)");
+    eprintln!("  --no-decrypt              목록에 열쇠가 있어도 풀지 않습니다");
+    eprintln!("  --decrypt-cmd <경로>      복호화 도구(환경변수 CSOCLASSIFY_DECRYPT_CMD,");
+    eprintln!("                            기본 {})", decrypt::DEFAULT_CMD);
+    eprintln!("  --decrypt-tmp <폴더>      풀린 파일을 잠깐 둘 곳(환경변수 CSOCLASSIFY_DECRYPT_TMP,");
+    eprintln!("                            기본 시스템 임시 폴더). /dev/shm 을 주면 디스크에 닿지 않습니다");
+    eprintln!("  --decrypt-timeout <초>    복호화 한 건의 시간 제한(기본 {})", decrypt::DEFAULT_TIMEOUT_SECS);
+    eprintln!("  ※ 풀지 못했거나 풀린 결과가 수상하면 분류하지 않고 error.kind=decrypt_failed 로 남깁니다.");
+    eprintln!("     열쇠와 임시 경로는 로그·결과에 남기지 않습니다");
+    eprintln!("");
     eprintln!("─── ⑧ 문서분류체계 rule 생성 (문서를 읽지 않는 모드) ─────────────────────");
     eprintln!("  --build-doc-rule          체계 JSON(--export-input)·사전·doc_rule.local.yaml 로 --doc-rules 파일을 통째로 새로 만든다");
     eprintln!("  --export-input <파일>     그 원본 체계 JSON(미지정 시 규칙 파일 옆 doc_classification_export.json)");
@@ -296,6 +336,9 @@ fn usage() {
     eprintln!("                            못 쓰면 모델을 직접 읽습니다. 기본은 꺼짐(직접 읽기)");
     eprintln!("  --no-daemon               상주 서버를 쓰지 않습니다(기본)");
     eprintln!("  --status / --stop         서버 상태 한 줄 / 서버 정지 요청(둘 다 코드 0)");
+    eprintln!("  ※ --serve·--status·--stop 의 출력(stdout)은 언제나 JSON 한 줄입니다:");
+    eprintln!("     {{\"error\":{{\"code\":0,\"kind\":\"success\",\"message\":\"…\"}},\"daemon\":{{\"running\":true,\"pid\":…,\"port\":…,\"ready\":true,…}}}}");
+    eprintln!("     code 0 = 정상(서버가 없다는 답도 정상 — daemon.running 으로 구분). 실패는 code≠0");
     eprintln!("  --idle-timeout <초>       서버가 이만큼 요청이 없으면 스스로 끝납니다. 0=무한(기본)");
     eprintln!("  --model <이름>            서버는 모델마다 하나입니다 — 서버와 호출이 같은 모델이어야 만납니다");
     eprintln!("  [환경변수] CSOCLASSIFY_STATE_DIR  서버 접속 기록을 둘 폴더. 서버를 띄운 계정과");
@@ -323,17 +366,18 @@ fn usage() {
     eprintln!("    class_날짜.log      실행 명령·파일별 결과·요약까지 전부");
     eprintln!("    class_err_날짜.log  오류만 따로(오류가 났을 때만 생깁니다)");
     eprintln!("");
-    eprintln!("─── ⑪ 받기만 하고 아무 일도 하지 않는 인자 ────────────────────");
-    eprintln!("  파이썬 판과 같은 명령줄을 그대로 넣어도 오류가 나지 않도록 받아 줍니다.");
-    eprintln!("  다만 이 판에서는 효과가 없으므로, 숨기지 않고 여기 적어 둡니다 —");
+    eprintln!("─── ⑪ 파이썬 판 인자 중 이 판에서 효과가 없거나 값이 정해진 것 ──────");
+    eprintln!("  파이썬 판과 같은 명령줄을 그대로 넣어도 멈추지 않도록 받아 줍니다.");
+    eprintln!("  다만 아래처럼 효과가 다르므로 숨기지 않고 적어 둡니다 —");
     eprintln!("  '줬는데 왜 안 되지'를 혼자 헤매는 것이 가장 나쁜 상태이기 때문입니다.");
-    eprintln!("  --embed  --emb-test  --with-text                (벡터 단독 출력 모드)");
-    eprintln!("  --model  --max-tokens  --overlap  --precision  --per-chunk");
-    eprintln!("  --normalize  --no-normalize  --num-threads      (임베딩 세부 설정)");
-    eprintln!("  --seed-per-dir  --seed-per-node                 (씨앗 자동 생성 세부 설정)");
-    eprintln!("  --timing  -r, --recursive  --classify");
-    eprintln!("                            ※ --dir 은 원래 늘 재귀라 -r 은 있으나 마나입니다");
-    eprintln!("                            ※ 추출 본문이 필요하면 --textsave·--text-only 를 쓰세요");
+    eprintln!("  [효과 없음]     --embed  --per-chunk  --normalize  --no-normalize");
+    eprintln!("                  --timing  -r, --recursive  --classify");
+    eprintln!("                  ※ 벡터가 필요하면 --with-vector, 본문은 --with-text·--textsave·--text-only");
+    eprintln!("                  ※ --dir 은 원래 늘 재귀라 -r 은 있으나 마나입니다");
+    eprintln!("  [값은 안 씀]    --num-threads  --seed-per-dir  --seed-per-node");
+    eprintln!("                  값이 정수가 아니면 멈춥니다(코드 1003) — 파이썬 판으로 옮길 때의 오타를 미리 잡으려고");
+    eprintln!("  [기본값만 받음] --max-tokens 512  --overlap 32  --precision f32");
+    eprintln!("                  다른 값은 벡터가 파이썬 판과 달라지므로 멈춥니다(코드 1012)");
 }
 
 //------------------------------------------------------------------
@@ -471,6 +515,8 @@ fn parse_args() -> Result<Opts, String> {
         size_limits: limits::Overrides::default(), no_size_limit: false,
         textsave: None,
         text_only: false,
+        decrypt: false, mrk: None, enc_mode: None, zip_mode: None, name: None,
+        no_decrypt: false, decrypt_cmd: None, decrypt_tmp: None, decrypt_timeout: None,
     };
     // args_os() 를 쓴다. std::env::args() 는 인자에 UTF-8 이 아닌 바이트가 섞이면
     // **패닉한다**(리눅스에서 CP949 로 깨진 경로를 받으면 실제로 그렇게 죽었다).
@@ -699,6 +745,18 @@ fn parse_args() -> Result<Opts, String> {
             // 위 '없어진 옵션' 자리에서 새 이름을 알려 준다.
             "--textsave" => { o.textsave = take(false); }
 
+            // 엠파워 v11 암호화 문서 복호화(설계 §4·§5).
+            "--decrypt" => o.decrypt = true,
+            "--no-decrypt" => o.no_decrypt = true,
+            "--mrk" => o.mrk = take(false),
+            "--enc-mode" => o.enc_mode = take(false),
+            "--zip-mode" => o.zip_mode = take(false),
+            "--name" => o.name = take(false),
+            "--decrypt-cmd" => o.decrypt_cmd = take(false),
+            "--decrypt-tmp" => o.decrypt_tmp = take(false),
+            "--decrypt-timeout" =>
+                o.decrypt_timeout = Some(parse_u64(&take(false).unwrap(), "--decrypt-timeout")),
+
             // 여기까지 안 걸렸으면 정말 모르는 인자다. 조용히 넘어가면 오타 하나가
             // 옵션을 통째로 무효로 만든다(예: --json-erros). 파이썬 판도 여기서
             // 막으므로, 그 자리에서 끝내는 것이 두 판이 같아지는 길이다.
@@ -769,7 +827,9 @@ fn parse_args() -> Result<Opts, String> {
 //   ③ 왜          why(축별 상세) · pii · vector
 //   ④ 장부        meta · elapsed_ms
 const REC_ORDER: &[&str] = &[
-    "file", "hash", "doc_id", "doc_id_source", "rematched_by",
+    // name 은 엠파워 v11 의 원래 파일 이름 — 목록·명령줄이 줬을 때만 있다.
+    // 신원 세 칸(file · hash · doc_id)이 맨 앞이라는 약속은 그대로 두고 그 뒤에 넣는다.
+    "file", "hash", "doc_id", "doc_id_source", "rematched_by", "name",
     "grade", "doctype", "error", "excluded", "why", "pii", "vector",
     // --textsave 표식은 판정값이 아니라 부속이다(파이썬 판과 같은 자리).
     "text_saved", "text_save_error",
@@ -1650,12 +1710,67 @@ fn fail_no_input(opts: &Opts) -> ! {
 //------------------------------------------------------------------
 fn run_text_only(opts: &Opts) -> i32 {
     let files = collect_files(opts, None);
+    // 엠파워 v11 암호화 문서(--file … --decrypt) — 먼저 풀고, 풀린 파일에서 본문을 뽑는다.
+    // 이 모드는 목록을 읽지 않으므로 열쇠는 명령줄에서만 온다(check_decrypt_args 가 이미 봤다).
+    let mut dec_sess: Option<decrypt::Session> = None;
+    // (임시 라벨, 원래 라벨) — 출력의 '===== 경로 =====' 에 임시 경로가 나가지 않게 되돌린다.
+    let mut dec_relabel: Option<(String, String)> = None;
+    let files = match (opts.decrypt && !opts.no_decrypt, files.first().cloned()) {
+        (true, Some(src)) => {
+            let display = src.to_string_lossy().replace('\\', "/");
+            let plan = dec_plan_for(opts, None, &display);
+            let (info, name, size) = match plan {
+                Some(DecPlan { info: Ok(i), name, size }) => (i, name, size),
+                Some(DecPlan { info: Err((_, why)), .. }) => errcodes::fail(
+                    "decrypt_args_invalid", &format!("[MpowerClassify-rs] {}", why), Some(&display)),
+                None => errcodes::fail("decrypt_args_invalid",
+                    "[MpowerClassify-rs] --decrypt 에 필요한 열쇠 정보가 없습니다.", Some(&display)),
+            };
+            let cmd = decrypt::resolve_cmd(opts.decrypt_cmd.as_deref());
+            if !info.is_plain() {
+                if let Err(why) = decrypt::preflight(&cmd) {
+                    errcodes::fail("decrypt_cmd_missing", &format!("[MpowerClassify-rs] {}", why),
+                                   cmd.to_str());
+                }
+            }
+            let base = decrypt::resolve_tmp_base(opts.decrypt_tmp.as_deref());
+            let mut sess = match decrypt::Session::open(
+                cmd, &base, opts.decrypt_timeout.unwrap_or(decrypt::DEFAULT_TIMEOUT_SECS)) {
+                Ok(s) => s,
+                Err(why) => errcodes::fail("decrypt_unavailable",
+                    &format!("[MpowerClassify-rs] {}", why), base.to_str()),
+            };
+            match sess.decrypt(&src, &info, name.as_deref(), size) {
+                Ok(d) => {
+                    dec_relabel = Some((d.file.to_string_lossy().replace('\\', "/"), display));
+                    let v = vec![d.file.clone()];
+                    dec_sess = Some(sess);
+                    v
+                }
+                Err(e) => {
+                    sess.close();
+                    // 환경 문제면 2, 이 파일만의 문제면 1 — 분류 때와 같은 갈래다.
+                    errcodes::fail(if e.fatal { "decrypt_unavailable" } else { "decrypt_failed" },
+                        &format!("[MpowerClassify-rs] 복호화하지 못했습니다 — {}", e.message),
+                        Some(&display));
+                }
+            }
+        }
+        _ => files,
+    };
     // 압축은 분류 때와 똑같이 내부 문서로 펼친다 — 대상이 달라지면 비교가 안 된다.
     let arc_tmp = std::env::temp_dir().join(format!("cso_txt_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&arc_tmp);
     let _ = std::fs::create_dir_all(&arc_tmp);
     let mut arc_stats = archive::ExpandStats::default();
-    let jobs: Vec<archive::Job> = archive::expand_paths(&files, &arc_tmp, 3, &mut arc_stats);
+    let mut jobs: Vec<archive::Job> = archive::expand_paths(&files, &arc_tmp, 3, &mut arc_stats);
+    if let Some((tmp_label, display)) = &dec_relabel {
+        for j in jobs.iter_mut() {
+            if j.label.starts_with(tmp_label.as_str()) {
+                j.label = format!("{}{}", display, &j.label[tmp_label.len()..]);
+            }
+        }
+    }
     if jobs.is_empty() {
         let _ = std::fs::remove_dir_all(&arc_tmp);
         fail_no_input(opts);
@@ -1713,8 +1828,127 @@ fn run_text_only(opts: &Opts) -> i32 {
     }
     let _ = sink.flush();
     let _ = std::fs::remove_dir_all(&arc_tmp);
+    // 풀어 둔 평문을 지운다(본문은 이미 다 뽑았다).
+    if let Some(sess) = dec_sess.as_ref() { sess.close(); }
     errcodes::set_counts(jobs.len() as i64, failed);
     code
+}
+
+//------------------------------------------------------------------
+// 문서 하나를 어떻게 꺼낼지 — 복호화 계획
+//
+// -필드: info = 열쇠와 모드. Err 이면 그 문서는 풀지도 읽지도 않고 오류 레코드로 남긴다
+//               (열쇠 칸이 일부만 있거나 감싼 열쇠가 온 경우)
+// -필드: name = 원래 파일 이름(없을 수 있다)
+// -필드: size = 원래 크기(없을 수 있다)
+//------------------------------------------------------------------
+struct DecPlan {
+    info: Result<decrypt::DecInfo, (&'static str, String)>,
+    name: Option<String>,
+    size: Option<u64>,
+}
+
+//------------------------------------------------------------------
+// 명령줄로 받은 열쇠 세 칸 → 복호화 정보
+//=> --mrk 가 없으면 환경변수 CSOCLASSIFY_MRK 를 본다(명령줄에 열쇠를 남기지 않는 길).
+//
+// -in: opts = 파싱된 실행 옵션
+//
+// -out: Ok(None) = 명령줄에 열쇠 정보가 없다 / Ok(Some) = 쓸 수 있다
+// -out: error = Err((사유, 문장)) — 일부만 줬거나 감싼 열쇠
+//------------------------------------------------------------------
+fn cli_dec_info(opts: &Opts) -> Result<Option<decrypt::DecInfo>, (&'static str, String)> {
+    let env_mrk = std::env::var("CSOCLASSIFY_MRK").ok();
+    // 환경변수는 모드(--enc-mode·--zip-mode)를 명령줄로 줬을 때만 본다 — 안 그러면
+    // 남아 있던 환경변수 하나가 '목록에서 열쇠를 찾는 실행'을 '일부만 줌' 오류로 만든다.
+    let modes_given = opts.enc_mode.is_some() || opts.zip_mode.is_some();
+    let mrk = opts.mrk.as_deref()
+        .or(if opts.decrypt && modes_given { env_mrk.as_deref() } else { None });
+    filelist::parse_dec_info(mrk, opts.enc_mode.as_deref(), opts.zip_mode.as_deref())
+}
+
+//------------------------------------------------------------------
+// --decrypt 관련 인자 조합 검사 — 문서를 읽기 전에 끝낸다
+//=> "풀릴 줄 알았는데 안 풀린" 상태를 만들지 않는다(설계 §4 표).
+//    1) --decrypt 는 --file 한 건에만 쓴다(폴더에는 파일마다 다른 열쇠를 줄 방법이 없다)
+//    2) --decrypt 와 --no-decrypt 는 함께 못 쓴다
+//    3) --decrypt 면 열쇠 셋이 있어야 한다(없으면 --filelist 에서 찾는다)
+//    4) 열쇠·이름만 주고 --decrypt 를 안 주면 오류
+//
+// -in: opts = 파싱된 실행 옵션
+//
+// -out: 없음(문제가 없으면 그냥 돌아온다)
+// -out: error = 조합이 틀리면 errcodes::fail("decrypt_args_invalid") 로 종료(코드 3)
+//------------------------------------------------------------------
+fn check_decrypt_args(opts: &Opts) {
+    let bad = |msg: &str| -> ! {
+        errcodes::fail("decrypt_args_invalid", &format!("[MpowerClassify-rs] {}", msg), None)
+    };
+    let has_keys = opts.mrk.is_some() || opts.enc_mode.is_some() || opts.zip_mode.is_some();
+    if !opts.decrypt {
+        if has_keys || opts.name.is_some() {
+            bad("--mrk · --enc-mode · --zip-mode · --name 은 --decrypt 와 함께 써야 합니다.\n  \
+                 풀어서 분류하려면 --decrypt 를 붙이고, 이미 풀어 둔 파일이면 이 인자들을 빼세요.");
+        }
+        return;
+    }
+    if opts.no_decrypt {
+        bad("--decrypt 와 --no-decrypt 는 함께 쓸 수 없습니다.");
+    }
+    if opts.file.is_none() {
+        bad("--decrypt 는 --file 한 건에만 씁니다. 여러 파일은 --filelist 의 각 줄에 \
+             mrk · enc_mode · zip_mode 를 적어 주세요(파일마다 열쇠가 다릅니다).");
+    }
+    match cli_dec_info(opts) {
+        Ok(Some(_)) => {}
+        // 명령줄에 열쇠가 없으면 목록에서 찾는다 — 목록도 없으면 풀 방법이 없다.
+        // (--text-only 는 목록을 읽지 않으므로 명령줄에 있어야 한다.)
+        Ok(None) if opts.filelist.is_some() && !opts.text_only => {}
+        Ok(None) => bad("--decrypt 에는 --mrk · --enc-mode · --zip-mode 가 필요합니다\
+                         (--mrk 는 환경변수 CSOCLASSIFY_MRK 로도 줄 수 있습니다)."),
+        Err((_, why)) => bad(&why),
+    }
+}
+
+//------------------------------------------------------------------
+// 이 문서의 복호화 계획 찾기
+//=> 명령줄(--decrypt) → 목록(--filelist)의 그 줄 순으로 본다.
+//    1) --no-decrypt 면 언제나 None(그대로 읽는다)
+//    2) --decrypt 면 명령줄 값이 우선, 없으면 목록의 그 줄
+//    3) 그 밖에는 목록의 그 줄에 열쇠 칸이 있을 때만
+//
+// -in: opts    = 파싱된 실행 옵션
+// -in: flist   = 읽어 둔 목록(없으면 None)
+// -in: display = 문서 경로(목록의 path 와 같은 표기)
+//
+// -out: Some(DecPlan) = 풀어야(또는 오류로 남겨야) 하는 문서 / None = 그대로 읽는 문서
+// -out: error = 예외 없음
+//------------------------------------------------------------------
+fn dec_plan_for(opts: &Opts, flist: Option<&filelist::FileList>, display: &str) -> Option<DecPlan> {
+    if opts.no_decrypt {
+        return None;
+    }
+    let entry = flist.and_then(|fl| fl.lookup(display)).map(|(e, _)| e);
+    if opts.decrypt {
+        let name = opts.name.clone().or_else(|| entry.and_then(|e| e.name.clone()));
+        let size = entry.and_then(|e| e.size);
+        return match cli_dec_info(opts) {
+            Ok(Some(info)) => Some(DecPlan { info: Ok(info), name, size }),
+            Err(why) => Some(DecPlan { info: Err(why), name, size }),
+            Ok(None) => match entry {
+                Some(e) if e.dec.is_some() => Some(DecPlan { info: Ok(e.dec.clone().unwrap()), name, size }),
+                Some(e) if e.dec_problem.is_some() =>
+                    Some(DecPlan { info: Err(e.dec_problem.clone().unwrap()), name, size }),
+                _ => Some(DecPlan { info: Err(("info_incomplete",
+                    "--decrypt 를 줬지만 명령줄에도 목록에도 이 파일의 열쇠가 없습니다".into())), name, size }),
+            },
+        };
+    }
+    let e = entry?;
+    if let Some(why) = &e.dec_problem {
+        return Some(DecPlan { info: Err(why.clone()), name: e.name.clone(), size: e.size });
+    }
+    e.dec.as_ref().map(|d| DecPlan { info: Ok(d.clone()), name: e.name.clone(), size: e.size })
 }
 
 fn collect_files(opts: &Opts, flist: Option<&filelist::FileList>) -> Vec<PathBuf> {
@@ -1874,9 +2108,15 @@ fn handle_extractor_args(opts: &Opts) {
 //=> 임베딩 모델을 물고 있는 상주 서버를 띄우거나, 상태를 묻거나, 내린다.
 //   셋 다 문서를 분류하지 않으므로 여기서 처리하고 프로세스를 끝낸다.
 //    · --serve  : 이 프로세스가 서버가 된다. 정지 요청·유휴 종료 때까지 돌아오지 않는다
-//    · --status : 파이썬 판과 같은 모양의 한 줄을 내고 0
+//    · --status : 서버 상태를 알리고 0
 //    · --stop   : 정지 요청을 보내고(없으면 없다고 알리고) 0
 //   --daemon 은 여기서 다루지 않는다 — 분류 흐름의 임베딩 단계가 직접 본다.
+//
+//   [출력은 언제나 JSON 한 줄이다] 이 세 명령은 연동 프로그램이 불러 결과를 읽는다.
+//   그래서 --json-errors 를 안 줘도 분류 실행의 상태 줄과 같은 모양으로 낸다
+//   (daemon::report 참고): {"error":{"code":0,"kind":"success","message":…},"daemon":{…}}
+//   실패도 같은 모양(code≠0)으로 나가도록 여기서 JSON 오류 출력을 켠다.
+//   사람이 읽던 문구는 error.message 에 그대로 들어 있다.
 //
 // -in: opts = 파싱된 실행 옵션
 //
@@ -1884,31 +2124,44 @@ fn handle_extractor_args(opts: &Opts) {
 // -out: error = --serve 기동 실패는 daemon::server::run 이 internal_error/model_load_failed 로 종료
 //------------------------------------------------------------------
 fn handle_daemon_args(opts: &Opts) {
+    if !(opts.serve || opts.status || opts.stop) {
+        return;
+    }
     let spec = embed::current();
+    // 실패(모델을 못 올림 등)도 stdout 에 JSON 한 줄로 나가게 한다 — 성공만 JSON 이면
+    // 받는 쪽이 실패를 따로(stderr 문장으로) 읽어야 한다.
+    errcodes::enable_json(true);
     if opts.serve {
-        let code = daemon::server::run(spec, opts.idle_timeout);
-        std::process::exit(errcodes::finish(code, None));
+        // 준비되면 run 안에서 한 줄을 낸다. 끝날 때(정지·유휴)는 더 내지 않는다 —
+        // 그때는 읽을 쪽이 이미 떠났고, 종료코드 0 이 "정상으로 끝났다"를 말해 준다.
+        std::process::exit(daemon::server::run(spec, opts.idle_timeout));
     }
     if opts.status {
         match daemon::client::status(spec.key) {
             Some((rec, ready)) => {
-                // 유휴시간 표시: 0/없음 = 무한(자동종료 없음) — 파이썬 판과 같은 표기.
+                // 사람이 읽는 줄의 유휴시간 표시: 0/없음 = 무한(자동종료 없음) — 파이썬 판과 같은 표기.
                 let idle = match rec.get("idle_timeout").and_then(Value::as_u64) {
                     Some(n) if n > 0 => format!("{}s", n),
                     _ => "무한(자동종료 없음)".to_string(),
                 };
-                println!("model={} pid={} port={} version={} idle_timeout={} ready={}",
-                         spec.key, rec["pid"], rec["port"],
-                         rec["version"].as_str().unwrap_or(""), idle, ready);
+                let msg = format!("model={} pid={} port={} version={} idle_timeout={} ready={}",
+                                  spec.key, rec["pid"], rec["port"],
+                                  rec["version"].as_str().unwrap_or(""), idle, ready);
+                daemon::report(&msg, daemon::info(&rec, ready));
             }
-            None => println!("model={}: 실행 중인 데몬 없음", spec.key),
+            // 서버가 없다는 것도 '정상으로 얻은 답'이다 — code 는 0 이고 running 이 false 다.
+            None => daemon::report(&format!("model={}: 실행 중인 데몬 없음", spec.key),
+                                   json!({"running": false, "model": spec.key})),
         }
-        std::process::exit(errcodes::finish(0, None));
+        std::process::exit(0);
     }
     if opts.stop {
         let stopped = daemon::client::stop(spec.key);
-        println!("{}", if stopped { "데몬 정지 요청 전송" } else { "정지할 데몬 없음" });
-        std::process::exit(errcodes::finish(0, None));
+        // stopped=false 는 "내릴 서버가 없었다" — 원하는 끝 상태(서버 없음)는 이미 참이라 성공이다.
+        // running 칸은 넣지 않는다: 정지 '요청'을 보낸 직후라 서버가 아직 내려가는 중일 수 있다.
+        daemon::report(if stopped { "데몬 정지 요청 전송" } else { "정지할 데몬 없음" },
+                       json!({"model": spec.key, "stopped": stopped}));
+        std::process::exit(0);
     }
 }
 
@@ -2154,6 +2407,8 @@ fn install_interrupt_handler() {
         }
         // 상주 서버로 떠 있었다면 접속 기록·잠금도 치운다(서버가 아니면 아무 일도 안 한다).
         daemon::server::cleanup_on_interrupt();
+        // 복호화해 둔 평문도 치운다(임시 폴더 위치가 --decrypt-tmp 로 바뀔 수 있어 모듈이 기억한다).
+        decrypt::cleanup_on_exit();
         if !errcodes::quiet() {
             eprintln!("\n[MpowerClassify-rs] 사용자가 중단했습니다.");
         }
@@ -2168,6 +2423,14 @@ fn main() {
     // 예상 못 한 내부 오류(패닉)도 파일에 남긴다 — 화면이 없는 환경(UI·배치)에서
     // 죽으면 원인을 알 방법이 사라진다. 가장 먼저 건다.
     errlog::install_panic_hook();
+    // 패닉으로 죽을 때도 복호화해 둔 평문을 남기지 않는다(설계 §8). 기존 훅(로그 기록)은 그대로 부른다.
+    {
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            decrypt::cleanup_on_exit();
+            prev(info);
+        }));
+    }
     install_interrupt_handler();
 
     // 히든: 임베딩 검증용(--emb-test "<텍스트>") → 384벡터 JSON 출력.
@@ -2193,6 +2456,12 @@ fn main() {
 
     // 인자 해석이 실패해도 JSON 으로 알려야 하므로, 파싱 전에 날것의 argv 를 훑는다.
     errcodes::enable_json(errcodes::wants_json(std::env::args()));
+    // 상주 서버 명령(--serve/--status/--stop)은 언제나 JSON 한 줄로 답한다(handle_daemon_args).
+    // 인자 해석 단계에서 실패해도(모르는 --model 등) 같은 모양이 되도록 여기서 미리 켠다 —
+    // 성공은 JSON 인데 인자 오류만 문장이면, 받는 쪽이 두 가지 읽는 법을 가져야 한다.
+    if raw.iter().any(|a| matches!(a.as_str(), "--serve" | "--status" | "--stop")) {
+        errcodes::enable_json(true);
+    }
     
     // [2026-09-01] 예전에는 인자 오류를 2(임베딩 실패)로 냈다. 받는 쪽이 그 2 를 보고
     // "모델이 없구나" 하고 재설치를 안내하면 실제 원인(경로 오타)과 전혀 다른 대응을
@@ -2206,10 +2475,13 @@ fn main() {
     log::init(opts.log.as_deref(), opts.verbose);
     // 파이썬 판이 남기는 첫 두 줄과 같은 내용이다 — 로그 파일만 받아도 무슨
     // 명령으로 돌렸는지 알 수 있어야 재현이 된다.
-    linfo!("실행 cmd={}", std::env::args_os()
+    // 열쇠(--mrk 뒤의 값)는 로그에 남기지 않는다 — **** 로 가려서 적는다(설계 §8).
+    linfo!("실행 cmd={}", decrypt::mask_args(&std::env::args_os()
         .map(|a| a.to_string_lossy().into_owned())
-        .collect::<Vec<_>>().join(" "));
-    linfo!("실행 argv={:?}", raw);
+        .collect::<Vec<_>>()).join(" "));
+    linfo!("실행 argv={:?}", decrypt::mask_args(&raw));
+    // --decrypt 조합이 틀렸으면 아무것도 읽기 전에 끝낸다.
+    check_decrypt_args(&opts);
 
     // 크기 상한 CLI 덮어쓰기를 여기서 한 번만 새긴다 — 아래 모든 단계가
     // limits 모듈을 통해 이 값을 읽는다.
@@ -2378,6 +2650,17 @@ fn main() {
                 for w in &fl.warnings {
                     note!("[MpowerClassify-rs] {}", w);
                 }
+                // 열쇠 칸(mrk·enc_mode·zip_mode)이 붙은 줄이 있으면 알린다 — 풀어서 읽는다는 것을
+                // 모르고 돌리는 일이 없게. --no-decrypt 면 풀지 않는다는 것도 함께 말한다.
+                if fl.dec_count() > 0 {
+                    if opts.no_decrypt {
+                        note!("[MpowerClassify-rs] 목록에 복호화 정보가 {}건 있지만 --no-decrypt 라 풀지 않고 그대로 읽습니다",
+                              fl.dec_count());
+                    } else {
+                        note!("[MpowerClassify-rs] 복호화 정보가 있는 문서 {}건 — 한 건씩 풀어서 분류하고 바로 지웁니다",
+                              fl.dec_count());
+                    }
+                }
                 Some(fl)
             }
             // '파일이 없다'와 '내용이 잘못됐다'는 부르는 쪽의 대응이 다르므로 코드를 나눈다.
@@ -2400,9 +2683,44 @@ fn main() {
     let _ = std::fs::remove_dir_all(&arc_tmp);
     let _ = std::fs::create_dir_all(&arc_tmp);
     let mut arc_stats = archive::ExpandStats::default();
-    let files: Vec<archive::Job> = archive::expand_paths(&files, &arc_tmp, 3, &mut arc_stats);
+    // 복호화할 문서를 먼저 갈라 둔다(설계 §9 '구조 변경'). 이 문서들은 여기서 펼치지 않는다 —
+    // 지금 펼치려면 먼저 다 풀어야 하고, 그러면 평문 수천 건이 한꺼번에 디스크에 놓인다.
+    // 아래 루프가 한 건씩 풀기 → (압축이면) 펼치기 → 분류 → 지우기로 처리한다.
+    // 기준 문서 등록 모드(--seed-add)는 대상이 사람이 고른 평문이라 복호화하지 않는다.
+    let mut dec_plans: std::collections::HashMap<String, DecPlan> = std::collections::HashMap::new();
+    let (plain_paths, dec_paths): (Vec<PathBuf>, Vec<PathBuf>) = if seed_plan.is_empty() {
+        files.into_iter().partition(|p| {
+            // 라벨은 압축 확장(archive::expand_paths)이 만드는 것과 같은 표기로 맞춘다.
+            let label = p.to_string_lossy().replace('\\', "/");
+            match dec_plan_for(&opts, flist.as_ref(), &label) {
+                Some(plan) => { dec_plans.insert(label, plan); false }
+                None => true,
+            }
+        })
+    } else {
+        (files, vec![])
+    };
+    let mut files: Vec<archive::Job> = archive::expand_paths(&plain_paths, &arc_tmp, 3, &mut arc_stats);
+    for p in &dec_paths {
+        files.push(archive::Job {
+            src: p.clone(),
+            label: p.to_string_lossy().replace('\\', "/"),
+            origin: None,
+        });
+    }
     if files.is_empty() {
         fail_no_input(&opts);
+    }
+    // 복호화 도구가 있는지 문서를 읽기 전에 본다. 없으면 대상 전부가 같은 이유로 실패한
+    // 결과 파일이 만들어진다 — 그보다 한 건도 읽지 않고 끝내는 편이 낫다(설계 §5).
+    // 둘 다 0 인(암호화 안 된) 문서뿐이면 도구를 부를 일이 없어 보지 않는다.
+    let dec_cmd = decrypt::resolve_cmd(opts.decrypt_cmd.as_deref());
+    if dec_plans.values().any(|p| matches!(&p.info, Ok(i) if !i.is_plain())) {
+        if let Err(why) = decrypt::preflight(&dec_cmd) {
+            let _ = std::fs::remove_dir_all(&arc_tmp);
+            errcodes::fail("decrypt_cmd_missing", &format!("[MpowerClassify-rs] {}", why),
+                           dec_cmd.to_str());
+        }
     }
     // --out 을 쓸 수 있는지 문서를 읽기 전에 본다. 결과는 끝에서 한 번에 쓰므로, 예전에는
     // 경로가 틀려도 전체 스캔을 다 돌린 뒤에야 4001 로 실패했다(파이썬 판은 시작 전에 멈춘다).
@@ -2623,12 +2941,12 @@ fn main() {
     // 달아야 한다 — 요약 숫자만 있으면 '어느 압축이' 빠졌는지 결과에서 알 수 없다.
     // 경로 → (사유, 종류). 종류는 "limit"(상한 초과) 또는 "error"(손상·미지원 등).
     // 둘을 섞으면 안내가 엇나간다 — 손상 압축에 "상한을 올리세요"는 틀린 처방이다.
-    let arch_unexpanded: std::collections::BTreeMap<String, (String, &'static str)> = arc_stats
+    let mut arch_unexpanded: std::collections::BTreeMap<String, (String, &'static str)> = arc_stats
         .unexpanded
         .iter()
         .map(|(p, r, k)| (p.clone(), (r.clone(), *k)))
         .collect();
-    let arch_unsupported: std::collections::BTreeMap<String, String> =
+    let mut arch_unsupported: std::collections::BTreeMap<String, String> =
         arc_stats.unsupported.iter().cloned().collect();
 
     // 1차: 추출 + (규칙) 분류 → 아이템 수집(전파 위해 text/seed_eligible/vector 보관).
@@ -2657,12 +2975,200 @@ fn main() {
     if opts.progress {
         eprintln!("[progress] 0/{} ", files.len());
     }
-    for (done, job) in files.iter().enumerate() {
+    // ── 복호화 작업장(엠파워 v11 암호화 문서) ─────────────────────────
+    // 임시 폴더는 문서를 읽기 직전에 만든다 — 위의 사전 점검에서 끝나면 빈 폴더도 남기지 않는다.
+    let mut dec_sess: Option<decrypt::Session> = None;
+    if !dec_plans.is_empty() {
+        let base = decrypt::resolve_tmp_base(opts.decrypt_tmp.as_deref());
+        match decrypt::Session::open(dec_cmd.clone(), &base,
+                                     opts.decrypt_timeout.unwrap_or(decrypt::DEFAULT_TIMEOUT_SECS)) {
+            Ok(s) => dec_sess = Some(s),
+            Err(why) => {
+                let _ = std::fs::remove_dir_all(&arc_tmp);
+                errcodes::fail("decrypt_unavailable", &format!("[MpowerClassify-rs] {}", why),
+                               base.to_str());
+            }
+        }
+    }
+    // 풀어 둔 문서의 임시 폴더 — (그 문서에서 나온 마지막 작업의 번호, 폴더).
+    // 그 번호를 지나면 폴더째 지운다. 압축이면 내부 문서 N건이 끝날 때까지 들고 있어야 한다.
+    let mut dec_open: Vec<(usize, PathBuf)> = vec![];
+    // 풀린 문서의 부속 정보 — 표시 경로 → (원래 파일 이름, 도구를 실제로 불렀는가).
+    let mut dec_meta: std::collections::HashMap<String, (Option<String>, bool)> =
+        std::collections::HashMap::new();
+    // 복호화 도구로 푼 문서 수 / 풀지 못한 문서 수(요약 · 종료코드).
+    let (mut n_dec, mut n_dec_fail) = (0usize, 0usize);
+    // 번호로 돈다 — 복호화한 압축파일은 그 자리에서 내부 문서 N건으로 바뀌므로(splice)
+    // 목록 길이가 도는 중에 달라진다.
+    let mut next = 0usize;
+    while next < files.len() {
+        let done = next;
+        // 이미 끝난 문서의 평문을 지운다 — "한 번에 한 건만 풀려 있다"(설계 §3).
+        if let Some(sess) = dec_sess.as_ref() {
+            dec_open.retain(|(last, dir)| {
+                if *last < done { sess.release(dir); false } else { true }
+            });
+        }
+        // 이 차례가 '아직 풀지 않은 암호화 문서'면 여기서 푼다.
+        if let Some(plan) = dec_plans.remove(&files[done].label) {
+            let display = files[done].label.clone();
+            let src = files[done].src.clone();
+            let sess = dec_sess.as_mut().expect("복호화 계획이 있으면 작업장도 있다");
+            // 풀기 전에 저장 파일 크기를 본다 — 터무니없이 큰 파일은 풀지도 않는다(설계 §9).
+            // 풀린 뒤의 실제 크기는 아래 크기 상한(G1·G2)이 지금까지처럼 다시 본다.
+            let max = limits::max_file_bytes();
+            let src_len = std::fs::metadata(&src).map(|m| m.len()).unwrap_or(0);
+            let outcome: Result<decrypt::Decrypted, decrypt::DecError> = match &plan.info {
+                // 열쇠 칸이 일부만 있거나 감싼 열쇠 — 도구를 부르지 않고 오류로 남긴다.
+                Err((reason, msg)) => Err(decrypt::DecError {
+                    reason: *reason, rc: None, message: msg.clone(), fatal: false }),
+                Ok(_) if max > 0 && src_len > max => Err(decrypt::DecError {
+                    reason: "size_limit", rc: None, fatal: false,
+                    message: format!("저장 파일이 크기 상한을 넘어 풀지 않았습니다({}바이트 > {}바이트). \
+                                      --max-file-mb 로 조정할 수 있습니다", src_len, max) }),
+                Ok(info) => sess.decrypt(&src, info, plan.name.as_deref(), plan.size),
+            };
+            match outcome {
+                Ok(d) => {
+                    if d.tool { n_dec += 1; }
+                    // 압축파일이면 내부 문서로 펼친다(이 문서 전용 폴더 안에). 순서는
+                    // 복호화 → 펼치기 → 분류다. zip_mode(저장 시 압축)는 도구가 이미 풀었고,
+                    // 여기서 펼치는 것은 사용자가 올린 zip·7z 같은 '문서로서의 압축'이다.
+                    let xdir = d.dir.join("x");
+                    let _ = std::fs::create_dir_all(&xdir);
+                    let tmp_label = d.file.to_string_lossy().replace('\\', "/");
+                    let mark = (arc_stats.unexpanded.len(), arc_stats.unsupported.len(),
+                                arc_stats.partial.len());
+                    let mut jobs = archive::expand_paths(&[d.file.clone()], &xdir, 3, &mut arc_stats);
+                    // 라벨에서 임시 경로를 원래 경로로 되돌린다 — 임시 경로는 결과·로그 어디에도
+                    // 나가면 안 된다(곧 지워지는 경로이고, 임시 폴더 구조가 새어 나간다).
+                    let fix = |s: &str| -> String {
+                        if s == tmp_label {
+                            display.clone()
+                        } else if s.starts_with(&tmp_label) && s[tmp_label.len()..].starts_with('/') {
+                            format!("{}{}", display, &s[tmp_label.len()..])
+                        } else {
+                            s.to_string()
+                        }
+                    };
+                    for j in jobs.iter_mut() {
+                        j.label = fix(&j.label);
+                        j.origin = j.origin.as_deref().map(&fix);
+                    }
+                    for (p, r, k) in arc_stats.unexpanded[mark.0..].iter_mut() {
+                        *p = fix(p);
+                        arch_unexpanded.insert(p.clone(), (r.clone(), *k));
+                    }
+                    for (p, r) in arc_stats.unsupported[mark.1..].iter_mut() {
+                        *p = fix(p);
+                        arch_unsupported.insert(p.clone(), r.clone());
+                    }
+                    for (p, _) in arc_stats.partial[mark.2..].iter_mut() {
+                        *p = fix(p);
+                    }
+                    dec_meta.insert(display.clone(), (plan.name.clone(), d.tool));
+                    let n = jobs.len();
+                    files.splice(done..done + 1, jobs);
+                    if n == 0 {
+                        sess.release(&d.dir);
+                    } else {
+                        dec_open.push((done + n - 1, d.dir));
+                    }
+                    // 번호를 올리지 않고 다시 돈다 — 이 자리가 이제 '풀린 문서'다.
+                    continue;
+                }
+                // 환경 문제(도구를 못 띄움 · PHP 확장 없음) — 다음 문서도 똑같이 실패한다.
+                // 남은 문서를 전부 실패로 채운 결과를 내느니 여기서 멈춘다(설계 §7).
+                Err(e) if e.fatal => {
+                    sess.close();
+                    let _ = std::fs::remove_dir_all(&arc_tmp);
+                    errcodes::fail("decrypt_unavailable",
+                        &format!("[MpowerClassify-rs] 복호화 환경 문제로 중단합니다 — {}", e.message),
+                        Some(&display));
+                }
+                // 파일 문제 — 이 문서만 오류 레코드로 남기고 다음으로 간다.
+                // 암호문을 "그래도 분류해 보자"로 넘기지 않는다. 등급이 나와 버리면 그것이
+                // 정상 결과처럼 DB 에 들어간다. 실패는 언제나 grade=null + error 다.
+                Err(e) => {
+                    let kind = if e.reason == "size_limit" {
+                        n_size_skipped += 1;
+                        fail += 1;
+                        "size_limit"
+                    } else {
+                        n_dec_fail += 1;
+                        "decrypt_failed"
+                    };
+                    errlog::err(&format!("[복호화실패] {} :: {}({})", display, e.message, e.reason));
+                    let sig = plan.name.clone().unwrap_or_else(|| display.clone());
+                    let mut rec = json!({
+                        "file": display,
+                        "grade": Value::Null,
+                        "why": {"security": {"confidence": 0.0,
+                                     "method": "decrypt_failed", "decided_by": [],
+                                     "seed_eligible": false, "signals": {}}},
+                        // kind 로 가르고(기계), reason 은 사람이 읽는 문장이다 — 다른 실패 레코드와
+                        // 같은 틀. detail 은 세부 사유 이름, rc 는 removeenc 종료코드(안 불렀으면 null).
+                        "error": {"stage": "decrypt", "kind": kind, "detail": e.reason,
+                                  "rc": e.rc, "reason": e.message},
+                        "meta": {"ts": now_iso()}
+                    });
+                    if let Some(n) = &plan.name { rec["name"] = json!(n); }
+                    if docid_on {
+                        // 지문(hash)은 싣지 않는다 — 여기서 읽을 수 있는 것은 암호문뿐이고,
+                        // 암호문의 지문은 '이 문서가 무엇인가'를 말해 주지 않는다.
+                        match flist.as_ref().and_then(|fl| fl.lookup(&display)) {
+                            Some((en, how)) => {
+                                n_sfile += 1;
+                                rec["doc_id"] = json!(en.sfile_id);
+                                rec["doc_id_source"] = json!("sfile_id");
+                                if how == "case" {
+                                    n_case += 1;
+                                    rec["rematched_by"] = json!("case");
+                                }
+                            }
+                            None => {
+                                n_pathid += 1;
+                                rec["doc_id"] = Value::Null;
+                                rec["doc_id_source"] = json!("path");
+                                missing_id_rows.push(json!({
+                                    "file": rec["file"].clone(),
+                                    "doc_id": Value::Null,
+                                    "doc_id_source": "path"}));
+                            }
+                        }
+                    }
+                    items.push(Item {
+                        dt_embed: None, rec,
+                        grade: None, text: String::new(), seed_eligible: false,
+                        vector: None, file: display.clone(), origin: None,
+                        dt: dt_axis.as_ref().map(|(taxonomy, drs)|
+                            doctype::scan_doctype("", &sig, drs, taxonomy)),
+                    });
+                    if opts.progress {
+                        eprintln!("[progress] {}/{} {}", done + 1, files.len(), display);
+                    }
+                    next += 1;
+                    continue;
+                }
+            }
+        }
+        // 여기부터는 이 문서를 끝까지 처리한다 — 아래의 continue 가 다음 문서로 가게 번호를 먼저 올린다.
+        next += 1;
+        let job = files[done].clone();
         // src = 실제로 읽을 경로(압축 내부면 임시파일), label = 표시·신호용 경로.
         // 압축 내부 문서는 이 둘이 다르다 — 결과에는 '압축경로/내부경로'가 나와야
         // 파일명·경로 규칙 신호가 원래대로 먹고, 사람도 어디 있던 문서인지 안다.
         let path = &job.src;
         let display = job.label.clone();
+        // 파일명 신호에 쓸 이름. 엠파워 저장 이름(F_….SMF)에는 단서가 없어서, 목록이 준
+        // 원래 이름(name)이 있으면 그것을 본다. 결과의 file 칸은 언제나 display 다.
+        let sig_label: String = dec_meta.get(&display).and_then(|m| m.0.clone())
+            .unwrap_or_else(|| display.clone());
+        // 로그·진행 표시에 쓸 경로. 풀린 문서는 임시 경로 대신 원래 경로를 적는다.
+        let shown: String = match dec_sess.as_ref() {
+            Some(s) if path.starts_with(s.root()) => display.clone(),
+            _ => path.display().to_string(),
+        };
         let fmt = detect::detect_format(path);
         // 크기 상한(G1·G2) — 설계: plan/문서크기-상한-설계-20260904.html
         // 추출기를 부르기 전에 원본 바이트를 본다. 넘으면 아예 읽지 않는다.
@@ -2709,18 +3215,18 @@ fn main() {
                 let (kind, reason) = match (&size_reason, &vol_reason) {
                     // 분할 조각 — 깨진 파일이 아니라 '원래 단독으로 못 읽는 것'이다.
                     (None, Some(why)) => {
-                        errlog::note(&format!("[분할조각] {} :: {}", path.display(), why));
+                        errlog::note(&format!("[분할조각] {} :: {}", shown, why));
                         n_split_volume += 1;
                         ("split_volume", why.clone())
                     }
                     (Some(why), _) => {
-                        errlog::err(&format!("[크기초과] {} :: {}", path.display(), why));
+                        errlog::err(&format!("[크기초과] {} :: {}", shown, why));
                         n_size_skipped += 1;
                         ("size_limit", why.clone())
                     }
                     (None, None) => {
                         errlog::err(&format!("[추출실패] {} (감지={})",
-                                             path.display(), fmt.as_str()));
+                                             shown, fmt.as_str()));
                         ("extract_failed", "텍스트를 추출하지 못했습니다".to_string())
                     }
                 };
@@ -2743,7 +3249,7 @@ fn main() {
                     // 그래야 화면이 "분류 안 됨(사람이 봐야 함)"으로 셀 수 있다.
                     origin: job.origin.clone(),
                     dt: dt_axis.as_ref().map(|(taxonomy, drs)|
-                        doctype::scan_doctype("", &display, drs, taxonomy)),
+                        doctype::scan_doctype("", &sig_label, drs, taxonomy)),
                 });
                 // 못 펼친 압축은 대개 '추출도 실패'해 이 갈래로 온다(이 판에는 압축
                 // 본문을 읽어 줄 사이냅이 없다). 표식을 성공 경로에만 달면 정작
@@ -2786,6 +3292,11 @@ fn main() {
                             "doc_id_source": r["doc_id_source"].clone()}));
                     }
                 }
+                if let Some((name, tool)) = dec_meta.get(&display) {
+                    let r = &mut items.last_mut().unwrap().rec;
+                    if let Some(n) = name { r["name"] = json!(n); }
+                    if *tool { r["meta"]["decrypted"] = json!(true); }
+                }
                 continue;
             }
         };
@@ -2795,7 +3306,7 @@ fn main() {
         // 표식은 레코드가 만들어진 뒤에 단다.
         let (text, n_text_orig, was_truncated) = limits::truncate_text(text, text_limit);
         let (mut rec, grade) = if rules_enabled {
-            build_record(&display, &text, &rs, opts.failsafe.as_deref())
+            build_record(&sig_label, &text, &rs, opts.failsafe.as_deref())
         } else {
             // 벡터-only: 규칙 미실행 → 보류 레코드(빈 signals). failsafe 는 전파 재융합에서 적용.
             (json!({
@@ -2807,6 +3318,9 @@ fn main() {
                 "meta": {"ts": now_iso()}
             }), None)
         };
+        // 신호는 원래 이름으로 봤지만, 결과의 file 은 부른 쪽이 준 경로 그대로여야 한다
+        // (목록과 결과를 잇는 키다).
+        if sig_label != display { rec["file"] = json!(display); }
         // 본문을 사실상 못 읽었으면 표식을 단다(분류 결과 자체는 건드리지 않는다 —
         // 파일명·경로 신호는 본문과 무관하고, 몇 글자라도 규칙에 걸렸으면 그 등급이
         // 맞다). 다만 아무것도 못 정했다면 method 를 'unclassified' 로 두지 않는다.
@@ -2820,7 +3334,7 @@ fn main() {
             rec["text_chars"] = json!(text.chars().count());
             rec["text_chars_original"] = json!(n_text_orig);
             errlog::note(&format!("[본문절단] {} {}자 → {}자(상한)",
-                                  path.display(), n_text_orig, text_limit));
+                                  shown, n_text_orig, text_limit));
         }
         // 파서가 상한에서 멈춰 끝까지 읽지 못했으면 그 사실도 남긴다(G5).
         // 절단(G3)과 따로 세는 이유: G3 은 '다 읽고 나서 잘랐다', 이건 '애초에
@@ -2852,7 +3366,7 @@ fn main() {
         if let Some((pages, scan_pages)) = scan {
             n_excluded += 1;
             errlog::note(&format!("[처리제외] {} (스캔 PDF, {}쪽 중 {}쪽이 그림)",
-                                  path.display(), pages, scan_pages));
+                                  shown, pages, scan_pages));
             rec["excluded"] = json!({
                 "kind": "scan_pdf", "pages": pages, "scan_pages": scan_pages,
                 "text_len": body_chars,
@@ -2867,7 +3381,7 @@ fn main() {
         } else if body_chars < min_text_len {
             fail += 1;
             errlog::err(&format!("[본문없음] {} ({}자) — 스캔본(이미지)일 수 있습니다",
-                                 path.display(), body_chars));
+                                 shown, body_chars));
             // kind 는 여기서도 채운다 — 크기 초과(size_limit)가 이 칸을 쓰기
             // 시작했으므로, 어떤 실패는 kind 가 있고 어떤 실패는 없으면 읽는 쪽이
             // 매번 존재 확인을 해야 하는 반쪽짜리 필드가 된다(파이썬 판과 동일).
@@ -2965,18 +3479,29 @@ fn main() {
         // 칸 차례는 파이썬과 같다: _REC_ORDER 에 없는 이름이라 맨 뒤에 붙는다.
         if opts.with_text { rec["text"] = json!(text); }
         // 업무분류 축은 security 모드(rule-only/vector-only)와 무관하게 독립적으로 돈다(6-4).
-        let dt = dt_axis.as_ref().map(|(taxonomy, drs)| doctype::scan_doctype(&text, &display, drs, taxonomy));
+        let dt = dt_axis.as_ref().map(|(taxonomy, drs)| doctype::scan_doctype(&text, &sig_label, drs, taxonomy));
         // [2026-09-10] 최상위 rec["seed_eligible"] 을 읽고 있었다. 평탄화로 그 칸은
         // security 안으로 옮겨져 최상위에는 더 이상 없다 — 늘 false 가 나왔고,
         // 규칙이 고신뢰로 찍은 문서가 아래 임베딩 대상 판정에서 통째로 빠졌다.
+        // 엠파워 v11 문서면 원래 이름과 '풀어서 읽었다'는 사실을 남긴다. 열쇠는 남기지 않는다.
+        if let Some((name, tool)) = dec_meta.get(&display) {
+            if let Some(n) = name { rec["name"] = json!(n); }
+            if *tool { rec["meta"]["decrypted"] = json!(true); }
+        }
         let seed_elig = record::seed_eligible_of(&rec);
         if opts.progress {
             // 형식은 Python 판과 같아야 한다 — 화면이 같은 규칙으로 읽는다.
-            eprintln!("[progress] {}/{} {}", done + 1, files.len(), path.display());
+            eprintln!("[progress] {}/{} {}", done + 1, files.len(), shown);
         }
         items.push(Item { rec, grade, text, seed_eligible: seed_elig, vector: None, file: display, dt,
                           dt_embed: None,
                           origin: job.origin.clone() });
+    }
+
+    // 풀어 둔 평문을 모두 지운다 — 2차(임베딩·전파)는 뽑아 둔 본문만 쓰고 파일을 다시 읽지 않는다.
+    if let Some(sess) = dec_sess.as_ref() {
+        for (_, dir) in dec_open.drain(..) { sess.release(&dir); }
+        sess.close();
     }
 
     // 2차: 임베딩 → (auto_prop 이면) seed 비교 → 보류 문서 재융합.
@@ -3270,6 +3795,9 @@ embed.enabled 가 false 라 2단계를 건너뜁니다", dt_seeds.size());
                 };
                 m.insert("doc_id".into(), v);
             }
+            // 엠파워 v11 의 원래 파일 이름 — 줬을 때만 싣는다(없던 실행의 줄 모양은 그대로다).
+            // 신원 세 칸(file · hash · doc_id) 뒤에 둔다 — 그 차례는 받는 쪽과의 약속이다.
+            if let Some(n) = rec.get("name") { m.insert("name".into(), n.clone()); }
             m.insert("grade".into(), match record::grade_of(&rec) {
                 Some(g) => json!(g), None => Value::Null });
             // 업무분류 축이 돌았을 때만 doctype 키를 붙인다. 축을 안 쓰는 배포에서 빈
@@ -3365,6 +3893,11 @@ embed.enabled 가 false 라 2단계를 건너뜁니다", dt_seeds.size());
     if n_missing_file > 0 {
         summary["file_missing"] = json!(n_missing_file);
     }
+    // 복호화 — 쓴 실행에서만 싣는다(엠파워 v11 암호화 문서).
+    if n_dec > 0 || n_dec_fail > 0 {
+        summary["decrypted"] = json!(n_dec);
+        summary["decrypt_failed"] = json!(n_dec_fail);
+    }
     if n_text_truncated > 0 {
         summary["text_truncated"] = json!(n_text_truncated);
     }
@@ -3409,7 +3942,7 @@ embed.enabled 가 false 라 2단계를 건너뜁니다", dt_seeds.size());
     // 상태 줄에 실을 건수를 여기서 먼저 남긴다 — 아래 status_object 가 그 값을 쓴다.
     // 상태 줄의 '실패' 건수에는 없는 파일도 넣는다 — 부르는 쪽에는 둘 다
     // "요청했는데 결과를 못 받은 문서"로 같은 뜻이다(파이썬 판과 동일).
-    errcodes::set_counts(total as i64, fail as i64 + n_missing_file as i64);
+    errcodes::set_counts(total as i64, fail as i64 + n_missing_file as i64 + n_dec_fail as i64);
     // 정책 버전도 함께 — 결과만 있고 '어떤 규칙으로 판정했는지'가 없으면 재현할 수 없다.
     errcodes::set_versions(&[
         ("rule_version", Some(rs.version.clone())),
@@ -3422,6 +3955,13 @@ embed.enabled 가 false 라 2단계를 건너뜁니다", dt_seeds.size());
     let mut code = if fail > 0 || n_missing_file > 0 {
         errcodes::exit_of("extract_failed")
     } else { 0 };
+    // 풀지 못한 문서가 있으면 그것을 까닭으로 알린다(종료코드는 같은 1 이고 번호만 3005 다).
+    if n_dec_fail > 0 {
+        errcodes::set_status("decrypt_failed", &format!(
+            "[MpowerClassify-rs] 복호화하지 못한 문서 {}건 — 결과에 error.kind=decrypt_failed 로 남겼습니다",
+            n_dec_fail));
+        code = errcodes::exit_of("decrypt_failed");
+    }
     // 모델 실패는 추출 실패보다 먼저 알린다 — 대응(설치 점검)이 배치 전체에 걸린다.
     // 못 읽은 문서 건수는 상태 줄의 total·failed 에 그대로 남는다.
     if let Some(m) = model_fail.as_ref() {
@@ -3584,6 +4124,7 @@ embed.enabled 가 false 라 2단계를 건너뜁니다", dt_seeds.size());
             let mut v = String::new();
             if !arc_stats.unexpanded.is_empty() { v += &format!(", 압축미해제={}", arc_stats.unexpanded.len()); }
             if !arc_stats.unsupported.is_empty() { v += &format!(", 압축미지원={}", arc_stats.unsupported.len()); }
+            if n_dec > 0 || n_dec_fail > 0 { v += &format!(", 복호화 {}건(실패 {})", n_dec, n_dec_fail); }
             v
         };
         if opts.no_timing {
@@ -3916,6 +4457,10 @@ embed.enabled 가 false 라 2단계를 건너뜁니다", dt_seeds.size());
     };
     match &opts.out {
         Some(p) => {
+            // 상위 폴더가 없으면 만들어 둔다(분류·--text-only 와 같다). 못 만들면 아래 쓰기가 까닭을 알린다.
+            if let Some(parent) = Path::new(p).parent() {
+                if !parent.as_os_str().is_empty() { let _ = std::fs::create_dir_all(parent); }
+            }
             if let Err(e) = std::fs::write(p, &body) {
                 errcodes::fail("output_write_failed",
                     &format!("[MpowerClassify-rs] 출력 저장 실패 {}: {}", p, e), Some(p));

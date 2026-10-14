@@ -6,6 +6,7 @@ Rust 판에도 임베딩 모델을 물고 있는 상주 서버가 생겼다
 같아야 두 판을 같은 명령으로 부를 수 있다 — 이 시험이 그 겉모양을 지킨다.
   · --status : 서버가 없으면 "실행 중인 데몬 없음" 을 알리고 정상 종료
   · --stop   : 서버가 없으면 "정지할 데몬 없음" 을 알리고 정상 종료
+    (둘 다 출력은 JSON 한 줄이다 — 문구는 error.message 에, 값은 daemon 에 들어 있다)
   · --daemon : 임베딩이 필요 없는 실행에서는 서버를 띄우지 않고 조용히 분류한다
   · --no-daemon : 기본값과 같다 → 아무 말도 하지 않는다
 서버를 실제로 띄우는 동작(--serve, 자동 기동, 벡터 동일성)은 모델 파일이 있어야 해서
@@ -14,6 +15,7 @@ Rust 쪽 통합 시험(Rust/tests/cli_daemon.rs)이 맡는다. 여기서 --serve
 
 지원 못 하는 인자(--synap-only)는 여전히 오류로 멈춰야 한다 — 아래 뒤쪽 시험들.
 """
+import json
 import os
 import subprocess
 
@@ -72,8 +74,12 @@ def _has_daemon_files(state_dir):
 
 #------------------------------------------------------------------
 # --status · --stop 은 서버가 없으면 그 사실을 알리고 정상 종료한다
-#=> 파이썬 판이 데몬이 없을 때 내는 문구와 같아야 한다 — 부르는 쪽이 두 판의
-#   출력을 같은 방법으로 읽는다. 실패(0 이 아닌 코드)로 만들면 계약이 갈린다.
+#=> 문구는 파이썬 판이 데몬이 없을 때 내는 것과 같다. 다만 이 판은 그 문구를
+#   JSON 한 줄의 error.message 에 담아 낸다 — 연동 프로그램이 문구를 잘라 읽지 않고
+#   error.code(0=정상)와 daemon.running 으로 분기하게 하려는 것이다.
+#    1) 종료코드 0, stdout 은 정확히 한 줄
+#    2) 그 줄이 JSON 이고 error.code=0 · kind=success
+#    3) 서버가 없으므로 daemon.running 은 False
 #
 # -in: opt      = 시험할 인자
 # -in: expect   = stdout 에 있어야 할 문구(파이썬 판과 같은 문구)
@@ -87,6 +93,16 @@ def test_status_stop은_알리고_정상종료(opt, expect, tmp_path):
     r = _run(opt, state_dir=tmp_path)
     assert r.returncode == 0, f"exit={r.returncode} :: {r.stderr[-300:]}"
     assert expect in r.stdout, f"안내가 없다 :: {r.stdout!r}"
+    # 받는 쪽은 stdout 한 줄을 JSON 으로 읽는다 — 줄이 늘거나 모양이 바뀌면 연동이 깨진다.
+    lines = r.stdout.strip().splitlines()
+    assert len(lines) == 1, f"한 줄이어야 한다 :: {r.stdout!r}"
+    obj = json.loads(lines[0])
+    assert obj["error"]["code"] == 0 and obj["error"]["kind"] == "success"
+    assert expect in obj["error"]["message"]
+    # 서버가 없다 — --status 는 running=False, --stop 은 stopped=False 로 알린다.
+    assert not obj["daemon"].get("running", False)
+    if opt == "--stop":
+        assert obj["daemon"]["stopped"] is False
     # 묻기만 했는데 서버가 뜨면 안 된다.
     assert not _has_daemon_files(tmp_path)
 

@@ -244,7 +244,10 @@ copy dist-onedir\windows\pdfium.dll  target\release\
   - `MpowerClassify-rs --serve [--model <이름>] [--idle-timeout <초>]` — 모델을 물고 있는 서버를 띄운다(0=무한, 기본).
   - 분류 호출에 `--daemon` — 임베딩을 서버에 맡긴다. 서버가 없으면 자동으로 띄우고, 못 쓰면 모델을 직접 읽는다
     (결과는 같다). **기본은 꺼짐**이라 `--daemon` 을 안 주면 예전과 똑같이 돈다(파이썬 판은 기본이 켜짐).
-  - `--status` / `--stop` — 상태 한 줄 / 정지. 출력 문구는 파이썬 판과 같다.
+  - `--status` / `--stop` — 상태 / 정지. **`--serve`·`--status`·`--stop` 의 출력은 언제나 JSON 한 줄**이다:
+    `{"error":{"code":0,"kind":"success","message":"…"},"daemon":{"running":true,"pid":…,"port":…,"ready":true,…}}`.
+    `code` 0 = 정상(서버가 없다는 답도 정상 — `daemon.running` 으로 구분), 실패는 `code`≠0(예: 3002).
+    파이썬 판이 내는 문구는 `message` 에 그대로 들어 있다(파이썬 판은 문장 한 줄만 낸다).
   - 서버는 **임베딩만** 한다. 추출·규칙·전파는 호출한 프로세스가 그대로 하므로 결과가 갈리지 않는다
     (`tests/cli_daemon.rs` 가 레코드와 벡터의 비트 단위 일치를 확인한다).
   - 접속 기록은 `%LOCALAPPDATA%\MpowerClassify\daemon-rs-<모델>.json`(파이썬 데몬과 파일을 나눠 서로 간섭하지 않는다).

@@ -143,6 +143,99 @@ pub struct Entry {
     pub path: String,
     pub sfile_id: String,
     pub hash: Option<String>,
+    /// 복호화 정보(mrk·enc_mode·zip_mode). 세 칸이 모두 없으면 None — 그대로 읽는 문서다.
+    /// 설계: plan/엠파워v11-암호화문서-복호화연동-설계-20261012.html §3
+    pub dec: Option<DecInfo>,
+    /// 열쇠 칸이 '일부만' 있거나 감싼 열쇠(v2:)가 온 줄의 사유(F8). 이 줄은 분류하지
+    /// 않고 오류 레코드로 남긴다 — 그대로 읽으면 암호문을 분류하게 된다.
+    pub dec_problem: Option<(&'static str, String)>,
+    /// 원래 파일 이름(LFILE_NAME). 저장 이름에는 확장자도 뜻도 없다.
+    pub name: Option<String>,
+    /// 원래 파일 크기(LFILE_SIZE). 풀린 결과와 견준다.
+    pub size: Option<u64>,
+}
+
+//------------------------------------------------------------------
+// 복호화에 필요한 세 값 — 목록 한 줄 또는 명령줄에서 온다
+//=> removeenc.sh 의 -k · -e · -z 로 그대로 넘어간다. enc_mode·zip_mode 는 값을
+//   해석하지 않고 글자 그대로 들고 다닌다(알고리즘 번호의 뜻은 엠파워가 안다).
+//   다만 "둘 다 0"만은 본다 — 엠파워도 그때는 복호화하지 않고 복사만 한다.
+//
+//   [왜 Debug 를 직접 쓰나] derive 하면 디버그 출력·패닉 문구에 열쇠가 찍힌다.
+//   열쇠는 로그에도 결과에도 남기지 않는다(설계 §8).
+//------------------------------------------------------------------
+#[derive(Clone)]
+pub struct DecInfo {
+    pub mrk: String,
+    pub enc_mode: String,
+    pub zip_mode: String,
+}
+
+impl std::fmt::Debug for DecInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DecInfo {{ mrk: ****, enc_mode: {}, zip_mode: {} }}", self.enc_mode, self.zip_mode)
+    }
+}
+
+impl DecInfo {
+    /// 암호화도 저장 시 압축도 안 된 파일인가(ENC_MODE=0 · ZIP_MODE=0).
+    /// 엠파워 MCrypt::mpowerDecrypt 와 같은 판정이다 — 이때는 도구를 부르지 않는다.
+    pub fn is_plain(&self) -> bool {
+        is_zero(&self.enc_mode) && is_zero(&self.zip_mode)
+    }
+}
+
+/// "0" · "00" · " 0 " 처럼 숫자 0 을 뜻하는 글자인가. 빈 값은 0 이 아니다.
+fn is_zero(v: &str) -> bool {
+    let t = v.trim();
+    !t.is_empty() && t.chars().all(|c| c == '0')
+}
+
+//------------------------------------------------------------------
+// 열쇠 세 칸 → 복호화 정보 (목록 한 줄 · 명령줄 공용)
+//=> 세 칸의 있고 없음으로 그 문서를 어떻게 다룰지 정한다.
+//    1) 셋 다 없다            → Ok(None)  : 그대로 읽는 문서(지금까지와 같다)
+//    2) 모드 둘이 모두 0      → Ok(Some)  : 암호화 안 된 파일. mrk 는 없어도 된다
+//    3) 셋 다 있다            → Ok(Some)  : 복호화 대상
+//    4) 일부만 있다           → Err(info_incomplete)
+//    5) mrk 가 'v2:' 로 시작  → Err(key_wrapped) — KEK 로 감싼 값이라 엠파워가 벗겨야 한다
+//
+// -in: mrk · enc_mode · zip_mode = 각 칸의 값(없으면 None, 빈 문자열도 없는 것으로 본다)
+//
+// -out: Ok(Option<DecInfo>) = 위 1)~3)
+// -out: error = Err((사유 이름, 사람이 읽는 문장)) — 위 4)·5)
+//------------------------------------------------------------------
+pub fn parse_dec_info(mrk: Option<&str>, enc_mode: Option<&str>, zip_mode: Option<&str>)
+    -> Result<Option<DecInfo>, (&'static str, String)> {
+    let clean = |v: Option<&str>| v.map(|s| s.trim()).filter(|s| !s.is_empty()).map(|s| s.to_string());
+    let (m, e, z) = (clean(mrk), clean(enc_mode), clean(zip_mode));
+    if m.is_none() && e.is_none() && z.is_none() {
+        return Ok(None);
+    }
+    let (e, z) = match (e, z) {
+        (Some(e), Some(z)) => (e, z),
+        (e, z) => {
+            let mut lack = vec![];
+            if e.is_none() { lack.push("enc_mode"); }
+            if z.is_none() { lack.push("zip_mode"); }
+            return Err(("info_incomplete", format!(
+                "복호화 정보가 일부만 있습니다(없는 칸: {}) — mrk · enc_mode · zip_mode 는 함께 줘야 합니다",
+                lack.join(", "))));
+        }
+    };
+    let info = DecInfo { mrk: m.unwrap_or_default(), enc_mode: e, zip_mode: z };
+    if info.is_plain() {
+        return Ok(Some(info));
+    }
+    if info.mrk.is_empty() {
+        return Err(("info_incomplete",
+            "복호화 정보가 일부만 있습니다(없는 칸: mrk) — 암호화·압축된 파일은 열쇠가 있어야 풉니다".into()));
+    }
+    if info.mrk.starts_with("v2:") {
+        return Err(("key_wrapped",
+            "mrk 가 KEK 로 감싼 값(v2:)입니다 — 엠파워 쪽에서 MCrypt::decryptMRKWithKEK 로 벗긴 평문을 줘야 합니다".into()));
+    }
+    Ok(Some(info))
 }
 
 //------------------------------------------------------------------
@@ -204,6 +297,11 @@ impl FileList {
             .collect();
         v.sort();
         v
+    }
+
+    /// 복호화 정보가 붙은 줄 수(둘 다 0 인 '평문' 줄과 F8 줄 포함) — 적재 안내에 쓴다.
+    pub fn dec_count(&self) -> usize {
+        self.entries.values().filter(|e| e.dec.is_some() || e.dec_problem.is_some()).count()
     }
 
     pub fn len(&self) -> usize {
@@ -297,8 +395,21 @@ pub fn load(path: &str) -> Result<FileList, String> {
         } else {
             let h = row.get("hash").map(|s| s.trim()).filter(|s| !s.is_empty())
                 .map(|s| s.to_string());
+            // 복호화 정보(설계 §3). 일부만 있는 줄(F8)은 건너뛰지 않고 표식만 달아 둔다 —
+            // 건너뛰면 그 문서가 결과에서 사라지고, 그대로 읽으면 암호문을 분류한다.
+            let (dec, dec_problem) = match parse_dec_info(
+                row.get("mrk").map(|s| s.as_str()),
+                row.get("enc_mode").map(|s| s.as_str()),
+                row.get("zip_mode").map(|s| s.as_str())) {
+                Ok(d) => (d, None),
+                Err(why) => (None, Some(why)),
+            };
+            let name = row.get("name").map(|s| s.trim()).filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+            let size = row.get("size").and_then(|s| s.trim().parse::<u64>().ok());
             entries.insert(key.clone(), Entry {
                 path: abs, sfile_id: sfile_id.to_string(), hash: h,
+                dec, dec_problem, name, size,
             });
         }
         seen_id.entry(sfile_id.to_string()).or_default().push(key);

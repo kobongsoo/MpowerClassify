@@ -91,18 +91,25 @@ impl Env {
             .spawn().expect("서버를 띄우지 못했다")
     }
 
-    /// --status 의 한 줄.
+    /// --status 의 한 줄(JSON 문자열 그대로).
     fn status(&self) -> String {
         String::from_utf8_lossy(&self.run(&["--status"]).stdout).trim().to_string()
+    }
+
+    /// --status 의 한 줄을 JSON 으로 읽는다 — 출력이 JSON 한 줄이라는 계약도 여기서 함께 본다.
+    fn status_json(&self) -> Value {
+        let s = self.status();
+        assert_eq!(s.lines().count(), 1, "--status 는 한 줄만 내야 한다: {}", s);
+        serde_json::from_str(&s).unwrap_or_else(|e| panic!("--status 출력이 JSON 이 아니다({}): {}", e, s))
     }
 
     /// 서버가 준비될 때까지 기다리고 그 pid 를 돌려준다.
     fn wait_ready(&self) -> u64 {
         let until = Instant::now() + Duration::from_secs(90);
         while Instant::now() < until {
-            let s = self.status();
-            if s.contains("ready=true") {
-                return field(&s, "pid").parse().expect("pid");
+            let s = self.status_json();
+            if s["daemon"]["ready"].as_bool() == Some(true) {
+                return s["daemon"]["pid"].as_u64().expect("pid");
             }
             std::thread::sleep(Duration::from_millis(200));
         }
@@ -142,13 +149,6 @@ impl Drop for Env {
         std::thread::sleep(Duration::from_millis(300));
         let _ = std::fs::remove_dir_all(&self.dir);
     }
-}
-
-/// "model=… pid=123 port=…" 에서 칸 하나를 꺼낸다.
-fn field(line: &str, key: &str) -> String {
-    line.split_whitespace()
-        .find_map(|w| w.strip_prefix(&format!("{}=", key)).map(str::to_string))
-        .unwrap_or_default()
 }
 
 /// 벡터를 f32 비트열로 — "거의 같다"가 아니라 "완전히 같다"를 보려고.
@@ -299,8 +299,24 @@ fn 서버는_하나만_남고_토큰_없이는_임베딩하지_않는다() {
     assert_eq!((r["ok"].as_bool(), r["kind"].as_str()), (Some(false), Some("embed")));
     assert_eq!(env.wait_ready(), pid, "틀린 정지 요청에 서버가 내려가면 안 된다");
 
+    // 떠 있을 때의 --status: 상태 줄과 같은 모양(error.code 0) + daemon 값. 토큰은 내보내지 않는다.
+    let st = env.status_json();
+    assert_eq!((st["error"]["code"].as_i64(), st["error"]["kind"].as_str()), (Some(0), Some("success")));
+    assert_eq!((st["daemon"]["running"].as_bool(), st["daemon"]["pid"].as_u64(),
+                st["daemon"]["port"].as_u64(), st["daemon"]["idle_timeout"].as_u64()),
+               (Some(true), Some(pid), Some(port as u64), Some(0)));
+    assert!(st["error"]["message"].as_str().unwrap().contains("ready=true"));
+    assert!(!env.status().contains(rec["token"].as_str().unwrap()), "토큰이 출력에 나가면 안 된다");
+    // 이미 떠 있는데 또 --serve: 알리고 0, 떠 있는 서버의 pid 를 알려 준다.
+    let o = env.run(&["--serve"]);
+    let again: Value = serde_json::from_str(String::from_utf8_lossy(&o.stdout).trim()).expect("--serve 출력이 JSON 이어야 한다");
+    assert_eq!((o.status.code(), again["error"]["code"].as_i64(), again["daemon"]["pid"].as_u64()),
+               (Some(0), Some(0), Some(pid)));
+
     // --stop 은 서버를 내리고 기록을 지운다.
     let o = env.run(&["--stop"]);
+    let stop: Value = serde_json::from_str(String::from_utf8_lossy(&o.stdout).trim()).expect("--stop 출력이 JSON 이어야 한다");
+    assert_eq!((stop["error"]["code"].as_i64(), stop["daemon"]["stopped"].as_bool()), (Some(0), Some(true)));
     assert!(String::from_utf8_lossy(&o.stdout).contains("데몬 정지 요청 전송"));
     let until = Instant::now() + Duration::from_secs(10);
     while Instant::now() < until && env.record().exists() {
@@ -308,6 +324,9 @@ fn 서버는_하나만_남고_토큰_없이는_임베딩하지_않는다() {
     }
     assert!(!env.record().exists() && !env.lock().exists(), "정지하면 기록·잠금이 지워져야 한다");
     assert!(String::from_utf8_lossy(&env.run(&["--stop"]).stdout).contains("정지할 데몬 없음"));
+    // 서버가 없을 때의 --status 도 성공(code 0)이고, running=false 로 구분한다.
+    let st = env.status_json();
+    assert_eq!((st["error"]["code"].as_i64(), st["daemon"]["running"].as_bool()), (Some(0), Some(false)));
 }
 
 // 시험 8 — exe 를 교체했는데 옛 서버가 남은 경우: 옛 서버를 내리고 새로 띄운다.
@@ -394,6 +413,22 @@ fn 모델이_없으면_daemon_이어도_종료코드_2() {
     }
     assert!(env.status().contains("실행 중인 데몬 없음"), "모델을 못 올린 서버가 남으면 안 된다");
     assert!(!env.lock().exists(), "실패한 서버의 잠금이 남으면 안 된다");
+    // --serve 가 모델을 못 올리면 실패도 JSON 한 줄(code≠0)로 알린다 — 종료코드 2.
+    let o = env.run(&["--serve"]);
+    let out = String::from_utf8_lossy(&o.stdout);
+    let err: Value = serde_json::from_str(out.trim().lines().last().unwrap_or(""))
+        .unwrap_or_else(|e| panic!("--serve 실패 출력이 JSON 이 아니다({}): {}", e, out));
+    assert_eq!((o.status.code(), err["error"]["code"].as_i64(), err["error"]["kind"].as_str()),
+               (Some(2), Some(3002), Some("model_load_failed")));
+    // 인자 해석에서 실패해도(모르는 모델) 서버 명령은 JSON 한 줄로 답한다 — 종료코드 3.
+    for cmd in ["--serve", "--status", "--stop"] {
+        let o = env.run(&[cmd, "--model", "no-such-model"]);
+        let out = String::from_utf8_lossy(&o.stdout);
+        let err: Value = serde_json::from_str(out.trim())
+            .unwrap_or_else(|e| panic!("{} 인자 오류 출력이 JSON 한 줄이 아니다({}): {}", cmd, e, out));
+        assert_eq!((o.status.code(), err["error"]["code"].as_i64(), err["error"]["kind"].as_str()),
+                   (Some(3), Some(1003), Some("bad_args")), "{}", cmd);
+    }
     drop(env);
     let _ = std::fs::remove_dir_all(&tmp);
 }

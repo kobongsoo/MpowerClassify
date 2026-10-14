@@ -41,6 +41,10 @@ pub const ERRORS: &[(&str, i64, i32)] = &[
     // seed 벡터가 이번 모델과 차원이 다름 — 다른 모델로 만든 seed 와는 비교가 성립하지
     // 않는다. 부른 쪽이 --model 이나 seed 를 맞추면 고칠 수 있어 3 이다(2026-09-29).
     ("seeds_model_mismatch", 1013, 3),
+    // 엠파워 v11 암호화 문서 복호화(설계: plan/엠파워v11-암호화문서-복호화연동-설계-20261012.html §7).
+    // --decrypt 조합이 틀렸거나 도구가 없는 것은 부른 쪽이 고칠 수 있어 3 이다.
+    ("decrypt_args_invalid", 1014, 3),
+    ("decrypt_cmd_missing", 1015, 3),
     // ── 2000 정책 파일(규칙셋 · 분류체계) ────────────────────────────
     ("rules_missing", 2001, 3),
     ("rules_invalid", 2002, 4),
@@ -55,6 +59,11 @@ pub const ERRORS: &[(&str, i64, i32)] = &[
     // 목록(--filelist)에 있는데 디스크에 없는 문서. 요청받고도 처리하지 못한
     // 것이라 추출 실패와 같은 급으로 본다(파이썬 판과 같은 번호·같은 종료코드).
     ("file_missing", 3004, 1),
+    // 이 문서를 풀지 못했다(파일 문제) — 그 문서만 오류 레코드로 남기고 계속한다.
+    ("decrypt_failed", 3005, 1),
+    // 복호화 환경이 고장이다(PHP 확장 없음 등) — 다음 문서도 똑같이 실패하므로 멈춘다.
+    // 설치를 점검해야 한다는 점에서 모델 로드 실패와 같은 급(2)이다.
+    ("decrypt_unavailable", 3006, 2),
     ("model_load_failed", 3002, 2),
     ("embed_failed", 3003, 2),
     // ── 4000 출력 ────────────────────────────────────────────────────
@@ -256,6 +265,9 @@ pub fn status_object(code: i32, path: Option<&str>) -> Value {
 /// 종료코드는 위의 표가 정한다 — 같은 상황에서 Rust 는 2, Python 은 3 을 내던
 /// 원인을 없앤다.
 pub fn fail(kind: &str, message: &str, path: Option<&str>) -> ! {
+    // 여기서 프로세스가 끝난다 — 복호화해 둔 평문이 있으면 먼저 치운다
+    // (설계: plan/엠파워v11-암호화문서-복호화연동-설계-20261012.html §8).
+    crate::decrypt::cleanup_on_exit();
     emit(kind, message, path);
     let code = exit_of(kind);
     if quiet() {
