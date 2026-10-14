@@ -63,7 +63,7 @@ csoclassify.exe --embed --file "D:\docs\보고서.hwp"
 
 | 옵션 | 설명 | 기본 |
 |---|---|---|
-| `--decrypt-cmd` | 복호화 도구 경로 | `/MOCOMSYS/MpowerScript/removeenc/removeenc.sh` |
+| `--decrypt-cmd` | 복호화 도구 경로 | 저장소의 `removeenc.sh` 기본 설치 경로(`--help` 참고) |
 | `--decrypt-tmp` | 풀린 파일을 잠깐 둘 곳. `/dev/shm` 을 주면 디스크에 닿지 않습니다 | 시스템 임시 폴더 |
 | `--decrypt-timeout` | 한 건의 시간 제한(초) | 60 |
 
@@ -117,7 +117,7 @@ csoclassify.exe --embed --file "D:\docs\보고서.hwp"
 | `--embed` | 분류 대신 **임베딩 벡터만** 출력 | — |
 | `--text-only` | 벡터 없이 **추출 텍스트만** | — |
 | `--hybridparse` | **내용 감지 → 포맷별 파서**(사이냅 없이): pdf→pypdfium2, hwp→HWP5, hwpx→zip/OWPML, doc/ppt→자체 olefile 파서, xls→xlrd, docx/xlsx/pptx→zip/OOXML 직접파싱(stdlib), html→태그제거(stdlib), text→직접읽기. 실패 시 snf 폴백(snf 없으면 미분류). 전부 순수py/소형 wheel로 **Win·Linux(CentOS7) 동일 번들**. snf 대비 동급~수십배 빠름 | off(전부 snf) |
-| `--filelist` | MpowerV11 이 뽑아 준 `{path, sfile_id}` 목록(jsonl·csv). 결과 레코드의 `doc_id` 를 채우고, 복호화 열쇠 칸이 있으면 그 줄을 풀어서 분류. `--file`/`--dir` 이 있으면 'ID 사전' 역할만 함 | — |
+| `--filelist` | 문서 저장소가 뽑아 준 `{path, sfile_id}` 목록(jsonl·csv). 결과 레코드의 `doc_id` 를 채우고, 복호화 열쇠 칸이 있으면 그 줄을 풀어서 분류. `--file`/`--dir` 이 있으면 'ID 사전' 역할만 함 | — |
 | `--decrypt` / `--no-decrypt` | 암호화 문서 풀기 / 풀지 않기 ([위 장](#암호화-문서-분류)) | 목록에 열쇠가 있을 때만 풂 |
 | `--cso-rules` | 보안등급 규칙셋 경로 | exe 옆 `cso_rule.yaml` |
 | `--failsafe [등급]` | 어느 신호로도 못 정한 문서의 기본등급(값 생략=S) | 미부여(보류) |
@@ -321,7 +321,7 @@ doc/                실행 가이드 · 규칙셋 레퍼런스 · 빌드 가이�
 - ✅ PII 20종(ko-pii) · 분류 방식 옵션(`--rule-only`/`--vector-only`) · 문서자동분류 UI(검토·판단 기준 편집).
 - ✅ onedir 배포(Windows·Linux) · 규칙셋/모델/사이냅 외장화.
 - ✅ 문서 식별자 `doc_id` · 입력 목록 `--filelist`(설계 D0·D0b) — 결과 레코드에
-  `doc_id`(MpowerV11 `sfile_id`, 없으면 내용/경로 해시 폴백) · `key`(정규화 경로) ·
+  `doc_id`(문서 저장소의 `sfile_id`, 없으면 내용/경로 해시 폴백) · `key`(정규화 경로) ·
   `doc_id_source` 를 심는다. 검토 화면은 `doc_id → 정규화 경로 → 대소문자` 순으로
   결과와 사람의 수정을 잇는다(경로 표기 차이로 수정이 유실되던 문제 해소).
   Python·Rust 동일 동작.
