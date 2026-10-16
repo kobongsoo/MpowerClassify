@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>복호화 전 크기 상한 정합</title>
+</head>
+<body>
+<style>
+  :root{
+    --bg:#f4f6f9; --surface:#ffffff; --surface-2:#eef1f6; --ink:#191d24;
+    --muted:#58616e; --faint:#8b94a2; --line:#dde2ea; --line-strong:#c7cfda;
+    --accent:#26437e; --accent-2:#365fb0; --accent-soft:#e7edf7;
+    --c:#cf3b2e; --c-soft:#fbeceb; --s:#b3760f; --s-soft:#f9f0dc; --o:#2f8f57; --o-soft:#e6f3ea;
+    --shadow:0 1px 2px rgba(20,30,50,.04), 0 8px 24px rgba(20,30,50,.06);
+    --sans:"Pretendard Variable",Pretendard,"Malgun Gothic","맑은 고딕",-apple-system,"Apple SD Gothic Neo",system-ui,sans-serif;
+    --mono:ui-monospace,"Cascadia Code","Cascadia Mono",Consolas,"D2Coding",monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0e1116; --surface:#161b22; --surface-2:#1d232c; --ink:#e7ebf1;
+      --muted:#9aa4b2; --faint:#6b7684; --line:#262d38; --line-strong:#333c49;
+      --accent:#7ea0e8; --accent-2:#8fb0f2; --accent-soft:#182233;
+      --c:#f2695c; --c-soft:#2a1715; --s:#e6a748; --s-soft:#271e10; --o:#57bd85; --o-soft:#122217;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#f4f6f9; --surface:#ffffff; --surface-2:#eef1f6; --ink:#191d24;
+    --muted:#58616e; --faint:#8b94a2; --line:#dde2ea; --line-strong:#c7cfda;
+    --accent:#26437e; --accent-2:#365fb0; --accent-soft:#e7edf7;
+    --c:#cf3b2e; --c-soft:#fbeceb; --s:#b3760f; --s-soft:#f9f0dc; --o:#2f8f57; --o-soft:#e6f3ea;
+  }
+  :root[data-theme="dark"]{
+    --bg:#0e1116; --surface:#161b22; --surface-2:#1d232c; --ink:#e7ebf1;
+    --muted:#9aa4b2; --faint:#6b7684; --line:#262d38; --line-strong:#333c49;
+    --accent:#7ea0e8; --accent-2:#8fb0f2; --accent-soft:#182233;
+    --c:#f2695c; --c-soft:#2a1715; --s:#e6a748; --s-soft:#271e10; --o:#57bd85; --o-soft:#122217;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    line-height:1.7;-webkit-font-smoothing:antialiased;font-size:16px;letter-spacing:-0.003em;}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 24px 96px;}
+  header.doc{padding:56px 0 34px;border-bottom:1px solid var(--line);margin-bottom:40px;}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);font-weight:600;display:flex;gap:10px;align-items:center;margin-bottom:20px;}
+  .eyebrow::before{content:"";width:26px;height:2px;background:var(--accent);border-radius:2px;}
+  h1.title{font-size:clamp(28px,4.6vw,44px);line-height:1.12;margin:0 0 14px;font-weight:800;
+    letter-spacing:-0.02em;text-wrap:balance;}
+  .lede{font-size:clamp(16px,2.1vw,19px);color:var(--muted);margin:0 0 22px;max-width:64ch;}
+  .lede b{color:var(--ink);font-weight:600;}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;}
+  .chip{font-size:12px;font-family:var(--mono);color:var(--muted);background:var(--surface);
+    border:1px solid var(--line);border-radius:999px;padding:5px 12px;}
+  .chip b{color:var(--ink);font-weight:600;}
+  section{margin:52px 0;scroll-margin-top:20px;}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:22px;}
+  .sec-num{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--accent);
+    border:1px solid var(--line-strong);border-radius:7px;padding:3px 9px;flex:none;line-height:1.3;}
+  h2{font-size:clamp(21px,3vw,27px);margin:0;font-weight:750;letter-spacing:-0.015em;line-height:1.25;}
+  h3{font-size:17px;margin:30px 0 12px;font-weight:700;letter-spacing:-0.01em;}
+  p{margin:0 0 15px;max-width:72ch;}
+  ul.plain{margin:0 0 15px;padding-left:20px;} ul.plain li{margin:5px 0;color:var(--muted);}
+  ul.plain li b{color:var(--ink);font-weight:600;}
+  ol.plain{margin:0 0 15px;padding-left:22px;} ol.plain li{margin:6px 0;color:var(--muted);}
+  ol.plain li b{color:var(--ink);font-weight:600;}
+  .tldr{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--accent);
+    border-radius:12px;padding:22px 24px;box-shadow:var(--shadow);}
+  .tldr .k{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);font-weight:700;margin-bottom:10px;}
+  .tldr p{margin:0;font-size:17px;color:var(--ink);max-width:none;}
+  .tldr b{color:var(--accent-2);}
+  .twrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);margin:16px 0;}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:640px;background:var(--surface);}
+  th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--line);vertical-align:top;}
+  thead th{background:var(--surface-2);font-size:12px;letter-spacing:.03em;color:var(--muted);
+    text-transform:uppercase;font-weight:700;white-space:nowrap;}
+  tbody tr:last-child td{border-bottom:none;}
+  td.mono,.mono-cell{font-family:var(--mono);font-size:13px;white-space:nowrap;}
+  code.inl{font-family:var(--mono);font-size:.9em;background:var(--surface-2);border:1px solid var(--line);
+    border-radius:5px;padding:1px 6px;}
+  pre{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 20px;
+    overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.65;box-shadow:var(--shadow);color:var(--ink);}
+  pre .cm{color:var(--o);} pre .kw{color:var(--accent-2);font-weight:600;} pre .hi{color:var(--c);font-weight:600;}
+  .note{border:1px solid var(--line);background:var(--surface-2);border-radius:12px;padding:16px 18px;
+    font-size:14.5px;display:flex;gap:12px;align-items:flex-start;margin:16px 0;}
+  .note .badge{font-family:var(--mono);font-size:10.5px;font-weight:800;letter-spacing:.06em;
+    padding:3px 8px;border-radius:6px;flex:none;text-transform:uppercase;white-space:nowrap;}
+  .note.safe .badge{color:var(--o);background:var(--o-soft);border:1px solid color-mix(in srgb,var(--o) 35%,transparent);}
+  .note.warn .badge{color:var(--s);background:var(--s-soft);border:1px solid color-mix(in srgb,var(--s) 35%,transparent);}
+  .note.bad .badge{color:var(--c);background:var(--c-soft);border:1px solid color-mix(in srgb,var(--c) 35%,transparent);}
+  .note.info .badge{color:var(--accent-2);background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent-2) 35%,transparent);}
+  .note p{margin:0;color:var(--muted);max-width:none;}
+  .note b{color:var(--ink);}
+  .x{color:var(--c);font-weight:700}
+  .ok{color:var(--o);font-weight:700}
+  .wn{color:var(--s);font-weight:700}
+  .src{font-family:var(--mono);font-size:12px;color:var(--faint);}
+  .fig{background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);
+    padding:18px;margin:16px 0;overflow-x:auto;}
+  .fig svg{display:block;min-width:680px;width:100%;height:auto;}
+  .fig text{font-family:var(--sans);fill:var(--ink);font-size:13px;}
+  .fig .t-mono{font-family:var(--mono);font-size:11.5px;fill:var(--muted);}
+  .fig .t-h{font-weight:700;font-size:14px;}
+  .fig .box{fill:var(--surface-2);stroke:var(--line-strong);}
+  .fig .box-a{fill:var(--accent-soft);stroke:var(--accent-2);}
+  .fig .ln{stroke:var(--muted);stroke-width:1.4;fill:none;}
+  .fig .ln-d{stroke:var(--faint);stroke-width:1.2;fill:none;stroke-dasharray:5 4;}
+  .fig .ah{fill:var(--muted);}
+  footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);
+    font-size:13px;color:var(--faint);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;
+    font-family:var(--mono);letter-spacing:.02em;}
+  @media print{ body{background:#fff;} .tldr,pre,.twrap,.fig{box-shadow:none;} }
+</style>
+
+
+<div class="wrap">
+
+  <header class="doc">
+    <div class="eyebrow">개선 설계 · Pre-decrypt Size Gate</div>
+    <h1 class="title">복호화 전 크기 상한 정합<br>— 풀기 전에 거르는 기준을 풀린 뒤의 기준과 같게</h1>
+    <p class="lede">암호화 문서는 풀기 전에 크기를 보고 <b>너무 크면 풀지 않는다</b>. 그런데 지금은 파일 종류와 상관없이 <b>일반 문서 상한(100MB) 하나</b>로만 거른다.
+    풀린 뒤에는 압축파일·텍스트에 다른 상한이 적용되므로, <b>같은 파일이 평문이면 분류되고 엠파워에 올라가 있으면 분류되지 않는</b> 일이 생긴다.
+    이 설계는 앞 상한을 없애지 않고, <b>풀린 뒤 실제로 적용될 상한을 미리 골라</b> 쓰게 바꾼다.</p>
+    <div class="meta">
+      <span class="chip"><b>대상</b> Rust 판 · Python 판 같은 계약</span>
+      <span class="chip"><b>범위</b> 복호화 직전 크기 검사(+ Rust --text-only)</span>
+      <span class="chip"><b>기존 실행</b> 100MB 이하 문서는 변화 없음</span>
+      <span class="chip"><b>상태</b> 설계 · <b class="ok">구현 완료 2026-10-16</b> (§10)</span>
+      <span class="chip"><b>작성일</b> 2026-10-16</span>
+      <span class="chip"><b>관련</b> 엠파워v11-암호화문서-복호화연동-설계-20261012 §9</span>
+    </div>
+  </header>
+
+  <div class="tldr">
+    <div class="k">한 줄 요약</div>
+    <p>복호화 전 크기 검사를 <b>(1) 원래 크기(org_size)가 있으면 그것으로</b>, <b>(2) 원래 이름의 확장자로 압축·텍스트·일반을 갈라 각자의 상한으로</b> 본다.
+    <code class="inl">--no-size-limit</code> 이면 <b>지금처럼 앞 상한도 모두 끈다</b>. 결과적으로 <b>평문 파일과 암호화 파일이 같은 크기에서 같은 판정</b>을 받는다.</p>
+  </div>
+
+  <!-- 1 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>지금 동작</h2></div>
+    <p>복호화 직전에 <b>저장 파일(.SMF) 크기</b>를 <code class="inl">MAX_FILE_BYTES</code>(기본 100MB)와 견줘, 넘으면 도구를 부르지 않고 <code class="inl">size_limit</code> 로 남긴다.</p>
+<pre><span class="cm"># Python — cli.py _iter_dec_jobs</span>
+max_b = config.MAX_FILE_BYTES
+if max_b and max_b &gt; 0 and src_len &gt; max_b:
+    raise decrypt.DecError(<span class="kw">"size_limit"</span>, "저장 파일이 크기 상한을 넘어 풀지 않았습니다(…)")
+
+<span class="cm"># Rust — main.rs 분류 루프</span>
+let max = limits::max_file_bytes();
+Ok(_) if max &gt; 0 &amp;&amp; src_len &gt; max =&gt; Err(DecError { reason: <span class="kw">"size_limit"</span>, … })</pre>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>항목</th><th>지금</th></tr></thead>
+        <tbody>
+          <tr><td>비교하는 크기</td><td>저장 파일(.SMF) 크기 <code class="inl">stored_size</code></td></tr>
+          <tr><td>비교하는 상한</td><td>언제나 <code class="inl">MAX_FILE_BYTES</code> (기본 100MB, <code class="inl">--max-file-mb</code> · <code class="inl">CSOCLASSIFY_MAX_FILE_BYTES</code>)</td></tr>
+          <tr><td><code class="inl">--no-size-limit</code></td><td><code class="inl">MAX_FILE_BYTES = 0</code> → "0 이하 = 상한 없음" 규칙으로 <b>이미 꺼진다</b>(두 판 모두)</td></tr>
+          <tr><td>Rust <code class="inl">--text-only --decrypt</code></td><td class="x">앞 검사가 아예 없다 — 바로 풀고, 풀린 뒤 추출기 상한만 본다(Python 판은 있음)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>풀린 뒤에는 지금까지처럼 추출 단계의 상한을 한 번 더 거친다. 이 상한은 <b>파일 종류마다 다르고</b>, 종류는 <b>내용으로</b> 판별한다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>풀린 파일 종류(내용 판별)</th><th>풀린 뒤 상한</th><th>기본값</th><th>바꾸는 법</th></tr></thead>
+        <tbody>
+          <tr><td>압축(zip · 7z · rar · tar · gz · bz2 · xz)</td><td class="mono">MAX_ARCHIVE_BYTES</td><td>500MB</td><td><code class="inl">--max-archive-mb</code></td></tr>
+          <tr><td>텍스트 계열(text · html)</td><td class="mono">MAX_FILE_BYTES_TEXT</td><td>100MB</td><td><code class="inl">--max-file-mb-text</code></td></tr>
+          <tr><td>그 밖의 문서(hwp · docx · pdf …)</td><td class="mono">MAX_FILE_BYTES</td><td>100MB</td><td><code class="inl">--max-file-mb</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>문제 — 앞 상한과 뒤 상한이 어긋난다</h2></div>
+    <p>앞 상한은 "어차피 뒤에서 버려질 문서를 풀지 않으려는" 장치다. 그렇다면 <b>뒤에서 받아 줄 문서는 앞에서도 통과</b>해야 한다. 지금은 그렇지 않다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>경우</th><th>평문 파일이면</th><th>엠파워 암호화 파일이면 (지금)</th></tr></thead>
+        <tbody>
+          <tr><td>200MB 7z 묶음</td><td class="ok">펼쳐서 분류(압축 상한 500MB)</td><td class="x">풀지도 않고 size_limit</td></tr>
+          <tr><td>150MB csv, <code class="inl">--max-file-mb-text 200</code></td><td class="ok">분류</td><td class="x">풀지도 않고 size_limit(앞 상한은 여전히 100MB)</td></tr>
+          <tr><td>정확히 100MB 문서, <code class="inl">enc_mode=26</code></td><td class="ok">분류</td><td class="x">저장본에 32바이트 머리가 붙어 100MB+32 → size_limit</td></tr>
+          <tr><td>120MB 문서, <code class="inl">zip_mode≠0</code>(저장본 80MB)</td><td>상한 초과</td><td class="wn">앞 검사는 통과 → 120MB 를 다 푼 뒤 추출 상한에서 버림(시간·임시 공간 낭비)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note warn"><span class="badge">현실</span>
+      <p>엠파워 기본 정책은 zip 을 암호화하지 않지만(<code class="inl">ENC_LIST</code> 제외), <b>7z · egg 는 암호화한다</b>(2026-10-15 확인). 큰 7z 묶음은 실제로 생길 수 있는 경우다.</p></div>
+  </section>
+
+  <!-- 3 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>원칙</h2></div>
+    <ol class="plain">
+      <li><b>앞 상한은 뒤 상한의 "미리 보기"다.</b> 판정의 주인은 여전히 풀린 뒤의 추출 상한이다. 앞 상한은 버려질 문서를 일찍 거르는 최적화일 뿐이다.</li>
+      <li><b>평문과 암호화가 같은 판정을 받는다.</b> 같은 크기 · 같은 종류 · 같은 옵션이면 결과가 같아야 한다.</li>
+      <li><b>모르면 지금처럼.</b> 종류를 알 수 없으면(이름 없음) 지금 기준(<code class="inl">MAX_FILE_BYTES</code>, 저장 크기)을 그대로 쓴다 — 지금보다 느슨해지는 경우를 만들지 않는다.</li>
+      <li><b>상한은 없애지 않는다.</b> 엠파워 도구(<code class="inl">mpower_decrypt</code>)에는 크기 제한이 없지만, 큰 문서를 풀면 시간 · 임시 공간(<code class="inl">/dev/shm</code> 이면 메모리) · 시간 제한 위험만 늘고 결과는 같다.</li>
+    </ol>
+  </section>
+
+  <!-- 4 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>설계</h2></div>
+
+    <h3>4-1. 무엇의 크기를 보나 — 판단 크기</h3>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>있는 정보</th><th>판단 크기</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>원래 크기가 있다(목록의 <code class="inl">size</code> 또는 <code class="inl">--size</code>)</td><td><b>org_size</b></td>
+              <td>풀린 결과는 <code class="inl">verify</code> 가 이 값과 같은지 본다 — 곧 <b>풀린 뒤 크기 그 자체</b>다. <code class="inl">zip_mode</code> 압축 · <code class="inl">enc_mode=26</code> 머리(32B)에 흔들리지 않는다</td></tr>
+          <tr><td>원래 크기가 없다</td><td>stored_size</td><td>지금과 같다. 대부분(<code class="inl">enc_mode 3</code> · <code class="inl">zip_mode 0</code>)은 풀린 크기와 같다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>4-2. 어느 상한을 쓰나 — 원래 이름의 확장자로 고른다</h3>
+    <p>풀기 전에는 내용이 암호문이라 내용 판별을 할 수 없다. 그래서 <b>원래 이름(<code class="inl">name</code>)의 확장자</b>로 종류를 고른다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>원래 이름의 확장자</th><th>앞 상한</th><th>맞추는 대상(풀린 뒤 상한)</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">zip 7z rar tar tgz gz bz2 tbz2 xz txz</td><td class="mono">MAX_ARCHIVE_BYTES</td><td>압축 펼치기의 누적 상한(500MB)</td></tr>
+          <tr><td class="mono">txt csv tsv json jsonl log md xml html htm</td><td class="mono">MAX_FILE_BYTES_TEXT</td><td>추출기의 텍스트 상한</td></tr>
+          <tr><td>그 밖(hwp docx xlsx pptx hwpx pdf doc …) · egg · alz</td><td class="mono">MAX_FILE_BYTES</td><td>추출기의 일반 상한</td></tr>
+          <tr><td>이름이 없다 · 확장자가 없다</td><td class="mono">MAX_FILE_BYTES</td><td>지금과 같다(원칙 3)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul class="plain">
+      <li><b>docx · xlsx · pptx · hwpx</b> 는 속이 zip 이지만 <b>문서 1개</b>다 — 압축 목록에 넣지 않는다(풀린 뒤에도 펼치지 않고 일반 상한을 받는다).</li>
+      <li><b>egg · alz</b> 는 펼치기를 지원하지 않아 풀린 뒤에도 압축 상한을 받지 않는다 — 일반 상한에 둔다.</li>
+      <li>확장자가 내용과 다른 파일(예: 이름은 .txt 인데 실제는 바이너리)은 앞 상한이 조금 다를 수 있다. 최종 판정은 뒤 상한이 하므로 <b>잘못 분류되는 일은 없고</b>, 기껏해야 "풀었다가 뒤에서 버림"이 된다.</li>
+      <li>확장자 목록은 <b>두 판이 같은 표</b>를 쓴다(Python <code class="inl">decrypt.py</code> · Rust <code class="inl">decrypt.rs</code> 의 상수). 한쪽만 고치면 같은 목록이 두 판에서 다르게 처리된다.</li>
+    </ul>
+
+    <h3>4-3. <code class="inl">--no-size-limit</code> — 지금처럼 앞 상한도 모두 끈다</h3>
+    <p><code class="inl">--no-size-limit</code> 은 세 상한(<code class="inl">MAX_FILE_BYTES</code> · <code class="inl">MAX_FILE_BYTES_TEXT</code> · <code class="inl">MAX_ARCHIVE_BYTES</code>)을 모두 0 으로 만든다(두 판 모두 이미 그렇다).
+    앞 상한도 <b>고른 상한이 0 이하면 검사하지 않는다</b>는 규칙 하나로 따라 꺼진다 — 따로 분기를 두지 않는다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>옵션</th><th>압축(7z 등)</th><th>텍스트(csv 등)</th><th>일반(hwp 등)</th></tr></thead>
+        <tbody>
+          <tr><td>(없음)</td><td>500MB</td><td>100MB</td><td>100MB</td></tr>
+          <tr><td><code class="inl">--max-file-mb 300</code></td><td>500MB</td><td>100MB</td><td>300MB</td></tr>
+          <tr><td><code class="inl">--max-file-mb-text 200</code></td><td>500MB</td><td><b>200MB</b></td><td>100MB</td></tr>
+          <tr><td><code class="inl">--max-archive-mb 1000</code></td><td><b>1000MB</b></td><td>100MB</td><td>100MB</td></tr>
+          <tr><td><b><code class="inl">--no-size-limit</code></b></td><td class="ok">검사 안 함</td><td class="ok">검사 안 함</td><td class="ok">검사 안 함</td></tr>
+          <tr><td>상한 값 0 (예: <code class="inl">--max-archive-mb 0</code>)</td><td colspan="3">그 종류만 검사 안 함("0 이하 = 상한 없음", 기존 규칙)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="src">※ 일반 상한을 낮추면 텍스트 상한도 그 아래로 따라 내리는 기존 규칙(뒤집힌 설정 방지)은 그대로 둔다 — 앞 상한은 그 결과 값을 그대로 읽는다.</p>
+
+    <h3>4-4. 판정 함수 — 두 판에 하나씩, 같은 계약</h3>
+<pre><span class="cm"># Python — decrypt.py (Rust decrypt.rs 에 같은 이름·같은 판정)</span>
+def pre_size_limit(name, org_size, stored_size):
+    <span class="cm"># 1) 판단 크기: 원래 크기가 있으면 그것, 없으면 저장 크기</span>
+    basis, size = ("org_size", org_size) if org_size is not None else ("stored_size", stored_size)
+    <span class="cm"># 2) 원래 이름의 확장자로 상한을 고른다(모르면 일반 상한)</span>
+    ext = safe_ext(name)
+    if ext in ARCHIVE_EXTS:  limit, which = config.MAX_ARCHIVE_BYTES,   "MAX_ARCHIVE_BYTES"
+    elif ext in TEXT_EXTS:   limit, which = config.MAX_FILE_BYTES_TEXT, "MAX_FILE_BYTES_TEXT"
+    else:                    limit, which = config.MAX_FILE_BYTES,      "MAX_FILE_BYTES"
+    <span class="cm"># 3) 0 이하는 '상한 없음'(--no-size-limit 포함)</span>
+    if not limit or limit &lt;= 0 or size &lt;= limit:
+        return None
+    return DecError(<span class="kw">"size_limit"</span>,
+        f"복호화 전 크기가 상한을 넘어 풀지 않았습니다({basis} {size}바이트 &gt; {limit}바이트, {which}) — "
+        f"{_hint(which)} 로 조정할 수 있습니다")</pre>
+    <ul class="plain">
+      <li><b>부르는 곳</b>: Python <code class="inl">cli._iter_dec_jobs</code>(분류 · <code class="inl">--text-only</code> 공용), Rust 분류 루프, <b>Rust <code class="inl">run_text_only</code></b>(지금 빠져 있는 자리 — 새로 넣는다).</li>
+      <li><b>안내 문구</b>(<code class="inl">_hint</code>)는 고른 상한에 맞춰 <code class="inl">--max-archive-mb</code> · <code class="inl">--max-file-mb-text</code> · <code class="inl">--max-file-mb</code> 를 알려 준다(지금은 늘 <code class="inl">--max-file-mb</code>).</li>
+      <li><b>사유 이름은 그대로</b> <code class="inl">size_limit</code> — 결과 레코드(<code class="inl">error.kind = "size_limit"</code>) · 요약("크기초과") · 종료코드(1)가 바뀌지 않는다.</li>
+      <li><b>실패 로그 줄</b>은 기존 모양 그대로(<code class="inl">reason=size_limit … org_size= stored_size= …</code>). 문장에 판단 크기와 고른 상한이 들어가 왜 걸렸는지 로그만 보고 안다.</li>
+    </ul>
+  </section>
+
+  <!-- 5 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h2>바뀌는 결과 — 호환성</h2></div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>경우(기본 옵션)</th><th>지금</th><th>바꾼 뒤</th></tr></thead>
+        <tbody>
+          <tr><td>100MB 이하의 모든 문서</td><td>통과</td><td>통과 — <b>변화 없음</b></td></tr>
+          <tr><td>100MB 초과 일반 문서(hwp · docx · pdf …)</td><td>size_limit</td><td>size_limit — 변화 없음(문구만 자세해짐)</td></tr>
+          <tr><td>100~500MB 압축(7z · zip …)</td><td class="x">size_limit</td><td class="ok">풀어서 펼친 뒤 분류(평문과 같음)</td></tr>
+          <tr><td>500MB 초과 압축</td><td>size_limit</td><td>size_limit — 문구가 MAX_ARCHIVE_BYTES 로</td></tr>
+          <tr><td>텍스트 상한을 따로 올린 실행의 큰 txt · csv</td><td class="x">size_limit</td><td class="ok">올린 상한까지 분류</td></tr>
+          <tr><td><code class="inl">enc_mode=26</code>, 원래 크기가 정확히 상한</td><td class="x">size_limit(+32B 때문)</td><td class="ok">통과(org_size 로 판단)</td></tr>
+          <tr><td><code class="inl">zip_mode≠0</code>, 원래 크기만 상한 초과</td><td class="wn">다 푼 뒤 추출 상한에서 버림</td><td class="ok">풀지 않고 size_limit(org_size 로 판단)</td></tr>
+          <tr><td>Rust <code class="inl">--text-only --decrypt</code> 큰 문서</td><td class="wn">다 푼 뒤 버림</td><td class="ok">풀지 않고 멈춤(Python 판과 같음)</td></tr>
+          <tr><td><code class="inl">--no-size-limit</code></td><td>앞 상한 꺼짐</td><td>앞 상한 꺼짐 — <b>변화 없음</b></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note info"><span class="badge">영향</span>
+      <p>판정이 <b>느슨해지는 쪽</b>은 "평문이었으면 받아 줬을 문서"뿐이다(압축 · 텍스트 상한을 따로 둔 경우). 판정이 <b>엄해지는 쪽</b>은 "어차피 뒤에서 버릴 문서"뿐이다(zip_mode). 최종 분류 결과가 평문과 달라지는 경우는 없어진다.</p></div>
+  </section>
+
+  <!-- 6 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">06</span><h2>손댈 곳</h2></div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>파일</th><th>바꿀 것</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">src/csoclassify/decrypt.py</td><td><code class="inl">ARCHIVE_EXTS</code> · <code class="inl">TEXT_EXTS</code> 상수, <code class="inl">pre_size_limit()</code> 추가</td></tr>
+          <tr><td class="mono">src/csoclassify/cli.py</td><td><code class="inl">_iter_dec_jobs</code> 의 크기 비교를 <code class="inl">pre_size_limit(plan.name, plan.size, src_len)</code> 로 바꾼다</td></tr>
+          <tr><td class="mono">Rust/src/decrypt.rs</td><td>같은 상수 · 같은 판정의 <code class="inl">pre_size_limit()</code></td></tr>
+          <tr><td class="mono">Rust/src/main.rs</td><td>분류 루프의 비교를 바꾸고, <b><code class="inl">run_text_only</code> 에 같은 검사를 넣는다</b></td></tr>
+          <tr><td class="mono">tests/test_decrypt.py · Rust/tests/cli_decrypt.rs</td><td>§7 의 시험</td></tr>
+          <tr><td class="mono">README · doc/실행가이드 · doc/엠파워v11연계</td><td>"복호화 전 상한은 풀린 뒤 상한과 같다" 한 줄과 §4-3 의 표</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>모든 새 함수에는 프로젝트 주석 규칙(한글 헤더 · <code class="inl">-in</code> · <code class="inl">-out</code>)을 단다.</p>
+  </section>
+
+  <!-- 7 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">07</span><h2>시험</h2></div>
+    <p>큰 파일을 만들지 않도록 상한을 작게 내려(<code class="inl">--max-file-mb</code> 등에 작은 값) 시험한다. 두 판에 같은 시험을 둔다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>시험</th><th>조건</th><th>기대</th></tr></thead>
+        <tbody>
+          <tr><td>판정 함수 단위 시험</td><td>확장자(zip · 7z · txt · hwp · 없음) × 판단 크기(org/stored) × 상한(0 · 작음 · 큼)</td><td>고른 상한 · 판단 크기 · 통과/size_limit 가 표와 같다</td></tr>
+          <tr><td>압축은 압축 상한</td><td>일반 상한 &lt; 7z 크기 &lt; 압축 상한</td><td>풀어서 펼친다(지금은 size_limit)</td></tr>
+          <tr><td>텍스트는 텍스트 상한</td><td><code class="inl">--max-file-mb-text</code> 를 크기보다 크게</td><td>풀어서 분류</td></tr>
+          <tr><td>원래 크기 우선</td><td>stored &lt; 상한 &lt; org_size</td><td>size_limit(풀지 않음) · 문구에 org_size</td></tr>
+          <tr><td>이름 없음</td><td><code class="inl">name</code> 칸 없음</td><td>지금과 같은 판정(MAX_FILE_BYTES · stored_size)</td></tr>
+          <tr><td><code class="inl">--no-size-limit</code></td><td>세 종류 모두 상한보다 큰 파일</td><td>모두 풀어서 처리(앞 검사 없음)</td></tr>
+          <tr><td>Rust <code class="inl">--text-only --decrypt</code></td><td>상한 초과</td><td>도구를 부르지 않고 멈춤 — Python 판과 같은 사유</td></tr>
+          <tr><td>두 판 결과 비교</td><td>위 목록 전체</td><td>레코드 · 종료코드가 같다(win-deploy 교차 검증과 같은 기준)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 8 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">08</span><h2>하지 않는 것 · 남는 한계</h2></div>
+    <ul class="plain">
+      <li><b>앞 상한을 없애지 않는다</b> — 버려질 문서를 풀어 평문을 디스크 · 메모리에 두는 시간을 늘릴 이유가 없다(원칙 4).</li>
+      <li><b>엠파워 쪽은 바꾸지 않는다</b> — <code class="inl">removeenc.php</code> · <code class="inl">mpower_decrypt</code> 에는 크기 제한이 없고, 둘 필요도 없다.</li>
+      <li><b>시간 제한은 따로다</b> — 상한을 올리면 큰 문서가 <code class="inl">--decrypt-timeout</code>(기본 60초)에 걸릴 수 있다. 문서에 "상한을 올릴 때 시간 제한도 함께" 를 적는다.</li>
+      <li><b>압축 안의 문서</b>는 지금처럼 풀린 뒤 펼치기 단계의 상한(파일 수 · 누적 크기 · 각 문서의 추출 상한)이 맡는다 — 이 설계는 바깥 파일 하나의 앞 검사만 다룬다.</li>
+      <li><b>확장자가 거짓인 파일</b>은 앞 검사가 조금 어긋날 수 있지만, 최종 판정은 뒤 상한이 하므로 잘못된 등급은 나오지 않는다.</li>
+    </ul>
+  </section>
+
+  <!-- 9 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">09</span><h2>진행 순서</h2></div>
+    <ol class="plain">
+      <li>판정 함수와 상수를 두 판에 넣고 단위 시험</li>
+      <li>분류 경로 · <code class="inl">--text-only</code> 경로에 연결(Rust <code class="inl">run_text_only</code> 새로 넣기)</li>
+      <li>통합 시험(§7) · 두 판 교차 검증</li>
+      <li>Windows · 리눅스 배포본 다시 빌드 → DEV-SVR Docker 판 removeenc 로 sample/enc 재확인</li>
+      <li>README · 실행가이드 · 엠파워v11연계 문서 갱신</li>
+    </ol>
+  </section>
+
+  <!-- 10 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">10</span><h2>구현 · 검증 결과 (2026-10-16)</h2></div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>자리</th><th>구현</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">decrypt.py</td><td><code class="inl">PRE_ARCHIVE_EXTS</code> · <code class="inl">PRE_TEXT_EXTS</code>, <code class="inl">pre_size_limit_with()</code>(상한을 인자로 받는 속함수) · <code class="inl">pre_size_limit()</code>(config 를 읽는 겉함수)</td></tr>
+          <tr><td class="mono">cli.py</td><td><code class="inl">_iter_dec_jobs</code> 가 <code class="inl">pre_size_limit(plan.name, plan.size, src_len)</code> 를 부른다(분류 · --text-only 공용)</td></tr>
+          <tr><td class="mono">decrypt.rs</td><td>같은 상수 · 같은 이름의 두 함수(<code class="inl">limits::max_archive_bytes · max_file_bytes_text · max_file_bytes</code> 를 읽음)</td></tr>
+          <tr><td class="mono">main.rs</td><td>분류 루프의 비교를 교체, <b><code class="inl">run_text_only</code> 에 앞 검사 새로 넣음</b></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>검증</th><th>결과</th></tr></thead>
+        <tbody>
+          <tr><td>Python 시험</td><td class="ok">test_decrypt 36개(판정 표 10 · 0=끔 1 · 통합 3 추가) · 전체 1,070개 통과</td></tr>
+          <tr><td>Rust 시험</td><td class="ok">단위 274개(판정 표 추가) · cli_decrypt 17개(압축 · 텍스트 · 원래 크기/no-size-limit · text-only 4개 추가) · 전체 통과</td></tr>
+          <tr><td>DEV-SVR ① 기본 옵션 · sample/enc 11건(Docker 판 removeenc)</td><td class="ok">바꾸기 전과 같다 — C=1 S=9 O=2, 복호화 실패 0, 풀린 9건 원본 지문 일치</td></tr>
+          <tr><td>DEV-SVR ② <code class="inl">--max-file-mb 0.1</code>(104,857B)</td><td class="ok">7z(209,614B) · zip(780,690B)은 <b>압축 상한</b>으로 보아 풀고 펼침(예전이면 7z 는 size_limit) ·
+            pdf · doc · pptx 는 풀지 않고 size_limit — "<code class="inl">org_size 1226050바이트 &gt; 104857바이트, MAX_FILE_BYTES</code> — --max-file-mb 로 조정"</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <span>MpowerClassify · 복호화 전 크기 상한 정합 설계</span>
+    <span>2026-10-16</span>
+  </footer>
+</div>
+</body>
+</html>

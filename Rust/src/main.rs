@@ -126,6 +126,7 @@ struct Opts {
     //  · decrypt           : --file 한 건을 풀어서 분류한다(기본은 그대로 읽기)
     //  · mrk/enc_mode/zip_mode : removeenc.sh 의 -k · -e · -z 로 넘어갈 값
     //  · name              : 원래 파일 이름(확장자 판별 · 파일명 신호)
+    //  · dec_size          : 원래 파일 크기(--size, 글자 그대로. 모양은 check_decrypt_args 가 본다)
     //  · no_decrypt        : 목록에 열쇠가 있어도 풀지 않는다
     //  · decrypt_cmd/tmp/timeout : 도구 위치 · 임시 폴더 · 한 건의 시간 제한(초)
     decrypt: bool,
@@ -133,6 +134,7 @@ struct Opts {
     enc_mode: Option<String>,
     zip_mode: Option<String>,
     name: Option<String>,
+    dec_size: Option<String>,
     no_decrypt: bool,
     decrypt_cmd: Option<String>,
     decrypt_tmp: Option<String>,
@@ -282,6 +284,7 @@ fn usage() {
     eprintln!("                            'v2:' 로 시작하는 감싼 값은 받지 않습니다");
     eprintln!("  --enc-mode <값>  --zip-mode <값>   ENC_MODE · ZIP_MODE(0 도 올바른 값)");
     eprintln!("  --name <이름>             원래 파일 이름(확장자 판별 · 파일명 신호)");
+    eprintln!("  --size <바이트>           원래 파일 크기. 주면 풀린 결과의 크기와 견줍니다(안 주면 건너뜀)");
     eprintln!("  --no-decrypt              목록에 열쇠가 있어도 풀지 않습니다");
     eprintln!("  --decrypt-cmd <경로>      복호화 도구(환경변수 CSOCLASSIFY_DECRYPT_CMD,");
     eprintln!("                            기본 {})", decrypt::DEFAULT_CMD);
@@ -515,7 +518,7 @@ fn parse_args() -> Result<Opts, String> {
         size_limits: limits::Overrides::default(), no_size_limit: false,
         textsave: None,
         text_only: false,
-        decrypt: false, mrk: None, enc_mode: None, zip_mode: None, name: None,
+        decrypt: false, mrk: None, enc_mode: None, zip_mode: None, name: None, dec_size: None,
         no_decrypt: false, decrypt_cmd: None, decrypt_tmp: None, decrypt_timeout: None,
     };
     // args_os() 를 쓴다. std::env::args() 는 인자에 UTF-8 이 아닌 바이트가 섞이면
@@ -752,6 +755,7 @@ fn parse_args() -> Result<Opts, String> {
             "--enc-mode" => o.enc_mode = take(false),
             "--zip-mode" => o.zip_mode = take(false),
             "--name" => o.name = take(false),
+            "--size" => o.dec_size = take(false),
             "--decrypt-cmd" => o.decrypt_cmd = take(false),
             "--decrypt-tmp" => o.decrypt_tmp = take(false),
             "--decrypt-timeout" =>
@@ -1694,6 +1698,76 @@ fn fail_no_input(opts: &Opts) -> ! {
 }
 
 //------------------------------------------------------------------
+// 복호화 성공 한 줄 남기기
+//=> 어느 문서를 어떤 모드로 어디에 풀었는지 나중에 일반 로그(class_YYYYMMDD.log)로
+//   추적할 수 있게 한다. 파이썬 판 _iter_dec_jobs 의 '복호화 성공' 줄과 모양이 같다.
+//    1) 원래 경로·원래 이름·도구를 불렀는지(평문이면 복사만)를 적는다
+//    2) enc_mode·zip_mode 와 임시 파일 경로, 걸린 시간을 적는다
+//    3) 저장 파일 크기(stored_size — 엠파워 저장소의 .SMF, 암호화 여부와 상관없이)와
+//       풀린 문서 크기(dec_size)를 적는다 — 둘을 견주면 압축(zip_mode)으로 얼마나
+//       줄었는지, 풀린 결과가 터무니없지 않은지 로그만 보고 안다.
+//       (목록·--size 의 size 는 DB 원본 크기라 뜻이 달라 이름을 겹치지 않게 했다)
+//    4) 열쇠(mrk)는 적지 않는다
+//
+// -in: display = 원래 경로(결과의 file 칸과 같은 값)
+// -in: name    = 원래 파일 이름(없으면 "-")
+// -in: org_size = 엠파워 DB 원본 크기(--size 또는 목록의 size 칸. 없으면 None → 칸을 안 싣는다)
+// -in: src     = 저장된(암호) 파일 경로(크기를 잰다)
+// -in: d       = 풀린 결과(임시 파일 경로 · 도구 사용 여부)
+// -in: info    = 복호화 정보(enc_mode · zip_mode 를 본다)
+// -in: t0      = 풀기 시작 시각
+//
+// -out: 없음
+// -out: error = 없음(로그를 못 써도 조용히 넘어간다. 크기를 못 재면 -1 로 적는다)
+//------------------------------------------------------------------
+fn log_dec_ok(display: &str, name: Option<&str>, org_size: Option<u64>, src: &Path,
+              d: &decrypt::Decrypted, info: &filelist::DecInfo, t0: Instant) {
+    // 크기를 재기 전에 시간을 먼저 끊는다 — 크기 재기는 풀기에 든 시간이 아니다.
+    let elapsed = t0.elapsed().as_millis();
+    let size_of = |p: &Path| std::fs::metadata(p).map(|m| m.len() as i64).unwrap_or(-1);
+    // DB 원본 크기는 받은 값이 있을 때만 싣는다(파이썬 판과 같은 모양).
+    let org_note = org_size.map(|n| format!("org_size={} ", n)).unwrap_or_default();
+    linfo!("복호화 성공 file={} name={} tool={} enc_mode={} zip_mode={} {}stored_size={} dec_size={} tmp={} elapsed={}ms",
+           display, name.unwrap_or("-"), if d.tool { "yes" } else { "no(copy)" },
+           info.enc_mode, info.zip_mode, org_note, size_of(src), size_of(&d.file),
+           d.file.to_string_lossy().replace('\\', "/"), elapsed);
+}
+
+//------------------------------------------------------------------
+// 복호화 실패 로그 한 줄 만들기
+//=> 성공 줄(log_dec_ok)과 같은 칸을 같은 차례로 싣는다 — 두 줄을 나란히 놓고 견줄 수 있게.
+//   파이썬 판 _dec_fail_line 과 모양이 같다.
+//    1) file · name · reason(사유 이름) · rc(도구 종료코드, 부르지 않았으면 "-")
+//    2) enc_mode · zip_mode — 열쇠 칸이 잘못돼 해석하지 못했으면 "-"
+//    3) org_size(DB 원본 크기, 받았을 때만) · stored_size · dec_size(결과 파일이 있었을 때만)
+//    4) elapsed, 그리고 ' :: ' 뒤에 사람이 읽는 문장
+//   임시 경로(tmp)는 싣지 않는다 — 실패한 결과물은 이미 지워졌다. 열쇠도 싣지 않는다.
+//
+// -in: display     = 원래 경로(결과의 file 칸과 같은 값)
+// -in: name        = 원래 파일 이름(없으면 "-")
+// -in: org_size    = 엠파워 DB 원본 크기(--size 또는 목록의 size 칸. 없으면 None)
+// -in: info        = 복호화 정보(열쇠 칸을 해석하지 못했으면 None)
+// -in: stored_size = 저장 파일(.SMF) 크기
+// -in: e           = 실패 사유
+// -in: t0          = 이 문서를 다루기 시작한 시각
+//
+// -out: String = 로그에 남길 한 줄(앞의 시각·PID 는 로거가 붙인다)
+// -out: error = 없음
+//------------------------------------------------------------------
+fn dec_fail_line(display: &str, name: Option<&str>, org_size: Option<u64>,
+                 info: Option<&filelist::DecInfo>, stored_size: u64,
+                 e: &decrypt::DecError, t0: Instant) -> String {
+    let org = org_size.map(|n| format!("org_size={} ", n)).unwrap_or_default();
+    let dec = e.dec_size.map(|n| format!("dec_size={} ", n)).unwrap_or_default();
+    format!("복호화 실패 file={} name={} reason={} rc={} enc_mode={} zip_mode={} {}stored_size={} {}elapsed={}ms :: {}",
+            display, name.unwrap_or("-"), e.reason,
+            e.rc.map(|r| r.to_string()).unwrap_or_else(|| "-".into()),
+            info.map(|i| i.enc_mode.as_str()).unwrap_or("-"),
+            info.map(|i| i.zip_mode.as_str()).unwrap_or("-"),
+            org, stored_size, dec, t0.elapsed().as_millis(), e.message)
+}
+
+//------------------------------------------------------------------
 // 본문만 뽑아 내보내기 (--text-only)
 //=> 등급도 PII 도 보지 않고, 문서에서 글자만 뽑아 정제해 그대로 내놓는다.
 //   파이썬 판 `run_text_only` 와 같은 모양이다 — 문서마다 '===== 경로 =====' 한 줄,
@@ -1740,8 +1814,19 @@ fn run_text_only(opts: &Opts) -> i32 {
                 Err(why) => errcodes::fail("decrypt_unavailable",
                     &format!("[MpowerClassify-rs] {}", why), base.to_str()),
             };
-            match sess.decrypt(&src, &info, name.as_deref(), size) {
+            // 풀기에 걸린 시간을 성공 로그에 남기려고 잰다.
+            let t_dec = Instant::now();
+            // 분류 모드와 같은 복호화 전 크기 검사 — 예전에는 이 자리에 없어 큰 문서를 다 푼 뒤
+            // 추출 상한에서 버렸다(파이썬 판은 같은 검사를 거친다). 넘으면 도구를 부르지 않는다.
+            let stored_len = std::fs::metadata(&src).map(|m| m.len()).unwrap_or(0);
+            let outcome = match decrypt::pre_size_limit(name.as_deref(), size, stored_len) {
+                Some(e) => Err(e),
+                None => sess.decrypt(&src, &info, name.as_deref(), size),
+            };
+            match outcome {
                 Ok(d) => {
+                    // 분류 모드와 같은 '복호화 성공' 줄을 남긴다.
+                    log_dec_ok(&display, name.as_deref(), size, &src, &d, &info, t_dec);
                     dec_relabel = Some((d.file.to_string_lossy().replace('\\', "/"), display));
                     let v = vec![d.file.clone()];
                     dec_sess = Some(sess);
@@ -1749,6 +1834,10 @@ fn run_text_only(opts: &Opts) -> i32 {
                 }
                 Err(e) => {
                     sess.close();
+                    // 분류 모드와 같은 '복호화 실패' 줄을 먼저 남긴다(아래 fail 은 상태 문장만 남긴다).
+                    let stored = std::fs::metadata(&src).map(|m| m.len()).unwrap_or(0);
+                    errlog::err(&dec_fail_line(&display, name.as_deref(), size, Some(&info),
+                                               stored, &e, t_dec));
                     // 환경 문제면 2, 이 파일만의 문제면 1 — 분류 때와 같은 갈래다.
                     errcodes::fail(if e.fatal { "decrypt_unavailable" } else { "decrypt_failed" },
                         &format!("[MpowerClassify-rs] 복호화하지 못했습니다 — {}", e.message),
@@ -1868,12 +1957,37 @@ fn cli_dec_info(opts: &Opts) -> Result<Option<decrypt::DecInfo>, (&'static str, 
 }
 
 //------------------------------------------------------------------
+// 명령줄로 받은 원래 크기(--size) → 정수
+//=> 목록의 size 칸과 같은 뜻이다. 0 이상의 정수만 받는다(앞뒤 공백은 무시).
+//   파이썬 판 _cli_dec_size 와 같은 판정이다.
+//
+// -in: opts = 파싱된 실행 옵션
+//
+// -out: Ok(Some(n)) = 원래 크기(바이트) / Ok(None) = --size 를 안 줌(크기 검사 건너뜀)
+// -out: error = 숫자가 아니거나 음수면 Err(사람이 읽는 문장)
+//------------------------------------------------------------------
+fn cli_dec_size(opts: &Opts) -> Result<Option<u64>, String> {
+    let raw = match &opts.dec_size {
+        Some(v) => v,
+        None => return Ok(None),
+    };
+    let s = raw.trim();
+    // "1,024" · "-1" · "1.5" 같은 값은 받지 않는다 — 크기를 잘못 주면 멀쩡한 문서가 실패로 남는다.
+    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(format!("--size 는 0 이상의 정수(바이트)여야 합니다: {}", raw));
+    }
+    s.parse::<u64>().map(Some)
+        .map_err(|_| format!("--size 는 0 이상의 정수(바이트)여야 합니다: {}", raw))
+}
+
+//------------------------------------------------------------------
 // --decrypt 관련 인자 조합 검사 — 문서를 읽기 전에 끝낸다
 //=> "풀릴 줄 알았는데 안 풀린" 상태를 만들지 않는다(설계 §4 표).
 //    1) --decrypt 는 --file 한 건에만 쓴다(폴더에는 파일마다 다른 열쇠를 줄 방법이 없다)
 //    2) --decrypt 와 --no-decrypt 는 함께 못 쓴다
 //    3) --decrypt 면 열쇠 셋이 있어야 한다(없으면 --filelist 에서 찾는다)
-//    4) 열쇠·이름만 주고 --decrypt 를 안 주면 오류
+//    4) 열쇠·이름·크기만 주고 --decrypt 를 안 주면 오류
+//    5) --size 는 0 이상의 정수여야 한다
 //
 // -in: opts = 파싱된 실행 옵션
 //
@@ -1886,8 +2000,8 @@ fn check_decrypt_args(opts: &Opts) {
     };
     let has_keys = opts.mrk.is_some() || opts.enc_mode.is_some() || opts.zip_mode.is_some();
     if !opts.decrypt {
-        if has_keys || opts.name.is_some() {
-            bad("--mrk · --enc-mode · --zip-mode · --name 은 --decrypt 와 함께 써야 합니다.\n  \
+        if has_keys || opts.name.is_some() || opts.dec_size.is_some() {
+            bad("--mrk · --enc-mode · --zip-mode · --name · --size 는 --decrypt 와 함께 써야 합니다.\n  \
                  풀어서 분류하려면 --decrypt 를 붙이고, 이미 풀어 둔 파일이면 이 인자들을 빼세요.");
         }
         return;
@@ -1907,6 +2021,10 @@ fn check_decrypt_args(opts: &Opts) {
         Ok(None) => bad("--decrypt 에는 --mrk · --enc-mode · --zip-mode 가 필요합니다\
                          (--mrk 는 환경변수 CSOCLASSIFY_MRK 로도 줄 수 있습니다)."),
         Err((_, why)) => bad(&why),
+    }
+    // --size 는 문서를 읽기 전에 모양을 본다 — 잘못된 값으로 돌면 그 문서가 size_mismatch 로 남는다.
+    if let Err(why) = cli_dec_size(opts) {
+        bad(&why);
     }
 }
 
@@ -1931,7 +2049,9 @@ fn dec_plan_for(opts: &Opts, flist: Option<&filelist::FileList>, display: &str) 
     let entry = flist.and_then(|fl| fl.lookup(display)).map(|(e, _)| e);
     if opts.decrypt {
         let name = opts.name.clone().or_else(|| entry.and_then(|e| e.name.clone()));
-        let size = entry.and_then(|e| e.size);
+        // 크기도 이름처럼 명령줄(--size)이 우선, 없으면 목록의 size 칸. 둘 다 없으면 None → 크기 검사 건너뜀.
+        // 값 모양은 check_decrypt_args 가 이미 봤다.
+        let size = cli_dec_size(opts).ok().flatten().or_else(|| entry.and_then(|e| e.size));
         return match cli_dec_info(opts) {
             Ok(Some(info)) => Some(DecPlan { info: Ok(info), name, size }),
             Err(why) => Some(DecPlan { info: Err(why), name, size }),
@@ -3014,22 +3134,28 @@ fn main() {
             let display = files[done].label.clone();
             let src = files[done].src.clone();
             let sess = dec_sess.as_mut().expect("복호화 계획이 있으면 작업장도 있다");
-            // 풀기 전에 저장 파일 크기를 본다 — 터무니없이 큰 파일은 풀지도 않는다(설계 §9).
-            // 풀린 뒤의 실제 크기는 아래 크기 상한(G1·G2)이 지금까지처럼 다시 본다.
-            let max = limits::max_file_bytes();
+            // 풀기 전에 크기를 본다 — 어차피 풀린 뒤 상한에서 버려질 파일은 풀지도 않는다(설계 §9).
+            // 풀린 뒤의 실제 크기는 아래 크기 상한(G1·G2)과 압축 펼치기 상한이 지금까지처럼 다시 본다.
             let src_len = std::fs::metadata(&src).map(|m| m.len()).unwrap_or(0);
+            // 앞 상한은 '풀린 뒤 실제로 적용될 상한'과 같게 고른다 — 원래 이름의 확장자로
+            // 압축·텍스트·일반을 가르고, 원래 크기가 있으면 그 크기로 본다
+            // (plan/엠파워v11-복호화-크기상한-정합-설계-20261016.html). --no-size-limit 이면 통과.
+            let too_big = decrypt::pre_size_limit(plan.name.as_deref(), plan.size, src_len);
+            // 풀기에 걸린 시간을 성공 로그에 남기려고 잰다.
+            let t_dec = Instant::now();
             let outcome: Result<decrypt::Decrypted, decrypt::DecError> = match &plan.info {
                 // 열쇠 칸이 일부만 있거나 감싼 열쇠 — 도구를 부르지 않고 오류로 남긴다.
                 Err((reason, msg)) => Err(decrypt::DecError {
-                    reason: *reason, rc: None, message: msg.clone(), fatal: false }),
-                Ok(_) if max > 0 && src_len > max => Err(decrypt::DecError {
-                    reason: "size_limit", rc: None, fatal: false,
-                    message: format!("저장 파일이 크기 상한을 넘어 풀지 않았습니다({}바이트 > {}바이트). \
-                                      --max-file-mb 로 조정할 수 있습니다", src_len, max) }),
+                    reason: *reason, rc: None, message: msg.clone(), fatal: false, dec_size: None }),
+                Ok(_) if too_big.is_some() => Err(too_big.clone().unwrap()),
                 Ok(info) => sess.decrypt(&src, info, plan.name.as_deref(), plan.size),
             };
             match outcome {
                 Ok(d) => {
+                    // 성공도 문서마다 한 줄 남긴다(파이썬 판과 같은 모양). 열쇠(mrk)는 남기지 않는다.
+                    if let Ok(info) = &plan.info {
+                        log_dec_ok(&display, plan.name.as_deref(), plan.size, &src, &d, info, t_dec);
+                    }
                     if d.tool { n_dec += 1; }
                     // 압축파일이면 내부 문서로 펼친다(이 문서 전용 폴더 안에). 순서는
                     // 복호화 → 펼치기 → 분류다. zip_mode(저장 시 압축)는 도구가 이미 풀었고,
@@ -3098,7 +3224,9 @@ fn main() {
                         n_dec_fail += 1;
                         "decrypt_failed"
                     };
-                    errlog::err(&format!("[복호화실패] {} :: {}({})", display, e.message, e.reason));
+                    // 성공 줄과 같은 칸(모드·크기·걸린 시간)을 실어 실패 원인을 로그만 보고 가늠하게 한다.
+                    errlog::err(&dec_fail_line(&display, plan.name.as_deref(), plan.size,
+                                               plan.info.as_ref().ok(), src_len, &e, t_dec));
                     let sig = plan.name.clone().unwrap_or_else(|| display.clone());
                     let mut rec = json!({
                         "file": display,

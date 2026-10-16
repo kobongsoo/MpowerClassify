@@ -28,7 +28,7 @@ csoclassify.exe --dir "D:\collected" -r --embed-needed --format jsonl --out resu
 csoclassify.exe --embed --file "D:\docs\보고서.hwp"
 
 # 암호화 문서 한 건을 풀어서 분류 (리눅스 서버)
-./csoclassify --file /data/store/0001234 --decrypt --mrk "$MRK" --enc-mode "$ENC_MODE" --zip-mode "$ZIP_MODE" --name "보고서.hwp"
+./csoclassify --file /data/store/0001234 --decrypt --mrk "$MRK" --enc-mode "$ENC_MODE" --zip-mode "$ZIP_MODE" --name "보고서.hwp" --size 52311
 
 # 암호화 문서 목록 파일로 여러 건 — 줄마다 열쇠 칸이 있으면 그 줄만 푼다
 ./csoclassify --filelist list.jsonl --format jsonl --out result.jsonl
@@ -45,7 +45,7 @@ csoclassify.exe --embed --file "D:\docs\보고서.hwp"
 | 방식 | 주는 법 |
 |---|---|
 | 여러 건 | `--filelist` 의 각 줄에 `mrk` · `enc_mode` · `zip_mode`(+ `name` · `size`)를 적으면 **그 줄만** 풉니다. `enc_mode`·`zip_mode` 가 둘 다 0 인 줄은 도구를 부르지 않고 그대로 읽습니다 |
-| 한 건 | `--file` 에 `--decrypt --mrk --enc-mode --zip-mode [--name]` |
+| 한 건 | `--file` 에 `--decrypt --mrk --enc-mode --zip-mode [--name] [--size]`. `--size`(원래 크기, 바이트)를 주면 풀린 결과의 크기와 견주고, 안 주면 크기 검사를 건너뜁니다 |
 | 풀지 않기 | `--no-decrypt` — 목록에 열쇠가 있어도 그대로 읽습니다 |
 
 목록 한 줄(jsonl) 예:
@@ -57,6 +57,9 @@ csoclassify.exe --embed --file "D:\docs\보고서.hwp"
 - 저장 이름에는 확장자도 뜻도 없으므로 **`name`(원래 파일 이름)을 주기를 권합니다** — 확장자 판별과 파일명 신호에 씁니다.
 - 열쇠가 틀려도 도구는 성공(0)을 돌려줍니다. 그래서 풀린 파일의 **크기·시그니처를 따로 확인**하고, 이상하면 분류하지 않고
   `grade: null` + `error.kind = "decrypt_failed"`(이유는 `detail`)로 냅니다.
+- 풀기 전에 **풀린 뒤 실제로 적용될 크기 상한**을 미리 보고, 넘으면 풀지 않고 `error.kind = "size_limit"` 로 냅니다.
+  상한은 원래 이름의 확장자로 고릅니다 — 압축(zip·7z 등)은 `--max-archive-mb`(500MB), 텍스트(txt·csv 등)는 `--max-file-mb-text`,
+  그 밖은 `--max-file-mb`(100MB). 크기는 `size`(원래 크기)가 있으면 그것으로 봅니다. `--no-size-limit` 이면 이 검사도 꺼집니다.
 - 결과 레코드에는 `name`(원래 이름)과 `meta.decrypted` 가 실립니다.
 - **열쇠(MRK)와 임시 경로는 로그·결과에 남기지 않습니다.** `v2:` 로 시작하는 감싼 MRK 는 받지 않습니다(평문만).
 - 시간 제한(`--decrypt-timeout`, 기본 60초)을 넘기면 하위 프로세스까지 모두 끝냅니다.

@@ -245,8 +245,52 @@ export CSOCLASSIFY_MRK="(평문 MRK)"
         <td>기본 위치에 도구가 없습니다. 환경변수 <code>CSOCLASSIFY_DECRYPT_CMD</code> 로 한 번 정해 두면 편합니다</td></tr>
     <tr><td>윈도우 PC <span class="def">(시험)</span></td><td class="bad">꼭 준다</td>
         <td>윈도우에는 도구가 없어 중계 스크립트를 줍니다 → <a href="엠파워v11연계-암호화 문서 생성 및 테스트.html">테스트 문서</a></td></tr>
+    <tr><td><b>엠파워가 없는 리눅스 서버</b> <span class="def">(시험 — 예: 개발 서버 <code>DEV-SVR</code>, 실제 주소는 <code>.env_vllm</code> 의 <code>SSH_SERVER</code>)</span></td><td class="bad">꼭 준다</td>
+        <td>도구가 없어 둘 중 하나를 줍니다(아래 예).<br>
+          · <b>Docker 판</b> <code>sample/enc_test/removeenc_docker.sh</code> — 엠파워의 PHP·<code>mpower.so</code> 를 컨테이너에서 그대로 돌려 <b>이 서버 안에서</b> 풉니다(권장)<br>
+          · <b>중계</b> <code>sample/enc_test/relay_removeenc.sh</code> — 엠파워 서버로 파일을 보내 풀고 다시 받아 옵니다</td></tr>
   </table></div>
   <p class="def">도구가 없거나 실행 권한이 없으면 문서를 한 건도 읽지 않고 <code>1015 decrypt_cmd_missing</code>(종료코드 3)으로 멈추므로, 경로가 틀렸는지는 바로 알 수 있습니다.</p>
+  <p><b>엠파워가 없는 리눅스 서버에서 시험할 때 ① — Docker 판</b> <span class="pill">2026-10-16 추가 · 권장</span> — <code>MpowerClassify-rs</code> 폴더에서 실행합니다.</p>
+<pre><code><span class="cmt"># 처음 한 번 — 실행 권한, 그리고 Rocky Linux 8 이미지(엠파워 서버와 같은 glibc 2.28)</span>
+chmod +x sample/enc_test/removeenc_docker.sh
+docker pull rockylinux:8
+
+<span class="cmt"># 실행 — 엠파워의 진짜 removeenc.php · mpower.so 로 이 서버 안에서 푼다</span>
+./MpowerClassify-rs --filelist sample/enc/filelist.jsonl --json-errors --decrypt-cmd sample/enc_test/removeenc_docker.sh --decrypt-timeout 120 --daemon --simple</code></pre>
+  <ul>
+    <li><b>필요한 것</b> — 같은 폴더의 <code>sample/enc_test/mpower_rt/</code>(엠파워 서버에서 가져온 <code>php</code> · <code>mpower.so</code> · <code>removeenc.php</code> · <code>lib/</code>, 약 150MB),
+      그리고 실행 계정이 <code>docker</code> 그룹이어야 합니다. 파이썬·paramiko·엠파워 서버 접속은 필요 없습니다.</li>
+    <li><b>왜 컨테이너인가</b> — 엠파워 서버(Rocky 8)의 PHP 는 glibc 2.28 이 필요한데 CentOS 7 은 2.17 이라 바로 돌지 않습니다.
+      컨테이너는 네트워크 없이(<code>--network none</code>) 지금 계정 권한으로 뜨고, 원본 폴더(읽기)와 결과 폴더만 붙습니다.</li>
+    <li><b>속도</b> — 문서 한 건에 약 0.5초(컨테이너를 띄우는 시간 포함). 2026-10-16 에 11건이 모두 풀려 원본 지문과 같았습니다.</li>
+  </ul>
+  <p><b>엠파워가 없는 리눅스 서버에서 시험할 때 ② — 중계</b> <span class="pill">2026-10-16 추가</span> — <code>MpowerClassify-rs</code> 폴더에서 실행합니다.</p>
+<pre><code><span class="cmt"># ① 처음 한 번 — 윈도우에서 옮겨 온 파일에는 실행 권한이 없다</span>
+chmod +x sample/enc_test/relay_removeenc.sh
+
+<span class="cmt"># ② 처음 한 번 — 중계는 paramiko 로 엠파워 서버에 붙는다. 실행할 conda 환경에 설치한다</span>
+conda activate bong
+python3 -m pip install paramiko
+<span class="cmt">#    설치 확인 — 버전 번호(예: 4.0.0)가 나오면 된다</span>
+python3 -c "import paramiko; print(paramiko.__version__)"
+
+<span class="cmt"># ③ 실행 — 목록의 암호화 문서를 중계로 풀어서 분류</span>
+./MpowerClassify-rs --filelist sample/enc/filelist.jsonl --json-errors --decrypt-cmd sample/enc_test/relay_removeenc.sh --decrypt-timeout 120 --daemon --simple</code></pre>
+  <ul>
+    <li><b><code>pip</code> 이 아니라 <code>python3 -m pip</code></b> — 중계 래퍼는 셸의 <code>python3</code> 를 먼저 씁니다. 이렇게 설치해야 바로 그 파이썬에 들어갑니다
+      (<code>pip</code> 이 다른 파이썬을 가리키면 설치했는데도 로그에 <code>rc=200</code> · <code>relay: paramiko 가 없습니다</code> 가 남습니다).</li>
+    <li><b>터미널에서 <code>!pip</code> 로 치지 않습니다</b> — <code>!</code> 는 Jupyter 셀 문법입니다. bash 에서 <code>!pip</code> 는 "pip 으로 시작한 마지막 명령을 다시 실행"이라
+      예전 명령(예: <code>pip install vllm</code>)이 불려 나옵니다. 실제로 <code>pip install vllm install paramiko</code> 가 돌아 vllm 빌드 오류가 났던 일이 있습니다(2026-10-16) — 이때는 아무것도 설치되지 않으니 위 명령으로 다시 하면 됩니다.</li>
+    <li><b><code>.cmd</code> 를 주면 안 됩니다</b> — <code>relay_removeenc.cmd</code> 는 윈도우용이라 리눅스에서는
+      <code>@echo: command not found</code> 로 실패합니다(로그에 <code>reason=removeenc_exit rc=2</code>).</li>
+    <li><b><code>--decrypt-timeout 120</code></b> — 한 건마다 망을 오가므로 기본 60초보다 넉넉히 줍니다.</li>
+    <li><b>접속 정보</b>는 <code>sample/enc_test/.env_v11</code>(<code>SSH_SERVER</code> · <code>SSH_USER_ID</code> · <code>SSH_USER_PWD</code>)에서 읽습니다.
+      이 서버에서 엠파워 서버의 SSH(22번)로 나갈 수 있어야 합니다 — 막혀 있으면 로그에 <code>rc=200</code> · <code>relay: 서버에 연결하지 못했습니다</code> 가 남습니다.</li>
+    <li><b>목록의 <code>path</code></b> 는 파일 이름만 적은 상대 경로입니다(목록 파일이 있는 폴더 기준). 그래서 <code>sample/enc</code> 폴더째 옮기면 그대로 돕니다.</li>
+  </ul>
+  <p class="def">중계는 <b>테스트 서버 · 더미 문서 전용</b>입니다(열쇠와 풀린 문서가 망을 건넙니다). 운영에서는 엠파워 서버에서 <code>--decrypt-cmd</code> 없이 돌립니다.
+    자세한 절차와 막혔을 때는 <a href="엠파워v11연계-암호화 문서 생성 및 테스트.html">테스트 문서</a> 6-11(중계) · 6-12(Docker 판)를 보세요.</p>
   <p><b>② <code>--decrypt-tmp</code> (풀린 사본을 둘 곳)</b> — 주지 않아도 됩니다(시스템 임시 폴더를 씁니다). 다만 <b>운영에서는 주기를 권합니다.</b></p>
 <pre><code><span class="cmt"># 메모리 디스크에 전용 폴더를 만들고 거기에 풀게 한다</span>
 mkdir -p /dev/shm/cso &amp;&amp; chmod 700 /dev/shm/cso
@@ -298,6 +342,20 @@ export CSOCLASSIFY_DECRYPT_TMP=/dev/shm/cso</code></pre>
     <tr><td><code>info_incomplete</code></td><td>열쇠 세 칸 중 일부만 있다</td><td>목록의 그 줄에 세 칸이 모두 있는지</td></tr>
     <tr><td><code>timeout</code></td><td>시간 제한을 넘겨 중단했다</td><td>큰 파일이면 <code>--decrypt-timeout</code> 을 늘립니다</td></tr>
   </table></div>
+  <p id="mp-size"><b>너무 커서 풀지 않은 문서</b> <span class="pill">2026-10-16 바뀜</span> — <code>"error":{"kind":"size_limit", …}</code> 로 남습니다(<code>decrypt_failed</code> 가 아닙니다).
+    풀기 전에 <b>풀린 뒤 실제로 적용될 상한</b>을 미리 골라 보고, 넘으면 도구를 부르지 않습니다 — 그래서 <b>같은 파일은 평문이든 엠파워 암호화든 같은 판정</b>을 받습니다.</p>
+  <div class="scroll"><table>
+    <tr><th>원래 이름(<code>name</code>)의 확장자</th><th>보는 상한</th><th>기본</th><th>바꾸는 옵션</th></tr>
+    <tr><td><code>zip 7z rar tar tgz gz bz2 tbz2 xz txz</code></td><td>압축 상한</td><td>500MB</td><td><code>--max-archive-mb</code></td></tr>
+    <tr><td><code>txt csv tsv json jsonl log md xml html htm</code></td><td>텍스트 상한</td><td>100MB</td><td><code>--max-file-mb-text</code></td></tr>
+    <tr><td>그 밖(hwp · docx · pdf …) · 이름 없음</td><td>일반 상한</td><td>100MB</td><td><code>--max-file-mb</code></td></tr>
+  </table></div>
+  <ul>
+    <li><b>무엇의 크기로 보나</b> — 목록의 <code>size</code>(또는 <code>--size</code>)가 있으면 그 <b>원래 크기</b>로, 없으면 저장 파일(<code>.SMF</code>) 크기로 봅니다.</li>
+    <li><b><code>--no-size-limit</code></b> 이면 이 검사도 모두 꺼집니다(풀린 뒤의 상한도 함께 꺼짐).</li>
+    <li>상한을 올릴 때는 <code>--decrypt-timeout</code> 도 함께 늘리세요 — 큰 문서는 푸는 데 오래 걸립니다.</li>
+    <li>사유 문장에 판단 크기와 고른 상한이 나옵니다. 예: <code>복호화 전 크기가 상한을 넘어 풀지 않았습니다(org_size 1000000000바이트 &gt; 104857600바이트, MAX_FILE_BYTES_TEXT) — --max-file-mb-text 로 조정할 수 있습니다</code></li>
+  </ul>
   <div class="note"><b><code>v2:</code> 란</b> — 엠파워 v11 은 열쇠(<code>mrk</code>)를 DB 에 그냥 두지 않고, <b>한 번 더 잠가서</b>(KEK 라는 서버 열쇠로) 둡니다. 그렇게 잠근 값 앞에 붙는 꼬리표가 <code>v2:</code> 입니다.
     이 값으로는 문서를 못 풉니다. 서버 열쇠는 엠파워만 갖고 있으므로, <b>목록을 만드는 엠파워 쪽에서</b> <code>MCrypt::decryptMRKWithKEK()</code> 로 벗긴 평문을 넣어 줘야 합니다.</div>
 

@@ -41,6 +41,8 @@ static ACTIVE_ROOT: Mutex<Option<PathBuf>> = Mutex::new(None);
 // -필드: rc      = removeenc 종료코드(부르지 않았으면 None)
 // -필드: message = 사람이 읽는 문장(열쇠·임시 경로는 들어가지 않는다)
 // -필드: fatal   = true 면 '환경 문제' — 다음 문서도 똑같이 실패하므로 실행을 멈춘다
+// -필드: dec_size = 실패한 복호화 결과의 크기(바이트). 결과 파일이 있었을 때만 값이 있다 —
+//                   실패 결과물은 곧바로 지우므로, 지우기 전에 재서 실패 로그로 넘긴다
 //------------------------------------------------------------------
 #[derive(Debug, Clone)]
 pub struct DecError {
@@ -48,11 +50,12 @@ pub struct DecError {
     pub rc: Option<i32>,
     pub message: String,
     pub fatal: bool,
+    pub dec_size: Option<u64>,
 }
 
 impl DecError {
     fn file(reason: &'static str, rc: Option<i32>, message: String) -> Self {
-        DecError { reason, rc, message, fatal: false }
+        DecError { reason, rc, message, fatal: false, dec_size: None }
     }
 }
 
@@ -215,6 +218,75 @@ fn safe_ext(name: &str) -> Option<String> {
     Some(ext.to_ascii_lowercase())
 }
 
+/// 복호화 전 크기 검사에서 '압축'으로 볼 확장자 — 풀린 뒤 펼치기(MAX_ARCHIVE_BYTES)를 받는 종류.
+/// docx·xlsx·pptx·hwpx 는 속이 zip 이어도 문서 1개라 넣지 않는다. egg·alz 는 펼치기를 지원하지 않아 뺀다.
+/// [파이썬 판과의 관계] decrypt.py 의 PRE_ARCHIVE_EXTS 와 같아야 한다.
+pub const PRE_ARCHIVE_EXTS: &[&str] = &["zip", "7z", "rar", "tar", "tgz", "gz", "bz2", "tbz2", "xz", "txz"];
+/// '텍스트 계열'로 볼 확장자 — 풀린 뒤 추출기의 텍스트 상한(MAX_FILE_BYTES_TEXT)을 받는 종류.
+/// [파이썬 판과의 관계] decrypt.py 의 PRE_TEXT_EXTS 와 같아야 한다.
+pub const PRE_TEXT_EXTS: &[&str] = &["txt", "csv", "tsv", "json", "jsonl", "log", "md", "xml", "html", "htm"];
+
+//------------------------------------------------------------------
+// 복호화 전 크기 검사 — 상한을 인자로 받는 속함수(시험용으로 따로 둔다)
+//=> 풀기 전에 '풀린 뒤 실제로 적용될 상한'을 미리 골라, 넘으면 풀지 않는다.
+//   설계: plan/엠파워v11-복호화-크기상한-정합-설계-20261016.html §4. 파이썬 판 pre_size_limit_with 와 같다.
+//    1) 판단 크기: 원래 크기(org_size)가 있으면 그것, 없으면 저장 파일 크기(stored_size)
+//       — 원래 크기는 verify 가 풀린 결과와 같은지 보는 값이라 곧 '풀린 뒤 크기'다
+//    2) 원래 이름의 확장자로 상한을 고른다: 압축 → 압축 상한, 텍스트 → 텍스트 상한,
+//       그 밖·이름 없음 → 일반 상한(지금까지와 같음)
+//    3) 고른 상한이 0 이면 검사하지 않는다(--no-size-limit 이 세 상한을 모두 0 으로 만든다)
+//
+// -in: name        = 원래 파일 이름(없으면 None)
+// -in: org_size    = 엠파워 DB 의 원래 크기(바이트, 없으면 None)
+// -in: stored_size = 저장 파일(.SMF) 크기(바이트)
+// -in: lim_archive · lim_text · lim_file = 압축 · 텍스트 · 일반 상한(바이트, 0 이면 상한 없음)
+//
+// -out: None = 통과(풀어도 된다) / Some(DecError "size_limit") = 풀지 않는다
+// -out: error = 없음
+//------------------------------------------------------------------
+pub fn pre_size_limit_with(name: Option<&str>, org_size: Option<u64>, stored_size: u64,
+                           lim_archive: u64, lim_text: u64, lim_file: u64) -> Option<DecError> {
+    // 원래 크기가 있으면 그것이 풀린 뒤 크기다 — zip_mode 압축·enc_mode 26 머리에 흔들리지 않는다.
+    let (basis, size) = match org_size {
+        Some(n) => ("org_size", n),
+        None => ("stored_size", stored_size),
+    };
+    // 풀기 전에는 내용이 암호문이라 내용 판별을 못 한다 — 원래 이름의 확장자로 종류를 고른다.
+    let ext = name.and_then(safe_ext);
+    let is = |list: &[&str]| ext.as_deref().map_or(false, |e| list.contains(&e));
+    let (limit, which, hint) = if is(PRE_ARCHIVE_EXTS) {
+        (lim_archive, "MAX_ARCHIVE_BYTES", "--max-archive-mb")
+    } else if is(PRE_TEXT_EXTS) {
+        (lim_text, "MAX_FILE_BYTES_TEXT", "--max-file-mb-text")
+    } else {
+        (lim_file, "MAX_FILE_BYTES", "--max-file-mb")
+    };
+    // 0 은 '상한 없음' — --no-size-limit 이면 세 상한이 모두 0 이라 여기서 통과한다.
+    if limit == 0 || size <= limit {
+        return None;
+    }
+    Some(DecError::file("size_limit", None, format!(
+        "복호화 전 크기가 상한을 넘어 풀지 않았습니다({} {}바이트 > {}바이트, {}) — {} 로 조정할 수 있습니다",
+        basis, size, limit, which, hint)))
+}
+
+//------------------------------------------------------------------
+// 복호화 전 크기 검사 — 지금 실행의 상한(limits)으로 판정하는 겉함수
+//=> 분류 루프·--text-only 가 부르는 쪽이다. 상한은 --max-file-mb · --max-file-mb-text ·
+//   --max-archive-mb · --no-size-limit 이 limits 에 새겨 둔 값을 그대로 읽는다.
+//
+// -in: name        = 원래 파일 이름(없으면 None)
+// -in: org_size    = 엠파워 DB 의 원래 크기(없으면 None)
+// -in: stored_size = 저장 파일(.SMF) 크기
+//
+// -out: None = 통과 / Some(DecError "size_limit") = 풀지 않는다
+// -out: error = 없음
+//------------------------------------------------------------------
+pub fn pre_size_limit(name: Option<&str>, org_size: Option<u64>, stored_size: u64) -> Option<DecError> {
+    pre_size_limit_with(name, org_size, stored_size, crate::limits::max_archive_bytes(),
+                        crate::limits::max_file_bytes_text(), crate::limits::max_file_bytes())
+}
+
 //------------------------------------------------------------------
 // 확장자별 '정상 문서라면 이렇게 시작한다'
 //=> 틀린 열쇠로 풀린 무작위 바이트를 가려내는 자다(설계 §6). 시그니처가 없는
@@ -369,7 +441,7 @@ impl Session {
         self.seq += 1;
         let dir = self.root.join(format!("{:06}", self.seq));
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            return Err(DecError { reason: "tmp_failed", rc: None, fatal: true,
+            return Err(DecError { reason: "tmp_failed", rc: None, fatal: true, dec_size: None,
                 message: format!("복호화 임시 폴더를 만들 수 없습니다({})", e) });
         }
         // 확장자는 원래 이름에서, 없으면 저장 경로에서 가져온다.
@@ -402,7 +474,9 @@ impl Session {
                 }
                 Ok(Decrypted { dir, file, tool })
             }
-            Err(e) => {
+            Err(mut e) => {
+                // 지우기 전에 결과 크기를 재 둔다 — 실패 로그에서 원래 크기와 견줘 볼 수 있게.
+                e.dec_size = std::fs::metadata(&file).ok().map(|m| m.len());
                 // 실패한 결과물(무작위 바이트일 수 있다)을 남기지 않는다.
                 let _ = std::fs::remove_dir_all(&dir);
                 Err(e)
@@ -448,7 +522,7 @@ impl Session {
             .spawn()
             .map_err(|e| DecError {
                 // 도구 자체를 못 띄웠다 — 다음 문서도 똑같이 실패한다.
-                reason: "spawn_failed", rc: None, fatal: true,
+                reason: "spawn_failed", rc: None, fatal: true, dec_size: None,
                 message: format!("복호화 도구를 실행하지 못했습니다: {} ({})", self.cmd.display(), e),
             })?;
         // 출력은 따로 읽는다 — 안 읽으면 자식이 파이프가 차서 멈출 수 있다.
@@ -500,7 +574,7 @@ impl Session {
         if !said.is_empty() {
             msg.push_str(&format!(" — {}", said));
         }
-        Err(DecError { reason: "removeenc_exit", rc: Some(rc), message: msg,
+        Err(DecError { reason: "removeenc_exit", rc: Some(rc), message: msg, dec_size: None,
                        fatal: rc == RC_LOAD_EXTENSION })
     }
 
@@ -598,6 +672,39 @@ fn rc_hint(rc: i32) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // 복호화 전 크기 상한 — 확장자로 상한을 고르고, 원래 크기가 있으면 그것으로 본다.
+    // 파이썬 판 test_복호화_전_크기_상한_판정 과 같은 표다(상한: 압축 500 · 텍스트 300 · 일반 100).
+    #[test]
+    fn 복호화_전_크기_상한_판정() {
+        let cases: &[(Option<&str>, Option<u64>, u64, Option<&str>, Option<&str>)] = &[
+            (Some("묶음.7z"), None, 400, None, None),
+            (Some("묶음.7z"), None, 600, Some("MAX_ARCHIVE_BYTES"), Some("stored_size")),
+            (Some("자료.csv"), None, 200, None, None),
+            (Some("자료.csv"), None, 400, Some("MAX_FILE_BYTES_TEXT"), Some("stored_size")),
+            (Some("보고서.hwp"), None, 200, Some("MAX_FILE_BYTES"), Some("stored_size")),
+            (Some("보고서.docx"), None, 200, Some("MAX_FILE_BYTES"), Some("stored_size")),
+            (Some("이상한.egg"), None, 200, Some("MAX_FILE_BYTES"), Some("stored_size")),
+            (None, None, 200, Some("MAX_FILE_BYTES"), Some("stored_size")),
+            (Some("보고서.hwp"), Some(200), 50, Some("MAX_FILE_BYTES"), Some("org_size")),
+            (Some("보고서.hwp"), Some(100), 132, None, None),
+        ];
+        for (name, org, stored, which, basis) in cases {
+            let r = pre_size_limit_with(*name, *org, *stored, 500, 300, 100);
+            match which {
+                None => assert!(r.is_none(), "{:?} 는 통과해야 한다", name),
+                Some(w) => {
+                    let e = r.unwrap_or_else(|| panic!("{:?} 는 걸려야 한다", name));
+                    assert_eq!(e.reason, "size_limit");
+                    assert!(e.message.contains(w) && e.message.contains(basis.unwrap()), "{}", e.message);
+                }
+            }
+        }
+        // --no-size-limit(세 상한 0)이면 앞 상한도 꺼진다.
+        for name in [Some("a.7z"), Some("a.txt"), Some("a.hwp"), None] {
+            assert!(pre_size_limit_with(name, Some(1 << 40), 1 << 40, 0, 0, 0).is_none());
+        }
+    }
 
     fn tmp(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("csors_dec_unit_{}_{}", tag, std::process::id()));

@@ -123,7 +123,7 @@
     파일마다의 열쇠 정보가 든 <code class="inl">filelist.jsonl</code> 을 만드는 방법을 순서대로 적은 것이다.
     그리고 그 자료로 MpowerClassify 의 <b>복호화 연동을 실제로 시험하는 방법</b>(6장)까지 다룬다.</p>
     <div class="meta">
-      <span class="chip"><b>서버</b> 10.10.19.40 (테스트 서버)</span>
+      <span class="chip"><b>서버</b> MPOWER-SVR (테스트 서버)</span>
       <span class="chip"><b>작업 폴더</b> Rust\dist-onedir\windows\sample</span>
       <span class="chip"><b>실행 확인</b> 2026-10-12 · 6건</span>
       <span class="chip"><b>관련 설계</b> plan/엠파워v11-암호화문서-복호화연동-설계-20261012.html</span>
@@ -156,9 +156,15 @@
     <h3>필요한 것</h3>
     <ul class="plain">
       <li><b>웹 계정</b> — 문서를 올릴 엠파워 로그인 계정.</li>
-      <li><b>서버 SSH 계정</b> — <code class="inl">mpower@10.10.19.40</code>. 저장소 파일을 읽고 <code class="inl">/MOCOMSYS/MpowerScript/removeenc/</code> 에 파일을 쓸 수 있어야 한다.</li>
+      <li><b>서버 SSH 계정</b> — <code class="inl">mpower@MPOWER-SVR</code>. 저장소 파일을 읽고 <code class="inl">/MOCOMSYS/MpowerScript/removeenc/</code> 에 파일을 쓸 수 있어야 한다.</li>
       <li><b>PC</b> — Python, 그리고 <code class="inl">ssh</code> · <code class="inl">scp</code> 명령(윈도우 10/11 기본 포함, 또는 Git Bash).</li>
     </ul>
+    <div class="note">
+      <span class="badge">가명</span>
+      <p>이 문서의 서버 주소는 가명으로 적었다(저장소가 공개다). <b><code class="inl">MPOWER-SVR</code></b> = 엠파워 v11 테스트 서버,
+      <b><code class="inl">DEV-SVR</code></b> = 개발 · 빌드 서버(엠파워 없음). 실제 주소는 접속 정보 파일
+      <code class="inl">sample/enc_test/.env_v11</code>(엠파워 서버) · 프로젝트 최상위 <code class="inl">.env_vllm</code>(개발 서버)의 <code class="inl">SSH_SERVER</code> 에 있다 — 둘 다 git 에 올리지 않는다.</p>
+    </div>
 
     <h3>폴더 구성</h3>
     <pre>Rust\dist-onedir\windows\sample\
@@ -174,6 +180,8 @@
 │   ├─ check_result.py         <span class="cm">← ④ 분류 결과 점검 — 풀린 지문 = 원본 지문?</span>
 │   └─ make_wrong_list.py      <span class="cm">← ④ '틀린 열쇠' 시험용 목록 만들기</span>
 └─ enc\                        <span class="cm">← 암호화 파일 + filelist.jsonl (+ 시험 뒤 result.jsonl)</span></pre>
+    <p>리눅스 서버에서 시험할 자료는 <code class="inl">Rust\dist-onedir\linux\sample\</code> 에 같은 모양으로 있고,
+    <code class="inl">enc_test\</code> 에 <b>리눅스판 중계</b>(<code class="inl">relay_removeenc.sh</code> · <code class="inl">relay_removeenc_linux.py</code>)가 더 들어 있다(6-11).</p>
     <div class="note warn">
       <span class="badge">주의</span>
       <p><code class="inl">filelist.jsonl</code> 에는 파일을 풀 수 있는 <b>평문 열쇠(MRK)</b>가 들어간다. <b>테스트 서버와 더미 문서로만</b> 하고, 실제 업무 문서로 하지 않는다.
@@ -228,7 +236,7 @@ $l = Get-ChildItem -File | ForEach-Object { (Get-FileHash -LiteralPath $_.FullNa
   <section>
     <div class="sec-head"><span class="sec-num">02</span><h2>2단계 — 엠파워에 올리기</h2></div>
     <ol class="plain">
-      <li>브라우저로 <code class="inl">http://10.10.19.40/web/login/index.php</code> 에 접속해 로그인한다.</li>
+      <li>브라우저로 <code class="inl">http://MPOWER-SVR/web/login/index.php</code> 에 접속해 로그인한다.</li>
       <li>테스트용 폴더를 하나 정한다(이번에는 <b>내 폴더 / test</b>).</li>
       <li><code class="inl">enc_test\orig\</code> 의 파일을 모두 올린다.</li>
     </ol>
@@ -249,7 +257,7 @@ $l = Get-ChildItem -File | ForEach-Object { (Get-FileHash -LiteralPath $_.FullNa
   <section>
     <div class="sec-head"><span class="sec-num">03</span><h2>3단계 — 암호화 파일과 목록 받아 오기</h2></div>
     <p>PC 에서 아래 한 줄을 실행한다. 두 번째 인자는 1단계에서 정한 <b>접두어</b>다.</p>
-    <pre>python "D:\Project\MpowerClassify\Rust\dist-onedir\windows\sample\enc_test\fetch_enc.py" mpower@10.10.19.40 "분류테스트_"</pre>
+    <pre>python "D:\Project\MpowerClassify\Rust\dist-onedir\windows\sample\enc_test\fetch_enc.py" mpower@MPOWER-SVR "분류테스트_"</pre>
     <p>실행 중에 <b>비밀번호를 여러 번 묻는다</b>(파일 수 + 2번 — 이번에는 8번). 묻는 대로 입력한다.</p>
 
     <h3>스크립트가 하는 일</h3>
@@ -456,6 +464,11 @@ rm -f /tmp/dec_test.docx</pre></li>
 <pre>./MpowerClassify-rs --filelist /tmp/job/filelist.jsonl --simple --format jsonl --out /tmp/job/result.jsonl --json-errors</pre></li>
       <li>결과의 <code class="inl">hash</code> 가 <code class="inl">orig_sha256.txt</code> 의 값과 같으면 제대로 풀린 것이다. 끝난 뒤 임시 폴더(<code class="inl">/tmp/cso_dec_*</code>)가 남지 않았는지도 본다.</li>
     </ol>
+
+    <h3>③ 엠파워가 없는 리눅스 서버에서 — 리눅스판 중계로 (2026-10-16 추가)</h3>
+    <p>엠파워가 설치되지 않은 리눅스 서버(예: 개발 서버 DEV-SVR)에서도 윈도우와 같은 방식으로 시험할 수 있다 —
+    <code class="inl">--decrypt-cmd</code> 에 <b>Docker 판</b> <code class="inl">removeenc_docker.sh</code>(엠파워의 PHP·mpower.so 를 컨테이너에서 그대로 돌림, <b>6-12 · 권장</b>)나
+    <b>리눅스판 중계</b> <code class="inl">relay_removeenc.sh</code>(엠파워 서버로 보내 풂, <b>6-11</b>)를 준다. 2026-10-16 에 Docker 판으로 11건을 모두 풀어 원본 지문과 같음을 확인했다.</p>
 
     <h3>준비해 두면 좋은 시험 건</h3>
     <div class="twrap">
@@ -756,6 +769,9 @@ python -m csoclassify --filelist Rust\dist-onedir\windows\sample\enc\filelist.js
           <tr><td><code class="inl">error.rc</code> 가 <b>56</b> → 실행이 즉시 멈춤(<code class="inl">decrypt_unavailable</code>)</td><td>서버의 PHP 가 확장 <code class="inl">Mpower 64File</code> 을 읽지 못했다</td><td>엠파워 서버 설치를 점검한다(엠파워 담당자)</td></tr>
           <tr><td><code class="inl">error.rc</code> 가 <b>14</b></td><td>열쇠가 <code class="inl">v2:</code> 로 감싼 값이다</td><td>목록을 다시 뽑는다(3단계의 서버 스크립트가 벗겨 준다)</td></tr>
           <tr><td><code class="inl">error.detail</code> 이 <code class="inl">timeout</code></td><td>한 건이 60초를 넘겼다(망이 느리거나 파일이 크다)</td><td><code class="inl">--decrypt-timeout 180</code> 처럼 늘린다</td></tr>
+          <tr><td><code class="inl">error.kind</code> 가 <code class="inl">size_limit</code> · "복호화 전 크기가 상한을 넘어 풀지 않았습니다(… MAX_ARCHIVE_BYTES 등)"</td>
+              <td>풀린 뒤 적용될 상한을 넘어 <b>풀지 않았다</b>(도구를 부르지 않음). 상한은 원래 이름의 확장자로 고른다 — 압축 500MB · 텍스트 100MB · 그 밖 100MB, 크기는 <code class="inl">size</code>(원래 크기) 우선 <span class="cm">(2026-10-16 바뀜)</span></td>
+              <td>문장에 나온 옵션(<code class="inl">--max-archive-mb</code> · <code class="inl">--max-file-mb-text</code> · <code class="inl">--max-file-mb</code>)으로 올리거나 <code class="inl">--no-size-limit</code>. 시간 제한도 함께 늘린다</td></tr>
         </tbody>
       </table>
     </div>
@@ -763,6 +779,167 @@ python -m csoclassify --filelist Rust\dist-onedir\windows\sample\enc\filelist.js
       <span class="badge">주의</span>
       <p>중계는 <b>테스트 서버 · 더미 문서 전용</b>이다. 열쇠가 SSH 명령줄에 실리고, 풀린 문서가 망을 한 번 더 건넌다.
       운영에서는 엠파워 서버에서 MpowerClassify 를 직접 돌린다(5단계 ②) — 그때는 <code class="inl">--decrypt-cmd</code> 를 줄 필요도 없다.</p>
+    </div>
+
+    <h3 id="relay-linux">6-11. 리눅스 서버에서 중계로 시험하기 (2026-10-16 추가)</h3>
+    <p>엠파워가 없는 리눅스 서버(예: DEV-SVR)에서 <code class="inl">MpowerClassify-rs</code> 로 시험할 때 쓴다.
+    윈도우용 <code class="inl">relay_removeenc.cmd</code> 는 리눅스에서 돌지 않으므로(<code class="inl">@echo: command not found</code>), <b>리눅스판 중계</b>를 준다.
+    하는 일은 윈도우판과 같다 — 엠파워 서버(MPOWER-SVR)로 올려 <code class="inl">removeenc.sh</code> 로 풀고, 풀린 파일을 받아 온 뒤, 서버의 사본을 지운다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>파일 (<code class="inl">linux\sample\enc_test\</code>)</th><th>하는 일</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">relay_removeenc.sh</td><td><code class="inl">--decrypt-cmd</code> 에 주는 실행 래퍼. 지금 셸의 파이썬(<code class="inl">python3</code> → <code class="inl">python</code>, 또는 <code class="inl">RELAY_PYTHON</code>)으로 아래를 돌린다</td></tr>
+          <tr><td class="mono">relay_removeenc_linux.py</td><td>중계 본체. PuTTY 대신 <code class="inl">paramiko</code> 로 접속하고, <b>문서 한 건에 SSH 연결을 한 번만</b> 연다(윈도우판은 네 번)</td></tr>
+          <tr><td class="mono">.env_v11</td><td>접속 정보(<code class="inl">SSH_SERVER</code> · <code class="inl">SSH_USER_ID</code> · <code class="inl">SSH_USER_PWD</code>). 스크립트 옆 → <code class="inl">RELAY_ENV</code> 순으로 찾는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p><b>① 준비 (처음 한 번)</b> — <code class="inl">MpowerClassify-rs</code> 폴더에서</p>
+<pre><span class="cm"># 윈도우에서 옮겨 온 파일에는 실행 권한이 없다 — 없으면 시작 전에 1015 decrypt_cmd_missing 으로 멈춘다</span>
+chmod +x sample/enc_test/relay_removeenc.sh
+<span class="cm"># 중계가 쓰는 paramiko — 실행할 conda 환경에 설치한다(이미 있으면 '이미 설치됨'만 나온다)</span>
+conda activate bong
+python3 -m pip install paramiko
+<span class="cm"># 설치 확인 — 버전 번호(예: 4.0.0)가 나오면 된다</span>
+python3 -c "import paramiko; print(paramiko.__version__)"</pre>
+    <div class="note warn">
+      <span class="badge">주의</span>
+      <p><b><code class="inl">pip</code> 이 아니라 <code class="inl">python3 -m pip</code> 으로 설치한다.</b> 중계 래퍼(<code class="inl">relay_removeenc.sh</code>)는 셸의 <code class="inl">python3</code> 를 먼저 쓰므로,
+      이렇게 해야 바로 그 파이썬에 들어간다.<br>
+      <b>터미널에서 <code class="inl">!pip</code> 로 치지 않는다.</b> <code class="inl">!</code> 는 Jupyter 셀 문법이고, bash 에서는 "pip 으로 시작한 마지막 명령을 다시 실행"이 된다.
+      2026-10-16 에 <code class="inl">!pip install paramiko</code> 가 <code class="inl">pip install vllm install paramiko</code> 로 바뀌어 vllm 빌드 오류(<code class="inl">torch==2.13.0</code> 없음)가 났다.
+      이때 pip 은 설치 전체를 취소하므로 환경은 그대로다 — 위 명령으로 다시 하면 된다.</p>
+    </div>
+
+    <p><b>② 실행</b></p>
+<pre>./MpowerClassify-rs --filelist sample/enc/filelist.jsonl --json-errors <span class="hi">--decrypt-cmd sample/enc_test/relay_removeenc.sh</span> --decrypt-timeout 120 --daemon --simple</pre>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>인자</th><th>뜻</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">--decrypt-cmd …relay_removeenc.sh</td><td>복호화 도구로 리눅스판 중계를 쓴다</td></tr>
+          <tr><td class="mono">--decrypt-timeout 120</td><td>한 건마다 망을 오가므로 기본 60초보다 넉넉히 준다</td></tr>
+          <tr><td class="mono">--daemon</td><td>임베딩을 상주 서버에 맡긴다(없으면 띄운다)</td></tr>
+          <tr><td class="mono">--simple · --json-errors</td><td>결과는 간단형, 오류·상태는 기계가 읽는 JSON 한 줄로</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>목록(<code class="inl">sample/enc/filelist.jsonl</code>)의 <code class="inl">path</code> 는 <b>파일 이름만 적은 상대 경로</b>다(예: <code class="inl">F_f095df74….SMF</code>).
+    상대 경로는 실행 폴더가 아니라 <b>목록 파일이 있는 폴더</b> 기준으로 풀리므로, <code class="inl">sample/enc</code> 폴더째 옮기면 그대로 돈다.</p>
+
+    <p><b>③ 로그에서 보는 것</b> — 일반 로그(<code class="inl">log/class_YYYYMMDD.log</code>)에 문서마다 한 줄씩 남는다.</p>
+<pre><span class="cm"># 성공</span>
+복호화 성공 file=sample/enc/F_f095….SMF name=분류테스트_워드문서.docx tool=yes enc_mode=3 zip_mode=0 org_size=28367 stored_size=28367 dec_size=28367 tmp=/tmp/cso_dec_…/000010.docx elapsed=1468ms
+<span class="cm"># 실패 (사유는 reason, 도구 종료코드는 rc)</span>
+복호화 실패 file=sample/enc/F_1d2e….SMF name=분류테스트_pdf문서.pdf reason=removeenc_exit rc=2 enc_mode=3 zip_mode=0 org_size=1226050 stored_size=1226050 elapsed=41ms :: …</pre>
+
+    <p><b>④ 막혔을 때</b></p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>로그·화면</th><th>원인</th><th>해결</th></tr></thead>
+        <tbody>
+          <tr><td><code class="inl">rc=2</code> · <code class="inl">@echo: command not found</code></td><td>윈도우용 <code class="inl">relay_removeenc.cmd</code> 를 줬다</td><td><code class="inl">relay_removeenc.sh</code> 로 바꾼다</td></tr>
+          <tr><td>시작 전에 <code class="inl">1015 decrypt_cmd_missing</code> · "실행 권한이 없습니다"</td><td><code class="inl">relay_removeenc.sh</code> 에 실행 권한이 없다</td><td><code class="inl">chmod +x sample/enc_test/relay_removeenc.sh</code></td></tr>
+          <tr><td><code class="inl">rc=200</code> · "paramiko 가 없습니다"</td><td>중계가 쓰는 <code class="inl">python3</code> 에 paramiko 가 없다(다른 파이썬에 설치했거나 아직 안 했다)</td><td><code class="inl">conda activate bong</code> 뒤 <code class="inl">python3 -m pip install paramiko</code></td></tr>
+          <tr><td><code class="inl">!pip install paramiko</code> 뒤 <b>vllm 빌드 오류</b>(<code class="inl">torch==2.13.0</code> 없음)</td><td>bash 가 <code class="inl">!pip</code> 를 "마지막 pip 명령"으로 바꿔 <code class="inl">pip install vllm install paramiko</code> 가 돌았다</td><td><code class="inl">!</code> 없이 <code class="inl">python3 -m pip install paramiko</code>. 실패한 설치는 취소돼 환경은 그대로다</td></tr>
+          <tr><td><code class="inl">rc=200</code> · "python 을 찾지 못했습니다"</td><td>셸에 파이썬이 없다</td><td>conda 환경을 켜거나 <code class="inl">export RELAY_PYTHON=/경로/python</code></td></tr>
+          <tr><td><code class="inl">rc=200</code> · "서버에 연결하지 못했습니다"</td><td>이 서버에서 엠파워 서버의 SSH(22번)로 나갈 수 없다</td><td>방화벽·주소를 확인한다(<code class="inl">nc -zv MPOWER-SVR 22</code>)</td></tr>
+          <tr><td><code class="inl">rc=200</code> · "서버 호스트 키가 약속한 값과 다릅니다"</td><td>엠파워 서버가 다시 설치돼 키가 바뀌었거나, 다른 서버로 붙었다</td><td>서버가 바뀐 것이 맞는지 확인한 뒤 <code class="inl">relay_removeenc_linux.py</code> 의 <code class="inl">HOSTKEY</code> 를 바꾼다</td></tr>
+          <tr><td><code class="inl">rc=200</code> · "로그인하지 못했습니다"</td><td><code class="inl">.env_v11</code> 의 계정·비밀번호가 틀렸다</td><td><code class="inl">sample/enc_test/.env_v11</code> 의 세 값을 확인한다</td></tr>
+          <tr><td><code class="inl">reason=timeout</code></td><td>한 건이 제한 시간을 넘겼다</td><td><code class="inl">--decrypt-timeout</code> 을 더 늘린다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">
+      <span class="badge">확인한 것</span>
+      <p>2026-10-16 — 같은 스크립트를 PC 에서 엠파워 서버로 돌려, 워드 문서 한 건이 풀려 <b>원본 지문(<code class="inl">95e868ba…</code>)과 같음</b>,
+      인자 부족은 <code class="inl">254</code>, 틀린 열쇠는 <code class="inl">0</code>(분류기의 시그니처 검사가 잡는다)인 것을 확인했다.
+      DEV-SVR 에서 <code class="inl">MpowerClassify-rs</code> 와 함께 돌린 결과는 아직 이 문서에 적지 않았다.</p>
+    </div>
+
+    <h3 id="removeenc-docker">6-12. 엠파워 없는 리눅스 서버에서 진짜 removeenc 로 풀기 — Docker 판 (2026-10-16 추가 · 권장)</h3>
+    <p>중계(6-11)는 문서마다 엠파워 서버로 파일을 보냈다 받는다. Docker 판은 <b>엠파워 서버의 PHP 와 확장 <code class="inl">mpower.so</code> 를 그대로 가져와</b>
+    개발 서버(DEV-SVR) 안의 컨테이너에서 <code class="inl">removeenc.php</code> 를 돌린다. 엠파워 서버 접속도 파이썬도 필요 없고, 푸는 코드는 엠파워 서버와 똑같다.</p>
+
+    <p><b>왜 그냥 설치하지 못하나</b></p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>항목</th><th>MPOWER-SVR (엠파워)</th><th>DEV-SVR (개발)</th></tr></thead>
+        <tbody>
+          <tr><td>OS · glibc</td><td>Rocky Linux 8.10 · <b>2.28</b></td><td>CentOS 7 · <b>2.17</b></td></tr>
+          <tr><td>PHP</td><td>8.3.30 <b>ZTS</b> (<code class="inl">/MOCOMSYS/php-8.3.30</code>)</td><td>없음</td></tr>
+          <tr><td>확장</td><td><code class="inl">mpower.so</code> — <code class="inl">/MOCOMSYS/util83/lib</code> 의 라이브러리와 <code class="inl">MocoCrypto.so</code>(고정 경로로 직접 연다)가 필요</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><code class="inl">removeenc.php</code> 는 인자를 검사하고 <code class="inl">mpower_decrypt()</code> 한 줄을 부를 뿐이라, <b>PHP 8.3 ZTS + mpower.so + 의존 라이브러리</b>만 있으면 된다.
+    그런데 엠파워의 PHP 는 glibc 2.28 이 필요해 CentOS 7 에서 바로 돌지 않고, conda 의 PHP(8.5 · 비 ZTS)에는 이 확장이 올라가지 않는다.
+    SVN 에 있는 확장 소스는 v10(2020)판이라 다시 빌드해도 지금 서버와 같다는 보장이 없다. 그래서 <b>같은 glibc 의 Rocky 8 컨테이너</b>에서 엠파워 바이너리를 그대로 돌린다.</p>
+
+    <p><b>① 런타임 꾸러미 (한 번 만들어 두면 된다)</b> — <code class="inl">sample/enc_test/mpower_rt/</code> (약 150MB, 압축 44MB)</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>파일</th><th>가져온 곳 (MPOWER-SVR)</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">php</td><td><code class="inl">/MOCOMSYS/php-8.3.30/bin/php</code></td></tr>
+          <tr><td class="mono">mpower.so</td><td><code class="inl">/MOCOMSYS/php-8.3.30/lib/mpower.so</code> (확장 "Mpower 64File")</td></tr>
+          <tr><td class="mono">removeenc.php</td><td><code class="inl">/MOCOMSYS/MpowerScript/removeenc/removeenc.php</code></td></tr>
+          <tr><td class="mono">lib/</td><td><code class="inl">php</code> · <code class="inl">mpower.so</code> 가 쓰는 라이브러리 46개(<code class="inl">ldd</code> 로 고름, glibc 핵심은 빼고 컨테이너 것을 씀) + <code class="inl">/MOCOMSYS/util83/lib/MocoCrypto.so</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="cm" style="font-size:.9em">엠파워 서버에서는 읽기와 <code class="inl">/tmp</code> 쓰기만 했다. 꾸러미는 엠파워 제품 바이너리이므로 시험 서버 밖으로 돌리지 않는다.</p>
+
+    <p><b>② 준비 (처음 한 번)</b> — <code class="inl">MpowerClassify-rs</code> 폴더에서</p>
+<pre><span class="cm"># 실행 권한 — 윈도우에서 옮겨 온 파일에는 없다</span>
+chmod +x sample/enc_test/removeenc_docker.sh
+<span class="cm"># 엠파워 서버와 같은 glibc 2.28 을 주는 이미지. 실행 계정이 docker 그룹이어야 한다(id -nG)</span>
+docker pull rockylinux:8</pre>
+
+    <p><b>③ 실행</b></p>
+<pre>./MpowerClassify-rs --filelist sample/enc/filelist.jsonl --json-errors <span class="hi">--decrypt-cmd sample/enc_test/removeenc_docker.sh</span> --decrypt-timeout 120 --daemon --simple</pre>
+    <p><code class="inl">removeenc_docker.sh</code> 는 진짜 <code class="inl">removeenc.sh</code> 와 <b>같은 인자(<code class="inl">-s -t -k -e -z</code>)·같은 종료코드</b>를 쓰고, 끝에 종료코드를 한 줄 찍는 것까지 같다. 하는 일:</p>
+    <ol class="plain">
+      <li><code class="inl">-s</code> · <code class="inl">-t</code> 를 절대 경로로 바꾸고, 원본 폴더(읽기 전용)와 결과 폴더만 컨테이너에 붙인다</li>
+      <li>꾸러미의 <code class="inl">lib/</code> 를 컨테이너 안 <b><code class="inl">/MOCOMSYS/util83/lib</code></b> 에 붙인다 — 엠파워 PHP 의 RPATH 와 <code class="inl">MocoCrypto.so</code> 고정 경로가 서버와 똑같아진다</li>
+      <li><code class="inl">rockylinux:8</code> 를 <b>네트워크 없이</b>(<code class="inl">--network none</code>), <b>지금 계정 권한으로</b>(<code class="inl">--user</code>) 띄워
+        <code class="inl">php -n -d extension=mpower.so -f removeenc.php -- …</code> 를 돌린다(<code class="inl">php.ini</code> 없이 mpower 확장 하나만)</li>
+    </ol>
+
+    <p><b>④ 검증 결과 (2026-10-16, DEV-SVR)</b></p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>시험</th><th>결과</th></tr></thead>
+        <tbody>
+          <tr><td>한 건 손으로(워드 문서)</td><td class="ok">rc 0 · 0.55초 · 지문 <code class="inl">95e868ba…</code> = 원본 · 결과 파일 주인은 실행 계정</td></tr>
+          <tr><td>인자 부족</td><td class="ok">rc 254 — 진짜 removeenc 와 같다</td></tr>
+          <tr><td><code class="inl">filelist.jsonl</code> 11건 분류</td><td class="ok">복호화 10건(enc_mode 3) + 복사 1건(zip, 0/0) · <b>실패 0</b> · 풀린 문서 9건 모두 <b>원본 지문과 같음</b>(<code class="inl">check_result.py</code>) · 압축 2건(zip·7z)은 내부 문서로 펼쳐 분류 · 11건에 8.2초 · 남은 임시 폴더 0</td></tr>
+          <tr><td><code class="inl">filelist_wrong.jsonl</code> 5건(틀린 열쇠)</td><td class="ok">hwp·pptx·xlsx·docx 4건 <code class="inl">signature_mismatch</code>(도구는 rc 0) · txt 1건은 시그니처가 없어 통과했지만 <code class="inl">extract_failed</code> 로 등급 없음 — <b>잘못된 등급이 나온 문서 0</b></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>성공 로그 한 줄의 모양(문서마다 약 0.5초):</p>
+<pre>복호화 성공 file=sample/enc/F_1d2e….SMF name=분류테스트_pdf문서.pdf tool=yes enc_mode=3 zip_mode=0 org_size=1226050 stored_size=1226050 dec_size=1226050 tmp=… elapsed=546ms</pre>
+
+    <p><b>⑤ 막혔을 때</b></p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>로그·화면</th><th>원인</th><th>해결</th></tr></thead>
+        <tbody>
+          <tr><td>시작 전에 <code class="inl">1015 decrypt_cmd_missing</code> · "실행 권한이 없습니다"</td><td>래퍼에 실행 권한이 없다</td><td><code class="inl">chmod +x sample/enc_test/removeenc_docker.sh</code></td></tr>
+          <tr><td><code class="inl">rc=56</code> → 실행이 즉시 멈춤 · "런타임이 없습니다"</td><td><code class="inl">sample/enc_test/mpower_rt/</code> 가 없다(폴더를 PC 에서 다시 올리면 빠진다 — 꾸러미는 서버에만 있다)</td><td>꾸러미를 다시 둔다. 다른 곳에 뒀으면 <code class="inl">export MPOWER_RT=/경로/mpower_rt</code></td></tr>
+          <tr><td><code class="inl">rc=125</code> · "Unable to find image" 또는 "permission denied … docker.sock"</td><td>이미지가 없거나, 실행 계정이 docker 그룹이 아니다</td><td><code class="inl">docker pull rockylinux:8</code> / <code class="inl">id -nG</code> 에 <code class="inl">docker</code> 가 있는지</td></tr>
+          <tr><td>"Failed to load MOCOCypto dll /MOCOMSYS/util83/lib/MocoCrypto.so"</td><td><code class="inl">lib/MocoCrypto.so</code> 가 빠졌다(<code class="inl">ldd</code> 에 안 나오는 파일이다)</td><td>엠파워 서버의 <code class="inl">/MOCOMSYS/util83/lib/MocoCrypto.so</code> 를 <code class="inl">mpower_rt/lib/</code> 에 둔다</td></tr>
+          <tr><td>"PHP Startup: … unrecognised compile-time option bit(s)"</td><td><code class="inl">lib/</code> 를 <code class="inl">/MOCOMSYS/util83/lib</code> 가 아닌 곳에 붙여 컨테이너의 옛 PCRE 가 잡혔다</td><td>래퍼를 고치지 않고 그대로 쓴다(이 경로에 붙이는 것이 핵심이다)</td></tr>
+          <tr><td>엠파워 서버의 확장이 새 판으로 바뀐 뒤 결과가 다르다</td><td>꾸러미는 2026-07-10 빌드(<code class="inl">mpower.so</code>) 기준이다</td><td>①의 파일을 다시 가져와 꾸러미를 새로 만든다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note warn">
+      <span class="badge">주의</span>
+      <p>Docker 판도 <b>테스트 서버 · 더미 문서 전용</b>이다. 운영에서는 엠파워 서버에서 MpowerClassify 를 직접 돌리고 <code class="inl">--decrypt-cmd</code> 를 주지 않는다(5단계 ②).</p>
     </div>
   </section>
 
@@ -774,9 +951,9 @@ python -m csoclassify --filelist Rust\dist-onedir\windows\sample\enc\filelist.js
       <table>
         <thead><tr><th>증상</th><th>원인</th><th>해결</th></tr></thead>
         <tbody>
-          <tr><td><code class="inl">Host key for 10.10.19.40 has changed … Host key verification failed</code> <span class="src">(겪음)</span></td>
+          <tr><td><code class="inl">Host key for MPOWER-SVR has changed … Host key verification failed</code> <span class="src">(겪음)</span></td>
               <td>서버를 다시 설치해 서버의 신분증(호스트 키)이 바뀌었다. PC 에는 옛 것이 남아 있다</td>
-              <td>서버가 바뀐 것이 맞는지 확인한 뒤 <code class="inl">ssh-keygen -R 10.10.19.40</code> 로 옛 키를 지운다. 다음 접속에서 지문을 보고 <code class="inl">yes</code></td></tr>
+              <td>서버가 바뀐 것이 맞는지 확인한 뒤 <code class="inl">ssh-keygen -R MPOWER-SVR</code> 로 옛 키를 지운다. 다음 접속에서 지문을 보고 <code class="inl">yes</code></td></tr>
           <tr><td>공개 키를 등록했는데도 <code class="inl">Permission denied (publickey,…)</code> <span class="src">(겪음 · 미해결)</span></td>
               <td>확인하지 못했다. 흔한 원인은 홈 폴더·<code class="inl">.ssh</code> 권한, 키 줄 끝의 <code class="inl">\r</code>, SELinux 라벨</td>
               <td>키 없이 <b>비밀번호로 실행해도 된다</b>(이번에 그렇게 했다). 묻는 횟수만 늘어난다</td></tr>
@@ -811,7 +988,7 @@ python -m csoclassify --filelist Rust\dist-onedir\windows\sample\enc\filelist.js
       <li><b>엠파워</b> — 테스트 폴더의 문서를 지운다.</li>
     </ul>
     <pre><span class="cm"># 서버 스크립트 지우기</span>
-ssh mpower@10.10.19.40 "rm -f /MOCOMSYS/MpowerScript/removeenc/export_filelist.php"</pre>
+ssh mpower@MPOWER-SVR "rm -f /MOCOMSYS/MpowerScript/removeenc/export_filelist.php"</pre>
   </section>
 
   <footer>

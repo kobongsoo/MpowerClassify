@@ -220,11 +220,30 @@ fn 목록의_열쇠로_풀어서_분류하고_임시파일을_지운다() {
     let stdout = String::from_utf8_lossy(&o.stdout);
     assert!(!stdout.contains("noise"), "도구의 출력이 stdout 에 섞였다");
     assert_eq!(status(&o).0, "success");
-    // 열쇠와 임시 경로는 결과·로그 어디에도 없다.
+    // 열쇠는 결과·로그 어디에도 없다. 임시 경로는 '복호화 성공' 줄에만 일부러 남긴다
+    // (2026-10-15 요청) — 그 밖의 줄에는 없어야 한다.
+    let mut ok_lines: Vec<String> = vec![];
     for (what, text) in [("결과", env.result_text()), ("로그", env.all_logs())] {
         assert!(!text.contains(GOOD), "{}에 열쇠가 남았다", what);
-        assert!(!text.contains("cso_dec_"), "{}에 임시 경로가 남았다", what);
+        ok_lines.extend(text.lines().filter(|l| l.contains("복호화 성공")).map(String::from));
+        let others: Vec<&str> = text.lines().filter(|l| !l.contains("복호화 성공")).collect();
+        assert!(!others.join("\n").contains("cso_dec_"), "{}에 임시 경로가 남았다", what);
     }
+    // 성공 줄은 목록의 세 문서(a·b·c)마다 하나씩 — 모드와 임시 경로, 도구 사용 여부가 실린다.
+    assert_eq!(ok_lines.len(), 3, "{:?}", ok_lines);
+    let la = ok_lines.iter().find(|l| l.contains("F_aaaa.SMF")).expect("a 의 성공 줄");
+    assert!(la.contains("enc_mode=3") && la.contains("zip_mode=0") && la.contains("tool=yes"), "{}", la);
+    assert!(la.contains("tmp=") && la.contains("cso_dec_"), "{}", la);
+    // 가짜 도구의 암호는 바이트 XOR 이라 풀린 크기와 저장 크기가 본문 길이와 같다.
+    let want = format!("stored_size={0} dec_size={0}", BODY_A.len());
+    assert!(la.contains(&want), "{}", la);
+    // a 는 목록에 size 가 있다 — DB 원본 크기(org_size)가 함께 실린다.
+    assert!(la.contains(&format!("org_size={} stored_size=", BODY_A.len())), "{}", la);
+    let lc = ok_lines.iter().find(|l| l.contains("F_cccc.SMF")).expect("c 의 성공 줄");
+    assert!(lc.contains("tool=no(copy)") && lc.contains("enc_mode=0"), "{}", lc);
+    assert!(lc.contains(&want), "{}", lc);
+    // c 는 목록에 size 가 없다 — org_size 칸 자체가 없어야 한다.
+    assert!(!lc.contains("org_size="), "{}", lc);
 }
 
 #[test]
@@ -259,6 +278,16 @@ fn 틀린_열쇠로_풀린_결과는_분류하지_않는다() {
     assert!(rb.get("error").is_none(), "{}", rb);
     assert_eq!(rb["hash"].as_str().unwrap(), sha256(BODY_A.as_bytes()));
     env.assert_tmp_clean();
+    // 실패 줄도 성공 줄과 같은 칸을 싣는다 — 틀린 열쇠라 크기는 셋 다 같고 사유만 다르다.
+    let n = pdf.len();
+    let logs = env.all_logs();
+    let fail = logs.lines().find(|l| l.contains("복호화 실패") && l.contains("F_pdf.SMF"))
+        .expect("실패 줄이 로그에 없다");
+    let want = format!("name=보고서.pdf reason=signature_mismatch rc=0 enc_mode=3 zip_mode=0 \
+                        org_size={0} stored_size={0} dec_size={0} elapsed=", n);
+    assert!(fail.contains(&want), "{}", fail);
+    // 실패한 결과물은 지웠으므로 임시 경로를 싣지 않는다.
+    assert!(!fail.contains("cso_dec_"), "{}", fail);
 }
 
 #[test]
@@ -403,6 +432,34 @@ fn 단일_파일은_decrypt_를_줄_때만_푼다() {
 }
 
 #[test]
+fn 단일_파일의_size_는_주면_견주고_안_주면_건너뛴다() {
+    let env = Env::new("single_size");
+    let enc = env.store("F_size.SMF", &encrypt(BODY_A.as_bytes()));
+    let ok = BODY_A.len().to_string();
+    let wrong = (BODY_A.len() + 1).to_string();
+    let keys = ["--file", enc.as_str(), "--decrypt", "--mrk", GOOD, "--enc-mode", "3", "--zip-mode", "0",
+                "--name", "메모.txt"];
+    // 맞는 크기 — 그대로 분류된다.
+    let (o, recs) = env.run(&[&keys[..], &["--size", ok.as_str()]].concat());
+    assert_eq!(o.status.code(), Some(0), "stderr={}", String::from_utf8_lossy(&o.stderr));
+    assert!(rec_of(&recs, &enc).get("error").is_none());
+    // --size 로 준 값이 성공 줄의 org_size 로 남는다.
+    assert!(env.all_logs().contains(&format!("org_size={} stored_size=", ok)), "성공 줄에 org_size 가 없다");
+    // 틀린 크기 — 분류하지 않고 size_mismatch 로 남긴다(잘린 결과·덜 풀린 압축을 잡는 자리).
+    let (o, recs) = env.run(&[&keys[..], &["--size", wrong.as_str()]].concat());
+    assert_eq!(o.status.code(), Some(1), "stderr={}", String::from_utf8_lossy(&o.stderr));
+    let x = rec_of(&recs, &enc);
+    assert!(x["grade"].is_null(), "{}", x);
+    assert_eq!(x["error"]["kind"], "decrypt_failed");
+    assert_eq!(x["error"]["detail"], "size_mismatch");
+    // 실패 줄에 DB 원본 크기(org_size)와 실제 결과 크기(dec_size)가 나란히 남는다.
+    let want = format!("reason=size_mismatch rc=0 enc_mode=3 zip_mode=0 \
+                        org_size={} stored_size={} dec_size={} elapsed=", wrong, ok, ok);
+    assert!(env.all_logs().contains(&want), "실패 줄 모양이 다르다: {}", want);
+    env.assert_tmp_clean();
+}
+
+#[test]
 fn 인자_조합이_틀리면_시작_전에_끝낸다() {
     let env = Env::new("args");
     let enc = env.store("F_x.SMF", &encrypt(BODY_A.as_bytes()));
@@ -419,6 +476,11 @@ fn 인자_조합이_틀리면_시작_전에_끝낸다() {
         // 감싼 열쇠.
         vec!["--file", &enc, "--decrypt", "--mrk", "v2:XXXX", "--enc-mode", "3", "--zip-mode", "0"],
         vec!["--file", &enc, "--decrypt", "--no-decrypt", "--mrk", GOOD, "--enc-mode", "3", "--zip-mode", "0"],
+        // --size 만 주고 --decrypt 가 없다.
+        vec!["--file", &enc, "--size", "100"],
+        // --size 가 정수가 아니다.
+        vec!["--file", &enc, "--decrypt", "--mrk", GOOD, "--enc-mode", "3", "--zip-mode", "0", "--size", "abc"],
+        vec!["--file", &enc, "--decrypt", "--mrk", GOOD, "--enc-mode", "3", "--zip-mode", "0", "--size", "1.5"],
     ];
     for args in cases {
         let (o, recs) = env.run(&args);
@@ -486,6 +548,90 @@ fn 풀린_압축파일은_내부_문서로_펼친다() {
         assert_eq!(agg["archive"], true, "{}", agg);
     }
     assert!(!env.result_text().contains("cso_dec_"), "결과에 임시 경로가 남았다");
+    env.assert_tmp_clean();
+}
+
+// 복호화 전 크기 상한 — 풀린 뒤 상한과 같게 고른다(plan/엠파워v11-복호화-크기상한-정합-설계-20261016.html §7).
+// 파이썬 판 같은 시험이 tests/test_decrypt.py 에 있다.
+#[test]
+fn 암호화_압축은_압축_상한으로_거른다() {
+    let env = Env::new("prelimit_zip");
+    let zdata = make_zip();
+    let a = env.store("F_bigzip.SMF", &encrypt(&zdata));
+    let list = env.filelist(&[serde_json::json!({"path": a, "sfile_id": "SZ", "mrk": GOOD, "enc_mode": 3,
+                                                 "zip_mode": 0, "name": "묶음.zip", "size": zdata.len()})]);
+    // 일반 상한을 '안의 문서 < 상한 < zip' 로 낮춘다 — 예전에는 zip 이 일반 상한에 걸려 풀지도 않았다.
+    let lim = BODY_A.len() + 40;
+    assert!(zdata.len() > lim);
+    let mb = format!("{:.10}", lim as f64 / 1048576.0);
+    let (o, recs) = env.run(&["--filelist", &list, "--max-file-mb", &mb]);
+    assert_eq!(o.status.code(), Some(0), "stderr={}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(rec_of(&recs, &format!("{}/inner_a.txt", a))["hash"].as_str().unwrap(), sha256(BODY_A.as_bytes()));
+    assert_eq!(rec_of(&recs, &a)["archive"], true);
+    env.assert_tmp_clean();
+}
+
+#[test]
+fn 암호화_텍스트는_텍스트_상한으로_거른다() {
+    let env = Env::new("prelimit_txt");
+    let t = env.store("F_txt.SMF", &encrypt(BODY_A.as_bytes()));
+    let h = env.store("F_hwp.SMF", &encrypt(BODY_A.as_bytes()));
+    let list = env.filelist(&[
+        serde_json::json!({"path": t, "sfile_id": "ST", "mrk": GOOD, "enc_mode": 3, "zip_mode": 0,
+                           "name": "메모.txt", "size": BODY_A.len()}),
+        serde_json::json!({"path": h, "sfile_id": "SH", "mrk": GOOD, "enc_mode": 3, "zip_mode": 0,
+                           "name": "보고서.hwp", "size": BODY_A.len()}),
+    ]);
+    // 일반 상한은 아주 작게, 텍스트 상한은 넉넉히 — 텍스트만 통과해야 한다.
+    let (_, recs) = env.run(&["--filelist", &list, "--max-file-mb", "0.00001", "--max-file-mb-text", "1"]);
+    let rt = rec_of(&recs, &t);
+    assert!(rt.get("error").is_none(), "{}", rt);
+    assert_eq!(rt["hash"].as_str().unwrap(), sha256(BODY_A.as_bytes()));
+    let rh = rec_of(&recs, &h);
+    assert_eq!(rh["error"]["kind"], "size_limit", "{}", rh);
+    let why = rh["error"]["reason"].as_str().unwrap_or("");
+    assert!(why.contains("MAX_FILE_BYTES") && why.contains("--max-file-mb"), "{}", why);
+    env.assert_tmp_clean();
+}
+
+#[test]
+fn 원래_크기가_있으면_그_크기로_거르고_no_size_limit_이면_끈다() {
+    let env = Env::new("prelimit_org");
+    let t = env.store("F_org.SMF", &encrypt(BODY_A.as_bytes()));
+    // 원래 크기를 1GB 로 적는다 — 저장본은 작아도 원래 크기가 텍스트 상한(100MB)을 넘는다.
+    let list = env.filelist(&[serde_json::json!({"path": t, "sfile_id": "SO", "mrk": GOOD, "enc_mode": 3,
+                                                 "zip_mode": 0, "name": "메모.txt", "size": 1_000_000_000u64})]);
+    let (_, recs) = env.run(&["--filelist", &list]);
+    let x = rec_of(&recs, &t);
+    assert_eq!(x["error"]["kind"], "size_limit", "{}", x);
+    let why = x["error"]["reason"].as_str().unwrap_or("");
+    assert!(why.contains("org_size") && why.contains("MAX_FILE_BYTES_TEXT"), "{}", why);
+    // --no-size-limit 이면 앞 상한이 꺼져 풀어 본다 — 그러면 크기 검사(verify)가 어긋남을 잡는다.
+    let (_, recs) = env.run(&["--filelist", &list, "--no-size-limit"]);
+    let x = rec_of(&recs, &t);
+    assert_eq!(x["error"]["kind"], "decrypt_failed", "{}", x);
+    assert_eq!(x["error"]["detail"], "size_mismatch", "{}", x);
+    env.assert_tmp_clean();
+}
+
+#[test]
+fn text_only_도_복호화_전_크기_상한을_본다() {
+    // 예전에는 이 경로에 앞 검사가 없어 큰 문서를 다 푼 뒤 버렸다 — 이제 풀지 않고 멈춘다.
+    let env = Env::new("prelimit_textonly");
+    let enc = env.store("F_t.SMF", &encrypt(BODY_A.as_bytes()));
+    let tool = fake_tool();
+    let o = Command::new(env!("CARGO_BIN_EXE_MpowerClassify-rs"))
+        .args(["--text-only", "--file", &enc, "--decrypt", "--mrk", GOOD,
+               "--enc-mode", "3", "--zip-mode", "0", "--name", "보고서.hwp",
+               "--max-file-mb", "0.00001",
+               "--decrypt-cmd", tool.to_str().unwrap(),
+               "--decrypt-tmp", env.tmp().to_str().unwrap(), "--json-errors"])
+        .env("CSOCLASSIFY_LOGDIR", env.dir.join("log"))
+        .output().unwrap();
+    assert_eq!(o.status.code(), Some(1), "stderr={}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(status(&o).0, "decrypt_failed");
+    let logs = env.all_logs();
+    assert!(logs.contains("reason=size_limit") && logs.contains("MAX_FILE_BYTES"), "{}", logs);
     env.assert_tmp_clean();
 }
 
