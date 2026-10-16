@@ -657,7 +657,7 @@ if ($srcFileSize == 0 || (<span class="hi">$encMode == 0 &amp;&amp; $zipMode == 
     </ul>
     <div class="note info">
       <span class="badge">범위</span>
-      <p>위 세 가지는 <b>소스로 확인</b>한 것이다. 접속 서버(10.10.19.40)의 실제 DB 에 어떤 ENC_MODE·ZIP_MODE 조합이 있는지, 볼륨이 로컬인지 S3 인지는 웹 화면으로는 볼 수 없어 확인하지 못했다(DB 조회가 필요하다).</p>
+      <p>위 세 가지는 <b>소스로 확인</b>한 것이다. 접속 서버(MPOWER-SVR)의 실제 DB 에 어떤 ENC_MODE·ZIP_MODE 조합이 있는지, 볼륨이 로컬인지 S3 인지는 웹 화면으로는 볼 수 없어 확인하지 못했다(DB 조회가 필요하다).</p>
     </div>
   </section>
 
@@ -734,7 +734,7 @@ if ($srcFileSize == 0 || (<span class="hi">$encMode == 0 &amp;&amp; $zipMode == 
               <td class="ok">두 판 모두 통과</td></tr>
           <tr><td>끝난 뒤 임시 폴더가 비어 있는가 · 열쇠와 임시 경로가 결과·로그에 없는가</td><td class="ok">두 판 모두 통과</td></tr>
           <tr><td>기존 시험(회귀)</td><td class="ok">Rust 305건 · Python 1,052건 통과</td></tr>
-          <tr><td>테스트 서버(10.10.19.40)에서 받은 <b>실제 암호화 파일 6건</b>, 윈도우 배포 exe</td>
+          <tr><td>테스트 서버(MPOWER-SVR)에서 받은 <b>실제 암호화 파일 6건</b>, 윈도우 배포 exe</td>
               <td>둘 다 0 인 zip 은 도구 없이 내부 문서 3건으로 펼쳐 분류됨. 암호화된 5건은 가짜 도구가 못 풀어 hwp·docx·xlsx·pptx 는 <code class="inl">signature_mismatch</code>, txt 는 추출 실패로 걸러짐(등급 없음)</td></tr>
           <tr><td><b>진짜 <code class="inl">removeenc.sh</code> 로 푼 결과</b> — 윈도우 exe 가 중계 스크립트(<code class="inl">sample/enc_test/relay_removeenc.cmd</code>)로 테스트 서버의 도구를 부름</td>
               <td><b class="ok">확인함(2026-10-12)</b>. 암호화된 5건(hwp · docx · xlsx · pptx · txt) 모두 풀렸고 결과의 <code class="inl">hash</code> 가 원본 지문과 같다. 복호화 5건 · 실패 0, 끝난 뒤 임시 폴더 비어 있음, 결과·로그에 열쇠와 임시 경로 없음. Python 판도 같은 결과(5건 일치)</td></tr>

@@ -13,6 +13,8 @@
      무작위 바이트를 낼 수 있다(엠파워 removeenc.php 주석, 2026-09-29 실측).
      그것을 분류하면 기밀 문서가 낮은 등급으로 기록된다. 앞머리(시그니처)를 본다.
   3. 열쇠와 임시 경로는 흔적을 남기지 않는다 — 로그·결과·오류 어디에도 쓰지 않는다.
+     (예외: 문서별 '복호화 성공' 로그 한 줄에만 임시 경로를 남긴다 — 운영자가
+      어느 문서가 어디에 풀렸는지 추적하려는 요청(2026-10-15). 열쇠는 여전히 안 남긴다.)
 
 [Rust 판과의 관계] Rust/src/decrypt.rs 와 같은 계약이다(같은 옵션 · 같은 사유 이름 ·
 같은 오류 번호). 한쪽만 고치면 같은 목록이 두 판에서 다르게 처리된다.
@@ -103,6 +105,8 @@ class DecInfo:
 # -필드: rc      = removeenc 종료코드(부르지 않았으면 None)
 # -필드: message = 사람이 읽는 문장(열쇠·임시 경로는 들어가지 않는다)
 # -필드: fatal   = True 면 '환경 문제' — 다음 문서도 똑같이 실패하므로 실행을 멈춘다
+# -필드: dec_size = 실패한 복호화 결과의 크기(바이트). 결과 파일이 있었을 때만 값이 있다 —
+#                   실패 결과물은 곧바로 지우므로, 지우기 전에 재서 실패 로그로 넘긴다
 #------------------------------------------------------------------
 class DecError(Exception):
     def __init__(self, reason, message, rc=None, fatal=False):
@@ -111,6 +115,7 @@ class DecError(Exception):
         self.message = message
         self.rc = rc
         self.fatal = fatal
+        self.dec_size = None
 
 
 #------------------------------------------------------------------
@@ -291,6 +296,85 @@ def safe_ext(name):
     return ext.lower()
 
 
+# 복호화 전 크기 검사에서 '압축'으로 볼 확장자 — 풀린 뒤 펼치기(MAX_ARCHIVE_BYTES)를 받는 종류.
+# docx·xlsx·pptx·hwpx 는 속이 zip 이어도 문서 1개라 넣지 않는다. egg·alz 는 펼치기를 지원하지 않아 뺀다.
+# [Rust 판과의 관계] Rust/src/decrypt.rs 의 PRE_ARCHIVE_EXTS 와 같아야 한다.
+PRE_ARCHIVE_EXTS = frozenset(["zip", "7z", "rar", "tar", "tgz", "gz", "bz2", "tbz2", "xz", "txz"])
+# '텍스트 계열'로 볼 확장자 — 풀린 뒤 추출기의 텍스트 상한(MAX_FILE_BYTES_TEXT)을 받는 종류.
+# [Rust 판과의 관계] Rust/src/decrypt.rs 의 PRE_TEXT_EXTS 와 같아야 한다.
+PRE_TEXT_EXTS = frozenset(["txt", "csv", "tsv", "json", "jsonl", "log", "md", "xml", "html", "htm"])
+
+# 상한 이름 → 사람이 바꿀 때 쓰는 옵션(오류 문장의 안내용).
+_LIMIT_HINT = {
+    "MAX_ARCHIVE_BYTES": "--max-archive-mb",
+    "MAX_FILE_BYTES_TEXT": "--max-file-mb-text",
+    "MAX_FILE_BYTES": "--max-file-mb",
+}
+
+
+#------------------------------------------------------------------
+# 복호화 전 크기 검사 — 상한을 인자로 받는 속함수(시험용으로 따로 둔다)
+#=> 풀기 전에 '풀린 뒤 실제로 적용될 상한'을 미리 골라, 넘으면 풀지 않는다.
+#   설계: plan/엠파워v11-복호화-크기상한-정합-설계-20261016.html §4
+#    1) 판단 크기: 원래 크기(org_size)가 있으면 그것, 없으면 저장 파일 크기(stored_size)
+#       — 원래 크기는 verify 가 풀린 결과와 같은지 보는 값이라 곧 '풀린 뒤 크기'다
+#    2) 원래 이름의 확장자로 상한을 고른다: 압축 → 압축 상한, 텍스트 → 텍스트 상한,
+#       그 밖·이름 없음 → 일반 상한(지금까지와 같음)
+#    3) 고른 상한이 0 이하면 검사하지 않는다(--no-size-limit 이 세 상한을 모두 0 으로 만든다)
+#
+# -in: name          = 원래 파일 이름(없으면 None)
+# -in: org_size      = 엠파워 DB 의 원래 크기(바이트, 없으면 None)
+# -in: stored_size   = 저장 파일(.SMF) 크기(바이트)
+# -in: lim_archive   = 압축 상한(바이트, 0 이하면 상한 없음)
+# -in: lim_text      = 텍스트 상한(바이트, 0 이하면 상한 없음)
+# -in: lim_file      = 일반 상한(바이트, 0 이하면 상한 없음)
+#
+# -out: None = 통과(풀어도 된다) / DecError("size_limit") = 풀지 않는다
+# -out: error = 예외 없음(실패는 반환값으로 알린다)
+#------------------------------------------------------------------
+def pre_size_limit_with(name, org_size, stored_size, lim_archive, lim_text, lim_file):
+    # 원래 크기가 있으면 그것이 풀린 뒤 크기다 — zip_mode 압축·enc_mode 26 머리에 흔들리지 않는다.
+    if org_size is not None:
+        basis, size = "org_size", int(org_size)
+    else:
+        basis, size = "stored_size", int(stored_size or 0)
+    # 풀기 전에는 내용이 암호문이라 내용 판별을 못 한다 — 원래 이름의 확장자로 종류를 고른다.
+    ext = safe_ext(name)
+    if ext in PRE_ARCHIVE_EXTS:
+        limit, which = lim_archive, "MAX_ARCHIVE_BYTES"
+    elif ext in PRE_TEXT_EXTS:
+        limit, which = lim_text, "MAX_FILE_BYTES_TEXT"
+    else:
+        limit, which = lim_file, "MAX_FILE_BYTES"
+    # 0 이하는 '상한 없음' — --no-size-limit 이면 세 상한이 모두 0 이라 여기서 통과한다.
+    if not limit or limit <= 0 or size <= limit:
+        return None
+    return DecError(
+        "size_limit",
+        f"복호화 전 크기가 상한을 넘어 풀지 않았습니다({basis} {size}바이트 > {limit}바이트, {which}) — "
+        f"{_LIMIT_HINT[which]} 로 조정할 수 있습니다")
+
+
+#------------------------------------------------------------------
+# 복호화 전 크기 검사 — 지금 실행의 상한(config)으로 판정하는 겉함수
+#=> 분류 루프가 부르는 쪽이다. 상한은 --max-file-mb · --max-file-mb-text · --max-archive-mb ·
+#   --no-size-limit 이 config 에 새겨 둔 값을 그대로 읽는다.
+#
+# -in: name        = 원래 파일 이름(없으면 None)
+# -in: org_size    = 엠파워 DB 의 원래 크기(없으면 None)
+# -in: stored_size = 저장 파일(.SMF) 크기
+#
+# -out: None = 통과 / DecError("size_limit") = 풀지 않는다
+# -out: error = 예외 없음
+#------------------------------------------------------------------
+def pre_size_limit(name, org_size, stored_size):
+    # 순환 import 를 피하려고 여기서 가져온다(config 는 가벼운 모듈이다).
+    from . import config
+    return pre_size_limit_with(name, org_size, stored_size,
+                               config.MAX_ARCHIVE_BYTES, config.MAX_FILE_BYTES_TEXT,
+                               config.MAX_FILE_BYTES)
+
+
 #------------------------------------------------------------------
 # 풀린 결과가 진짜 문서인가 — "성공"을 한 번 더 확인한다
 #=> 도구가 0 을 돌려줘도 아래 셋을 본다(설계 §6).
@@ -405,6 +489,8 @@ def _first_message_line(stdout, stderr):
 #    1) 풀린 파일 경로 → 원래 경로
 #    2) 그 문서 전용 폴더(압축에서 펼친 내부 문서) → 원래 경로
 #    3) 그래도 남은 임시 뿌리 → "<복호화 임시>"
+#   단, 로그 레코드에 keep_tmp=True 가 붙어 있으면(= '복호화 성공' 줄) 일부러
+#   임시 경로를 남기는 줄이므로 손대지 않는다.
 #
 # -필드: sess = 임시 경로와 원래 경로의 짝을 쥔 Session
 #------------------------------------------------------------------
@@ -422,6 +508,9 @@ class _TmpPathFilter(logging.Filter):
     # -out: error = 예외 없음(실패하면 원래 줄 그대로 둔다)
     #--------------------------------------------------------------
     def filter(self, record):
+        # '복호화 성공' 줄은 임시 경로를 남기려고 쓴 것이다 — 바꾸지 않고 그대로 통과시킨다.
+        if getattr(record, "keep_tmp", False):
+            return True
         try:
             msg = record.getMessage()
         except Exception:
@@ -531,10 +620,16 @@ class Session:
                 verify(file, name, size, None, allow_empty=(src_len == 0))
                 tool = False
             else:
+                # 암호화된 문서=>removeenc.sh 실행.
                 rc = self._run_tool(src, file, info)
                 verify(file, name, size, rc)
                 tool = True
-        except DecError:
+        except DecError as e:
+            # 지우기 전에 결과 크기를 재 둔다 — 실패 로그에서 원래 크기와 견줘 볼 수 있게.
+            try:
+                e.dec_size = os.path.getsize(file)
+            except OSError:
+                pass
             # 실패한 결과물(무작위 바이트일 수 있다)을 남기지 않는다.
             shutil.rmtree(d, ignore_errors=True)
             raise

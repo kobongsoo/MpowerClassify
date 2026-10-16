@@ -214,6 +214,9 @@ def build_parser():
     p.add_argument("--name", dest="dec_name", default=None, metavar="이름",
                    help="[엠파워 v11] 원래 파일 이름(확장자 판별 · 파일명 신호). "
                         "저장 이름에는 확장자도 뜻도 없어서 주기를 권한다")
+    p.add_argument("--size", dest="dec_size", default=None, metavar="바이트",
+                   help="[엠파워 v11] 원래 파일 크기(바이트). 주면 풀린 결과의 크기가 이 값과 "
+                        "같은지 본다(잘린 결과·덜 풀린 압축을 잡는다). 안 주면 크기 검사를 건너뛴다")
     p.add_argument("--decrypt-cmd", dest="decrypt_cmd", default=None, metavar="경로",
                    help="[엠파워 v11] 복호화 도구 경로(환경변수 CSOCLASSIFY_DECRYPT_CMD, "
                         "기본 /MOCOMSYS/MpowerScript/removeenc/removeenc.sh)")
@@ -683,14 +686,45 @@ class _DecPlan:
 # -필드: label = 문서 경로(목록의 path 와 같은 표기)
 # -필드: plan  = 그 문서의 복호화 계획(_DecPlan)
 # -필드: err   = 실패 사유(decrypt.DecError)
+# -필드: stored_size = 저장 파일(.SMF) 크기(바이트, 못 재면 0)
+# -필드: elapsed_ms  = 이 문서를 다루기 시작해 실패할 때까지 걸린 시간(ms)
 #------------------------------------------------------------------
 class _DecFailed:
-    __slots__ = ("label", "plan", "err")
+    __slots__ = ("label", "plan", "err", "stored_size", "elapsed_ms")
 
-    def __init__(self, label, plan, err):
+    def __init__(self, label, plan, err, stored_size=0, elapsed_ms=0):
         self.label = label
         self.plan = plan
         self.err = err
+        self.stored_size = stored_size
+        self.elapsed_ms = elapsed_ms
+
+
+#------------------------------------------------------------------
+# 복호화 실패 로그 한 줄 만들기
+#=> 성공 줄과 같은 칸을 같은 차례로 싣는다 — 두 줄을 나란히 놓고 견줄 수 있게.
+#    1) file · name · reason(사유 이름) · rc(도구 종료코드, 부르지 않았으면 "-")
+#    2) enc_mode · zip_mode — 열쇠 칸이 잘못돼 해석하지 못했으면 "-"
+#    3) org_size(DB 원본 크기, 받았을 때만) · stored_size · dec_size(결과 파일이 있었을 때만)
+#    4) elapsed, 그리고 ' :: ' 뒤에 사람이 읽는 문장
+#   임시 경로(tmp)는 싣지 않는다 — 실패한 결과물은 이미 지워졌다. 열쇠도 싣지 않는다.
+#
+# -in: item = _DecFailed
+#
+# -out: str = 로그에 남길 한 줄(앞의 시각·PID 는 로거가 붙인다)
+# -out: error = 예외 없음
+#------------------------------------------------------------------
+def _dec_fail_line(item):
+    plan, e = item.plan, item.err
+    info = plan.info
+    org = f"org_size={plan.size} " if plan.size is not None else ""
+    dec = f"dec_size={e.dec_size} " if e.dec_size is not None else ""
+    return (f"복호화 실패 file={item.label} name={plan.name or '-'} reason={e.reason} "
+            f"rc={'-' if e.rc is None else e.rc} "
+            f"enc_mode={info.enc_mode if info is not None else '-'} "
+            f"zip_mode={info.zip_mode if info is not None else '-'} "
+            f"{org}stored_size={item.stored_size} {dec}elapsed={item.elapsed_ms}ms "
+            f":: {e.message}")
 
 
 #------------------------------------------------------------------
@@ -735,6 +769,26 @@ def _cli_dec_info(args):
 
 
 #------------------------------------------------------------------
+# 명령줄로 받은 원래 크기(--size) → 정수
+#=> 목록의 size 칸과 같은 뜻이다. 0 이상의 정수만 받는다(앞뒤 공백은 무시).
+#
+# -in: args = 파싱된 인자
+#
+# -out: int 또는 None = 원래 크기(바이트). --size 를 안 줬으면 None(크기 검사 건너뜀)
+# -out: error = 숫자가 아니거나 음수면 ValueError
+#------------------------------------------------------------------
+def _cli_dec_size(args):
+    raw = getattr(args, "dec_size", None)
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    # "1,024" · "-1" · "1.5" 같은 값은 받지 않는다 — 크기를 잘못 주면 멀쩡한 문서가 실패로 남는다.
+    if not s.isdigit():
+        raise ValueError(f"--size 는 0 이상의 정수(바이트)여야 합니다: {raw}")
+    return int(s)
+
+
+#------------------------------------------------------------------
 # --decrypt 관련 인자 조합 검사 — 문서를 읽기 전에 끝낸다
 #=> "풀릴 줄 알았는데 안 풀린" 상태를 만들지 않는다(설계 §4 표). Rust 판 check_decrypt_args 와 같다.
 #    1) 열쇠·이름만 주고 --decrypt 를 안 주면 오류
@@ -756,8 +810,8 @@ def check_decrypt_args(args):
     has_keys = (args.mrk is not None or args.enc_mode is not None
                 or args.zip_mode is not None)
     if not args.decrypt:
-        if has_keys or args.dec_name is not None:
-            return bad("--mrk · --enc-mode · --zip-mode · --name 은 --decrypt 와 함께 써야 합니다.\n"
+        if has_keys or args.dec_name is not None or args.dec_size is not None:
+            return bad("--mrk · --enc-mode · --zip-mode · --name · --size 는 --decrypt 와 함께 써야 합니다.\n"
                        "  풀어서 분류하려면 --decrypt 를 붙이고, 이미 풀어 둔 파일이면 이 인자들을 빼세요.")
         return None
     if args.no_decrypt:
@@ -769,6 +823,11 @@ def check_decrypt_args(args):
         info = _cli_dec_info(args)
     except decrypt.DecError as e:
         return bad(e.message)
+    # --size 는 문서를 읽기 전에 모양을 본다 — 잘못된 값으로 돌면 그 문서가 size_mismatch 로 남는다.
+    try:
+        _cli_dec_size(args)
+    except ValueError as e:
+        return bad(str(e))
     # 명령줄에 열쇠가 없으면 목록에서 찾는다 — 목록도 없으면 풀 방법이 없다.
     # (--text-only 는 Rust 판이 목록을 읽지 않으므로, 두 판을 맞춰 명령줄에 있어야 한다.)
     if info is None and not (getattr(args, "filelist", None) and not args.text_only):
@@ -798,7 +857,11 @@ def _dec_plan_for(args, path):
     entry = fl.lookup(path)[0] if fl is not None else None
     if getattr(args, "decrypt", False):
         name = args.dec_name or (entry.name if entry is not None else None)
-        size = entry.size if entry is not None else None
+        # 크기도 이름처럼 명령줄(--size)이 우선, 없으면 목록의 size 칸. 둘 다 없으면 None → 크기 검사 건너뜀.
+        # 값 모양은 check_decrypt_args 가 이미 봤다.
+        size = _cli_dec_size(args)
+        if size is None:
+            size = entry.size if entry is not None else None
         try:
             info = _cli_dec_info(args)
         except decrypt.DecError as e:
@@ -832,6 +895,10 @@ def _dec_plan_for(args, path):
 #    3) 라벨에서 임시 경로를 원래 경로로 되돌린다 — 임시 경로는 결과·로그에 나가면 안 된다
 #    4) 그 문서에서 나온 작업을 다 내보낸 뒤(= 부른 쪽이 다음 것을 달라고 할 때) 평문을 지운다
 #    5) 못 풀면 _DecFailed 를 내보낸다. 환경 문제(fatal)는 예외로 올려 실행을 멈춘다
+#    6) 풀리면 '복호화 성공' 로그 한 줄(원래 경로·이름·도구 사용·enc_mode·zip_mode·
+#       DB 원본 크기(org_size — --size·목록 size 가 있을 때만)·저장 파일 크기(stored_size)·
+#       풀린 크기(dec_size)·임시 파일 경로·걸린 시간)을 남긴다.
+#       열쇠는 남기지 않는다
 #
 # -in: jobs = 작업 목록(경로 문자열 또는 (src, label, origin) 튜플)
 # -in: ctx  = _DecContext(없으면 jobs 를 그대로 흘린다)
@@ -843,36 +910,63 @@ def _iter_dec_jobs(jobs, ctx):
     if ctx is None:
         yield from jobs
         return
+    import time
     from . import decrypt
     from .extract.archive import expand_paths
+    # 문서별 복호화 성공 줄을 일반 로그(class_YYYYMMDD.log)에 남길 로거.
+    log = logsetup.get_logger("csoclassify.cli")
     for item in jobs:
         src, label, origin = _as_job(item)
         plan = ctx.plans.pop(label, None) if origin is None else None
         if plan is None:
             yield item
             continue
+        # 걸린 시간과 저장 파일 크기는 성공·실패 로그 모두에 싣는다 — 그래서 try 앞에서 잰다.
+        t_dec = time.perf_counter()
+        # 풀기 전에 크기를 본다 — 어차피 풀린 뒤 상한에서 버려질 파일은 풀지도 않는다(설계 §9).
+        # 풀린 뒤의 실제 크기는 추출기·압축 펼치기의 상한이 지금까지처럼 다시 본다.
+        try:
+            src_len = os.path.getsize(src)
+        except OSError:
+            src_len = 0
         try:
             if plan.problem is not None:
                 # 열쇠 칸이 일부만 있거나 감싼 열쇠 — 도구를 부르지 않고 오류로 남긴다.
                 raise decrypt.DecError(plan.problem.reason, plan.problem.message)
-            # 풀기 전에 저장 파일 크기를 본다 — 터무니없이 큰 파일은 풀지도 않는다(설계 §9).
-            # 풀린 뒤의 실제 크기는 추출기의 크기 상한이 지금까지처럼 다시 본다.
-            try:
-                src_len = os.path.getsize(src)
-            except OSError:
-                src_len = 0
-            max_b = config.MAX_FILE_BYTES
-            if max_b and max_b > 0 and src_len > max_b:
-                raise decrypt.DecError(
-                    "size_limit",
-                    f"저장 파일이 크기 상한을 넘어 풀지 않았습니다({src_len}바이트 > {max_b}바이트). "
-                    f"--max-file-mb 로 조정할 수 있습니다")
+            # 앞 상한은 '풀린 뒤 실제로 적용될 상한'과 같게 고른다 — 원래 이름의 확장자로
+            # 압축·텍스트·일반을 가르고, 원래 크기가 있으면 그 크기로 본다
+            # (plan/엠파워v11-복호화-크기상한-정합-설계-20261016.html). --no-size-limit 이면 통과.
+            too_big = decrypt.pre_size_limit(plan.name, plan.size, src_len)
+            if too_big is not None:
+                raise too_big
+            # decrypt.py => decrypt 함수 호출(removenc.sh 호출)
             d = ctx.sess.decrypt(src, plan.info, plan.name, plan.size)
         except decrypt.DecError as e:
             if e.fatal:
                 raise
-            yield _DecFailed(label, plan, e)
+            # 실패 로그도 성공 줄과 같은 칸을 싣도록 저장 크기·걸린 시간을 함께 넘긴다.
+            yield _DecFailed(label, plan, e, src_len,
+                             int((time.perf_counter() - t_dec) * 1000))
             continue
+        # 성공도 문서마다 한 줄 남긴다 — 어느 문서를 어떤 모드로 어디에 풀었는지 나중에 추적한다.
+        # 열쇠(mrk)는 남기지 않는다. keep_tmp=True 는 임시 경로 가림 필터를 건너뛰게 하는 표식이다.
+        elapsed_ms = int((time.perf_counter() - t_dec) * 1000)
+        # stored_size = 엠파워 저장소의 .SMF 파일 크기(암호화 여부와 상관없이, 풀기 전에 잰 값),
+        # dec_size = 복호화(또는 복사) 뒤 실제 문서 크기. 둘을 견주면 압축(zip_mode)으로 얼마나
+        # 줄었는지, 풀린 결과가 터무니없지 않은지 로그만 보고 안다.
+        # (목록·--size 의 size 는 DB 원본 크기라 뜻이 달라 이름을 겹치지 않게 했다)
+        try:
+            dec_size = os.path.getsize(d.file)
+        except OSError:
+            dec_size = -1
+        # org_size = 엠파워 DB 의 원본 크기(--size 또는 목록의 size 칸). 받은 값이 있을 때만 싣는다 —
+        # 성공 줄이면 verify 가 dec_size 와 같은지 이미 봤으므로, 세 값이 한 줄에 나란히 남는다.
+        org_note = f"org_size={plan.size} " if plan.size is not None else ""
+        log.info("복호화 성공 file=%s name=%s tool=%s enc_mode=%s zip_mode=%s %sstored_size=%d "
+                 "dec_size=%d tmp=%s elapsed=%dms",
+                 label, plan.name or "-", "yes" if d.tool else "no(copy)",
+                 plan.info.enc_mode, plan.info.zip_mode, org_note, src_len, dec_size, d.file,
+                 elapsed_ms, extra={"keep_tmp": True})
         if d.tool:
             ctx.n_dec += 1
         ctx.sess.remember(d, label)
@@ -1912,6 +2006,8 @@ def run_text_only(files, opts, out_fp, dec_ctx=None):
         if isinstance(item, _DecFailed):
             print(f"[MpowerClassify] 복호화 실패: {item.label} :: {item.err.message}",
                   file=sys.stderr)
+            # 분류 모드와 같이 로그 파일에도 남긴다 — 화면만 보면 실행이 끝난 뒤 흔적이 없다.
+            logsetup.get_logger("csoclassify.cli").error("%s", _dec_fail_line(item))
             errcodes.set_status("decrypt_failed",
                                 f"[MpowerClassify] 복호화하지 못했습니다 — {item.err.message}")
             code = errcodes.exit_of("decrypt_failed")
@@ -2666,7 +2762,8 @@ def run_classify(files, args, out_fp):
                 dec_ctx.n_fail += 1
             print(f"[MpowerClassify] 복호화 실패: {path} :: {_e.message}({_e.reason})",
                   file=sys.stderr)
-            log.error("복호화 실패 file=%s :: %s(%s)", path, _e.message, _e.reason)
+            # 성공 줄과 같은 칸(모드·크기·걸린 시간)을 실어 실패 원인을 로그만 보고 가늠하게 한다.
+            log.error("%s", _dec_fail_line(item))
             rec = _decrypt_failed_record(path, item.plan.name, _e, _kind,
                                          ruleset, doc_rules_set, taxonomy)
             counts["none"] = counts.get("none", 0) + 1

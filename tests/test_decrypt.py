@@ -271,9 +271,27 @@ def test_목록의_열쇠로_풀어서_분류하고_임시파일을_지운다(tm
     # stdout 에는 우리 상태 줄만 있어야 한다 — 가짜 도구의 출력이 섞이면 안 된다.
     assert "noise" not in r.stdout
     assert status(r)[0] == "success"
+    ok_lines = []
     for what, text in env.texts().items():
         assert GOOD not in text, f"{what}에 열쇠가 남았다"
-        assert "cso_dec_" not in text, f"{what}에 임시 경로가 남았다"
+        # 임시 경로는 '복호화 성공' 줄에만 일부러 남긴다(2026-10-15 요청). 그 밖의 줄에는 없어야 한다.
+        ok_lines += [ln for ln in text.splitlines() if "복호화 성공" in ln]
+        others = "\n".join(ln for ln in text.splitlines() if "복호화 성공" not in ln)
+        assert "cso_dec_" not in others, f"{what}에 임시 경로가 남았다"
+    # 성공 줄은 목록의 세 문서(a·b·c)마다 하나씩 — 모드와 임시 경로, 도구 사용 여부가 실린다.
+    assert len(ok_lines) == 3, ok_lines
+    la = next(ln for ln in ok_lines if "F_aaaa.SMF" in ln)
+    assert "enc_mode=3" in la and "zip_mode=0" in la and "tool=yes" in la, la
+    assert "tmp=" in la and "cso_dec_" in la, la
+    # 가짜 도구의 암호는 바이트 XOR 이라 풀린 크기와 저장 크기가 본문 길이와 같다.
+    assert f"stored_size={len(BODY_A)} dec_size={len(BODY_A)}" in la, la
+    # a 는 목록에 size 가 있다 — DB 원본 크기(org_size)가 함께 실린다.
+    assert f"org_size={len(BODY_A)} stored_size=" in la, la
+    lc = next(ln for ln in ok_lines if "F_cccc.SMF" in ln)
+    assert "tool=no(copy)" in lc and "enc_mode=0" in lc, lc
+    assert f"stored_size={len(BODY_A)} dec_size={len(BODY_A)}" in lc, lc
+    # c 는 목록에 size 가 없다 — org_size 칸 자체가 없어야 한다.
+    assert "org_size=" not in lc, lc
 
 
 #------------------------------------------------------------------
@@ -310,6 +328,14 @@ def test_틀린_열쇠로_풀린_결과는_분류하지_않는다(tmp_path):
     assert rb["hash"] == sha256(BODY_A)
     assert summ.get("decrypt_failed") == 1
     env.assert_tmp_clean()
+    # 실패 줄도 성공 줄과 같은 칸을 싣는다 — 틀린 열쇠라 크기는 셋 다 같고 사유만 다르다.
+    n = len(pdf)
+    fail = [ln for ln in env.texts()["로그"].splitlines() if "복호화 실패" in ln and "F_pdf.SMF" in ln]
+    assert fail, "실패 줄이 로그에 없다"
+    assert (f"name=대외비 보고서.pdf reason=signature_mismatch rc=0 enc_mode=3 zip_mode=0 "
+            f"org_size={n} stored_size={n} dec_size={n} elapsed=") in fail[0], fail[0]
+    # 실패한 결과물은 지웠으므로 임시 경로를 싣지 않는다.
+    assert "cso_dec_" not in fail[0], fail[0]
 
 
 #------------------------------------------------------------------
@@ -449,6 +475,34 @@ def test_단일_파일은_decrypt_를_줄_때만_푼다(tmp_path):
 
 
 #------------------------------------------------------------------
+# 단일 파일의 --size — 주면 풀린 크기와 견주고, 안 주면 건너뛴다
+#------------------------------------------------------------------
+def test_단일_파일의_size_는_주면_견주고_안_주면_건너뛴다(tmp_path):
+    env = Env(tmp_path)
+    enc = env.store("F_size.SMF", encrypt(BODY_A))
+    keys = ["--file", enc, "--decrypt", "--mrk", GOOD, "--enc-mode", "3", "--zip-mode", "0",
+            "--name", "메모.txt"]
+    # 맞는 크기 — 그대로 분류된다.
+    recs, _, r = env.run(keys + ["--size", str(len(BODY_A))])
+    assert r.returncode == 0, r.stderr
+    assert "error" not in rec_of(recs, enc)
+    # --size 로 준 값이 성공 줄의 org_size 로 남는다.
+    assert f"org_size={len(BODY_A)} stored_size=" in env.texts()["로그"]
+    # 틀린 크기 — 분류하지 않고 size_mismatch 로 남긴다(잘린 결과·덜 풀린 압축을 잡는 자리).
+    recs, _, r = env.run(keys + ["--size", str(len(BODY_A) + 1)])
+    assert r.returncode == 1, r.stderr
+    x = rec_of(recs, enc)
+    assert x["grade"] is None, x
+    assert x["error"]["kind"] == "decrypt_failed"
+    assert x["error"]["detail"] == "size_mismatch"
+    # 실패 줄에 DB 원본 크기(org_size)와 실제 결과 크기(dec_size)가 나란히 남는다.
+    n = len(BODY_A)
+    assert (f"reason=size_mismatch rc=0 enc_mode=3 zip_mode=0 "
+            f"org_size={n + 1} stored_size={n} dec_size={n} elapsed=") in env.texts()["로그"]
+    env.assert_tmp_clean()
+
+
+#------------------------------------------------------------------
 # 인자 조합이 틀리면 시작 전에 끝낸다
 #------------------------------------------------------------------
 @pytest.mark.parametrize("extra", [
@@ -461,6 +515,11 @@ def test_단일_파일은_decrypt_를_줄_때만_푼다(tmp_path):
     # 감싼 열쇠.
     ["--decrypt", "--mrk", "v2:XXXX", "--enc-mode", "3", "--zip-mode", "0"],
     ["--decrypt", "--no-decrypt", "--mrk", GOOD, "--enc-mode", "3", "--zip-mode", "0"],
+    # --size 만 주고 --decrypt 가 없다.
+    ["--size", "100"],
+    # --size 가 정수가 아니다.
+    ["--decrypt", "--mrk", GOOD, "--enc-mode", "3", "--zip-mode", "0", "--size", "abc"],
+    ["--decrypt", "--mrk", GOOD, "--enc-mode", "3", "--zip-mode", "0", "--size", "1.5"],
 ])
 def test_인자_조합이_틀리면_시작_전에_끝낸다(tmp_path, extra):
     env = Env(tmp_path)
@@ -523,6 +582,96 @@ def test_풀린_압축파일은_내부_문서로_펼친다(tmp_path):
         # 압축 자체의 집계 레코드도 목록 경로로 나온다.
         assert rec_of(recs, top).get("archive") is True
     assert "cso_dec_" not in env.texts()["결과"], "결과에 임시 경로가 남았다"
+    env.assert_tmp_clean()
+
+
+#------------------------------------------------------------------
+# 복호화 전 크기 상한 — 풀린 뒤 상한과 같게 고른다
+#=> plan/엠파워v11-복호화-크기상한-정합-설계-20261016.html §7. Rust 판 같은 시험이 cli_decrypt.rs 에 있다.
+#------------------------------------------------------------------
+@pytest.mark.parametrize("name, org, stored, want_which, want_basis", [
+    # 확장자로 상한을 고른다(상한: 압축 500 · 텍스트 300 · 일반 100)
+    ("묶음.7z", None, 400, None, None),                      # 압축 상한 안 → 통과
+    ("묶음.7z", None, 600, "MAX_ARCHIVE_BYTES", "stored_size"),
+    ("자료.csv", None, 200, None, None),                     # 텍스트 상한 안 → 통과
+    ("자료.csv", None, 400, "MAX_FILE_BYTES_TEXT", "stored_size"),
+    ("보고서.hwp", None, 200, "MAX_FILE_BYTES", "stored_size"),
+    ("보고서.docx", None, 200, "MAX_FILE_BYTES", "stored_size"),  # 속이 zip 이어도 문서 1개
+    ("이상한.egg", None, 200, "MAX_FILE_BYTES", "stored_size"),   # 펼치기 미지원 → 일반
+    (None, None, 200, "MAX_FILE_BYTES", "stored_size"),          # 이름 없음 → 지금과 같음
+    # 원래 크기가 있으면 그것으로 본다
+    ("보고서.hwp", 200, 50, "MAX_FILE_BYTES", "org_size"),       # 저장본은 작아도(zip_mode) 원래 크기로
+    ("보고서.hwp", 100, 132, None, None),                         # enc_mode 26 머리(+32B)에 흔들리지 않음
+])
+def test_복호화_전_크기_상한_판정(name, org, stored, want_which, want_basis):
+    from csoclassify import decrypt
+    e = decrypt.pre_size_limit_with(name, org, stored, 500, 300, 100)
+    if want_which is None:
+        assert e is None
+    else:
+        assert e.reason == "size_limit"
+        assert want_which in e.message and want_basis in e.message, e.message
+
+
+def test_복호화_전_크기_상한은_0이면_끈다():
+    from csoclassify import decrypt
+    # --no-size-limit 은 세 상한을 모두 0 으로 만든다 — 앞 상한도 함께 꺼진다.
+    for name in ("a.7z", "a.txt", "a.hwp", None):
+        assert decrypt.pre_size_limit_with(name, 10 ** 12, 10 ** 12, 0, 0, 0) is None
+
+
+def test_암호화_압축은_압축_상한으로_거른다(tmp_path):
+    env = Env(tmp_path)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("inner_a.txt", BODY_A)
+        z.writestr("sub/inner_b.txt", BODY_B)
+    zdata = buf.getvalue()
+    a = env.store("F_bigzip.SMF", encrypt(zdata))
+    lst = env.filelist([row(a, "SZ", mrk=GOOD, enc_mode=3, zip_mode=0, name="묶음.zip", size=len(zdata))])
+    # 일반 상한을 '안의 문서 < 상한 < zip' 로 낮춘다 — 예전에는 zip 이 일반 상한에 걸려 풀지도 않았다.
+    lim_mb = (len(BODY_A) + 40) / 1048576
+    assert len(zdata) > len(BODY_A) + 40
+    recs, _, r = env.run(["--filelist", lst, "--max-file-mb", f"{lim_mb:.10f}"])
+    assert r.returncode == 0, (r.stderr, recs)
+    # 압축 상한(기본 500MB)으로 봤으므로 풀어서 펼쳤다 — 평문 zip 과 같은 판정.
+    assert rec_of(recs, a + "/inner_a.txt")["hash"] == sha256(BODY_A)
+    assert rec_of(recs, a).get("archive") is True
+    env.assert_tmp_clean()
+
+
+def test_암호화_텍스트는_텍스트_상한으로_거른다(tmp_path):
+    env = Env(tmp_path)
+    t = env.store("F_txt.SMF", encrypt(BODY_A))
+    h = env.store("F_hwp.SMF", encrypt(BODY_A))
+    lst = env.filelist([
+        row(t, "ST", mrk=GOOD, enc_mode=3, zip_mode=0, name="메모.txt", size=len(BODY_A)),
+        row(h, "SH", mrk=GOOD, enc_mode=3, zip_mode=0, name="보고서.hwp", size=len(BODY_A)),
+    ])
+    # 일반 상한은 아주 작게, 텍스트 상한은 넉넉히 — 텍스트만 통과해야 한다.
+    recs, _, r = env.run(["--filelist", lst, "--max-file-mb", "0.00001", "--max-file-mb-text", "1"])
+    rt = rec_of(recs, t)
+    assert "error" not in rt, rt
+    assert rt["hash"] == sha256(BODY_A)
+    rh = rec_of(recs, h)
+    assert rh["error"]["kind"] == "size_limit", rh
+    assert "MAX_FILE_BYTES" in rh["error"]["reason"] and "--max-file-mb" in rh["error"]["reason"], rh
+    env.assert_tmp_clean()
+
+
+def test_원래_크기가_있으면_그_크기로_거르고_no_size_limit_이면_끈다(tmp_path):
+    env = Env(tmp_path)
+    t = env.store("F_org.SMF", encrypt(BODY_A))
+    # 원래 크기를 1GB 로 적는다 — 저장본은 작아도 원래 크기가 텍스트 상한(100MB)을 넘는다.
+    lst = env.filelist([row(t, "SO", mrk=GOOD, enc_mode=3, zip_mode=0, name="메모.txt", size=10 ** 9)])
+    recs, _, r = env.run(["--filelist", lst])
+    x = rec_of(recs, t)
+    assert x["error"]["kind"] == "size_limit", x
+    assert "org_size" in x["error"]["reason"] and "MAX_FILE_BYTES_TEXT" in x["error"]["reason"], x
+    # --no-size-limit 이면 앞 상한이 꺼져 풀어 본다 — 그러면 크기 검사(verify)가 어긋남을 잡는다.
+    recs, _, r = env.run(["--filelist", lst, "--no-size-limit"])
+    x = rec_of(recs, t)
+    assert x["error"]["kind"] == "decrypt_failed" and x["error"]["detail"] == "size_mismatch", x
     env.assert_tmp_clean()
 
 
