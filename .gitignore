@@ -115,6 +115,10 @@ _extracted/
 # 제외 규칙을 그대로 비껴간다.
 /report/
 
+# 평가셋(골든데이터셋). 고객사 실문서 경로 · 첫 줄 · 앞부분 발췌가 그대로 들어 있다.
+# resources/ 는 커밋하는 폴더라 이 하위 폴더만 따로 막는다(2026-10-22 report/ 에서 옮김).
+/resources/golden_dataset/
+
 # 루트에 떨어진 실행 결과·목록. 실제 문서 경로와 검출 내역이 들어 있다.
 /hr.jsonl
 /rs_a.jsonl
@@ -128,3 +132,4 @@ scripts/*.hwp
 # 서버 주소·계정·안쪽 경로는 코드가 아니라 설정이다. 저장소가 공개라
 # 그대로 두면 내부 인프라가 노출된다. 보기 파일(server.env.sample)만 공개한다.
 /scripts/build/server.env
+/dist-ui/
