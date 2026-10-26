@@ -20,6 +20,167 @@ pub fn extract_text(path: &Path, fmt: Fmt) -> Option<String> {
     extract_raw(path, fmt).map(|t| clean_text(&t))
 }
 
+//------------------------------------------------------------------
+// 추출 모드 — 어느 추출기로 본문을 뽑을지
+//=> 설계: plan/Rust-사이냅추출기-옵션-설계-20261019.html §3·§4
+//
+// -필드: Builtin       = 자체 파서만(기본 — 지금까지와 같다)
+// -필드: SynapFallback = 자체 파서 1차, 실패·빈 결과·짧은 결과면 사이냅(snf_exe 경로를 쥔다)
+// -필드: SynapOnly     = 모든 문서를 사이냅으로(snf_exe 경로를 쥔다)
+//------------------------------------------------------------------
+#[derive(Debug, Clone)]
+pub enum ExtractMode {
+    Builtin,
+    SynapFallback(std::path::PathBuf),
+    SynapOnly(std::path::PathBuf),
+}
+
+impl ExtractMode {
+    //--------------------------------------------------------------
+    // 로그에 적을 모드 이름
+    //
+    // -in: 없음
+    //
+    // -out: &str = "builtin" · "snf_fallback" · "snf_only"
+    // -out: error = 없음
+    //--------------------------------------------------------------
+    pub fn name(&self) -> &'static str {
+        match self {
+            ExtractMode::Builtin => "builtin",
+            ExtractMode::SynapFallback(_) => "snf_fallback",
+            ExtractMode::SynapOnly(_) => "snf_only",
+        }
+    }
+}
+
+// 이번 실행의 추출 모드. 시작할 때 main 이 한 번 정하고(set_mode), 분류 · --text-only
+// 두 호출 자리가 읽는다. 정하지 않았으면 Builtin(지금까지와 같다).
+static MODE: std::sync::OnceLock<ExtractMode> = std::sync::OnceLock::new();
+
+//------------------------------------------------------------------
+// 이번 실행의 추출 모드 정하기(한 번만)
+//
+// -in: m = 추출 모드
+//
+// -out: 없음
+// -out: error = 없음(두 번째 부름은 무시된다)
+//------------------------------------------------------------------
+pub fn set_mode(m: ExtractMode) {
+    let _ = MODE.set(m);
+}
+
+//------------------------------------------------------------------
+// 이번 실행의 추출 모드 읽기
+//
+// -in: 없음
+//
+// -out: &ExtractMode = 정한 모드(안 정했으면 Builtin)
+// -out: error = 없음
+//------------------------------------------------------------------
+pub fn mode() -> &'static ExtractMode {
+    static DEFAULT: ExtractMode = ExtractMode::Builtin;
+    MODE.get().unwrap_or(&DEFAULT)
+}
+
+//------------------------------------------------------------------
+// 이 포맷에 자체 파서가 있는가
+//=> extract_raw 가 다루는 포맷과 같다(파이썬 하이브리드 엔진 표와도 같다). 없는 포맷
+//   (이미지 · OLE · zip · 이진 · 모름)은 사이냅 폴백 모드에서 곧바로 사이냅으로 간다.
+//
+// -in: fmt = 감지한 포맷
+//
+// -out: bool
+// -out: error = 없음
+//------------------------------------------------------------------
+fn has_builtin(fmt: Fmt) -> bool {
+    matches!(fmt, Fmt::Text | Fmt::Html | Fmt::Docx | Fmt::Pptx | Fmt::Hwpx | Fmt::Xlsx
+        | Fmt::Pdf | Fmt::Doc | Fmt::Ppt | Fmt::Xls | Fmt::Hwp)
+}
+
+//------------------------------------------------------------------
+// 모드에 따라 본문 뽑기 — 엔진 사슬과 폴백 판정
+//=> 파이썬 HybridExtractor.extract 와 같은 규칙 · 같은 임계로 엔진을 차례로 시도한다.
+//    1) 모드별 사슬: 자체 파서만 / [자체 파서] + [snf] / [snf]
+//       (폴백 모드에서 자체 파서가 없는 포맷이면 [snf])
+//    2) 엔진마다 '부분 추출' 표식을 비운다 — 앞 엔진의 표식이 뒤 엔진 결과에 붙지 않게
+//    3) 실패 · 빈 결과 → 다음 엔진. 짧은 결과(공백 빼고 MIN_TEXT_LEN 미만) → 붙잡아 두고 다음
+//    4) 충분한 결과면 채택. 모두 짧으면 가장 긴 것. 모두 실패면 엔진별 사유를 이어 붙여 Err
+//    5) 채택한 원시 텍스트를 지금과 같은 6단계로 정제한다
+//   Builtin 모드는 예전 extract_text 와 똑같이 돈다(실패 사유는 빈 문자열 — 부른 쪽이
+//   예전 문장을 그대로 쓴다).
+//
+// -in: path  = 읽을 파일
+// -in: fmt   = 감지한 포맷
+// -in: mode  = 추출 모드
+// -in: label = 로그에 적을 문서 이름(풀린 문서면 임시 경로 대신 원래 경로)
+//
+// -out: Ok(String) = 정제한 본문
+// -out: error = Err(사유) — Builtin 은 "", 사이냅 모드는 엔진별 사유
+//------------------------------------------------------------------
+pub fn extract_text_with(path: &Path, fmt: Fmt, mode: &ExtractMode, label: &str) -> Result<String, String> {
+    let snf = match mode {
+        ExtractMode::Builtin => return extract_text(path, fmt).ok_or_else(String::new),
+        ExtractMode::SynapFallback(p) | ExtractMode::SynapOnly(p) => p,
+    };
+    // 사이냅만 모드 — 파이썬 --synap-only 처럼 사이냅 하나만 부르고, 실패면 그 사유를 그대로.
+    if let ExtractMode::SynapOnly(_) = mode {
+        crate::limits::notes_reset();
+        return match crate::synap::snf_extract(snf, path, crate::synap::snf_timeout_secs()) {
+            Ok(t) => {
+                crate::linfo!("추출 engine=snf(감지={}) file={} chars={}", fmt.as_str(), label, t.chars().count());
+                Ok(clean_text(&t))
+            }
+            Err(e) => Err(format!("snf:{}", e)),
+        };
+    }
+    // 사이냅 폴백 모드 — 자체 파서가 있으면 1차, 사이냅은 언제나 마지막.
+    let min_len: usize = std::env::var("CSOCLASSIFY_MIN_TEXT_LEN")
+        .ok().and_then(|v| v.parse().ok()).unwrap_or(20);
+    let primary = if has_builtin(fmt) { fmt.as_str() } else { "snf" };
+    let mut reasons: Vec<String> = vec![];
+    let mut best_short: Option<(&str, String)> = None;
+    let engines: Vec<&str> = if has_builtin(fmt) { vec![fmt.as_str(), "snf"] } else { vec!["snf"] };
+    for name in engines {
+        // 엔진마다 표식을 비운다 — 1차 파서가 남긴 '부분 추출'이 사이냅 결과에 붙지 않게.
+        crate::limits::notes_reset();
+        let got: Result<String, String> = if name == "snf" {
+            crate::synap::snf_extract(snf, path, crate::synap::snf_timeout_secs())
+        } else {
+            extract_raw(path, fmt).ok_or_else(|| "failed".to_string())
+        };
+        let text = match got {
+            Ok(t) => t,
+            Err(e) => { reasons.push(format!("{}:{}", name, e)); continue; }
+        };
+        if text.trim().is_empty() {
+            reasons.push(format!("{}:empty", name));
+            continue;
+        }
+        // '성공했지만 본문이라 할 게 없는' 결과도 폴백 대상이다(파이썬과 같은 판정).
+        let n = text.chars().filter(|c| !c.is_whitespace()).count();
+        if n < min_len {
+            reasons.push(format!("{}:short({}자)", name, n));
+            if best_short.as_ref().map_or(true, |(_, b)| text.len() > b.len()) {
+                best_short = Some((name, text));
+            }
+            continue;
+        }
+        if name != primary {
+            crate::linfo!("추출 폴백 from={} to={} file={} reason={}", primary, name, label, reasons.join(";"));
+        } else {
+            crate::linfo!("추출 engine={}(감지={}) file={} chars={}", name, fmt.as_str(), label, text.chars().count());
+        }
+        return Ok(clean_text(&text));
+    }
+    // 모두 짧으면 가장 긴 것 — 예전에도 짧은 채로 성공이던 문서를 실패로 바꾸지 않는다.
+    if let Some((name, text)) = best_short {
+        crate::linfo!("추출 짧은결과채택 engine={} file={} chars={} reason={}",
+                      name, label, text.chars().count(), reasons.join(";"));
+        return Ok(clean_text(&text));
+    }
+    Err(format!("하이브리드 전엔진 실패(감지={}; {})", fmt.as_str(), reasons.join("; ")))
+}
+
 // 페이지 마커 라인: 사이냅 기본 출력의 '..PAGE:12' 같은 줄.
 static PAGE_MARKER: once_cell::sync::Lazy<regex::Regex> =
     once_cell::sync::Lazy::new(|| regex::Regex::new(r"(?m)^\s*\.\.PAGE:\d+\s*$").unwrap());

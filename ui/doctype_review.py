@@ -269,6 +269,15 @@ def reason_text(signal, ev):
             tail = f" — 회사 분류 체계의 분류 이름 **{src}** 에서 나온 말입니다"
         return f"{label}가 {word}{tail}"
 
+    # 기준 문서와 말 겹침(BM25) — 어느 필드에서 겹쳤는지와 파일명에서 겹친 말을 보여 준다.
+    # 제목 쪽 말은 문서 원문이라 근거 블록에 애초에 담기지 않는다(파일명 말만 온다).
+    if signal == "bm25":
+        where = {"title+name": "제목 · 파일명", "title": "제목", "name": "파일명에서만"}.get(
+            ev.get("field"), "제목 · 파일명")
+        words = ", ".join(f"**{w}**" for w in (ev.get("words") or [])[:5])
+        tail = f" — 파일명에서 겹친 말: {words}" if words else ""
+        return (f"{label}({where}) · 점수 {ev.get('score')} / 문턱 {ev.get('threshold')}{tail}")
+
     # 비슷한 문서 — 이웃 문서의 경로는 내지 않는다(Q7 이 아직 미결이다).
     if signal == "embed":
         return (f"{label} — 가장 비슷한 문서 {W.pct(ev.get('top_sim'))} · "
@@ -365,10 +374,21 @@ def reason_block(cand):
             summary = (f"→ 근거 {len(parts)}가지 중 가장 강한 하나로 {W.pct(conf)} "
                        f"(여러 개라고 더 올라가지는 않는 방식)")
     warn = None
-    if cand.get("review"):
+    basis = cand.get("basis") or "name_head"
+    if cand.get("review") and basis == "bm25":
+        # BM25 단독 후보 — 근거가 '말 겹침' 하나뿐이라 사람이 확인해야 한다(설계서 §08).
+        warn = ("규칙에 걸린 말은 없고 **기준 문서의 제목 · 파일명과 말이 겹쳐** 제안한 "
+                "후보입니다 — 자동으로 확정하지 않았습니다. 내용을 보고 정해 주세요.")
+    elif cand.get("review") and basis == "bm25_name_only":
+        warn = ("**파일명에서만** 기준 문서와 말이 겹쳐 제안한 분류입니다 — 자동으로 확정하지 "
+                "않았습니다. 파일 이름은 바뀔 수 있으니 내용을 보고 정해 주세요.")
+    elif cand.get("review"):
         # 이 한 줄이 D1 ②의 화면 쪽 절반이다 — 레코드의 표시를 사람에게 옮긴다.
         warn = ("**파일 이름만** 보고 제안한 분류입니다 — 자동으로 확정하지 "
                 "않았습니다. 파일 이름은 바뀔 수 있으니 내용을 보고 정해 주세요.")
+    elif cand.get("stage") in ("embed+bm25", "bm25"):
+        warn = ("규칙에 걸린 말은 없고 **비슷한 문서와 기준 문서 말 겹침**으로 제안한 후보입니다 "
+                "— 눈으로 확인해 주세요.")
     elif cand.get("stage") == "embed":
         warn = ("규칙에 걸린 말은 없고 **비슷한 문서**만 보고 제안한 후보입니다 "
                 "— 특히 눈으로 확인해 주세요.")

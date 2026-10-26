@@ -31,7 +31,7 @@ CELLS = ("title_terms", "head_terms", "terms", "filename", "exclude")
 # 규칙마다 덮을 수 있는 숫자 칸.
 NUM_FIELDS = ("head_chars", "min_count", "min_distinct")
 # 본보기에서 가져와 local 의 settings 로 덮는 전체 설정 칸.
-SETTING_SECTIONS = ("conflict", "defaults", "signals", "embed")
+SETTING_SECTIONS = ("conflict", "defaults", "signals", "embed", "bm25")
 WEIGHTS = ("high", "medium", "low")
 # 생성 표시 — 이 칸이 있으면 엔진은 '자동 생성 규칙 파일'로 읽는다.
 GENERATED_KEY = "generated"

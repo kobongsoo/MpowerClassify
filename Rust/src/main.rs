@@ -4,6 +4,7 @@
 mod archive;
 mod textsave;
 mod axes;
+mod bm25;
 mod conflict;
 mod daemon;
 mod decrypt;
@@ -18,6 +19,9 @@ mod errcodes;
 mod errlog;
 mod log;
 mod extract;
+mod synap;
+mod gradestream;
+mod gradeoverride;
 mod html_entities;
 mod filelist;
 mod hwp5;
@@ -65,8 +69,30 @@ struct Opts {
     stop: bool,
     daemon: bool,
     idle_timeout: u64,
-    // 사이냅 전용 추출 요청. 이 판에는 사이냅이 없어 못 해 준다.
+    // 추출기 선택(설계: plan/Rust-사이냅추출기-옵션-설계-20261019.html).
+    //  · synap_only     : 모든 문서를 사이냅(snf_exe)으로
+    //  · synap_fallback : 자체 파서가 못 읽은 문서만 사이냅으로
+    //  · synap_path     : snf_exe 파일을 직접 가리킨다(없으면 찾기 순서대로)
     synap_only: bool,
+    synap_fallback: bool,
+    synap_path: Option<String>,
+    // 등급 스트림 기록(설계: plan/등급스트림-기록-옵션-설계-20261019.html).
+    //  · write_grade_stream        : 분류한 문서의 :mgrade 에 최종 등급을 쓴다
+    //  · grade_stream_unclassified : 등급 없는 문서 — "skip"(기본) | "none"(NONE 기록)
+    //  · grade_stream_update_time  : 쓸 때 수정 시각이 바뀌게 둔다(툴 기본). 기본은 시각 보존(설계 §14)
+    //  · embed_flag                : --embed 를 받았나(이 판은 무시하지만 등급 스트림과는 충돌로 본다)
+    write_grade_stream: bool,
+    grade_stream_unclassified: Option<String>,
+    grade_stream_update_time: bool,
+    embed_flag: bool,
+    // 사람이 정한 등급(설계: plan/사람등급지정-수동오버라이드-설계-20261020.html).
+    //  · grade_overrides : 사람 결정 목록(UI 의 cso_override.jsonl)
+    //  · set_grade       : --file 문서에 판정 없이 바로 정할 등급(C/S/O/NONE)
+    //  · reviewer/reason : --set-grade 결정을 목록에 덧붙일 때 검토자 · 사유
+    grade_overrides: Option<String>,
+    set_grade: Option<String>,
+    reviewer: Option<String>,
+    reason: Option<String>,
     no_doc_id: bool,            // 결과에 doc_id/key 를 넣지 않는다(기본은 넣는다)
     report_missing_id: Option<String>, // sfile_id 를 못 얻은 문서 목록을 쓸 경로
     rules_path: Option<String>,
@@ -94,6 +120,7 @@ struct Opts {
     embed_needed: bool,          // 임베딩을 '아직 못 정한 문서'에만(Python --embed-needed 와 같은 뜻)
     no_timing: bool,             // 처리 시간 출력 끄기(요약줄의 총시간)
     build_doc_rule: bool,        // 체계 JSON·사전·local 조정으로 doc_rule.yaml 을 통째로 만든다
+    seed_fill_title: bool,       // 기준 문서에 제목(첫 줄)을 채운다 — 업무분류 BM25 2차 재료
     // 규칙 단어 제안(--suggest-terms) — 문서도 모델도 읽지 않는 단독 모드.
     suggest_terms: Option<String>,   // 분류 하나의 dc_id 또는 "all"
     overrides: Option<String>,       // 검토 화면 확정·거절 이력(cso_override.jsonl)
@@ -297,6 +324,8 @@ fn usage() {
     eprintln!("─── ⑧ 문서분류체계 rule 생성 (문서를 읽지 않는 모드) ─────────────────────");
     eprintln!("  --build-doc-rule          체계 JSON(--export-input)·사전·doc_rule.local.yaml 로 --doc-rules 파일을 통째로 새로 만든다");
     eprintln!("  --export-input <파일>     그 원본 체계 JSON(미지정 시 규칙 파일 옆 doc_classification_export.json)");
+    eprintln!("  --seed-fill-title         기준 문서(--seeds)에 제목(첫 줄)을 채운다 — 업무분류 BM25 2차 재료");
+    eprintln!("                            본문은 --text-dir/<지문>.txt 에서 먼저 찾고, 없으면 원본을 다시 읽는다");
     eprintln!("");
     eprintln!("─── ⑧-2 규칙 단어 제안 (--suggest-terms · 문서를 읽지 않는 모드) ───────");
     eprintln!("  이미 확정된 라벨과 저장해 둔 본문만 보고, 규칙에 넣을 만한 말의 후보를 보여 줍니다.");
@@ -347,11 +376,33 @@ fn usage() {
     eprintln!("  [환경변수] CSOCLASSIFY_STATE_DIR  서버 접속 기록을 둘 폴더. 서버를 띄운 계정과");
     eprintln!("             부르는 계정이 다르면 양쪽에 같은 폴더를 줘야 서로 찾습니다");
     eprintln!("");
+    eprintln!("─── ⑩-0 추출기 — 기본은 자체 파서, 사이냅(snf_exe)은 고를 때만 ──────");
+    eprintln!("  (없음) · --hybridparse   자체 파서만 씁니다(기본). 사이냅이 옆에 있어도 쓰지 않습니다");
+    eprintln!("  --synap-fallback          자체 파서가 못 읽은 문서(실패 · 빈 결과 · 20자 미만)만 사이냅으로");
+    eprintln!("  --synap-only              모든 문서를 사이냅으로(파이썬 판 --synap-only 와 같음)");
+    eprintln!("  --synap-path <경로>       snf_exe 파일을 직접 가리킵니다");
+    eprintln!("  [찾기] --synap-path → CSOCLASSIFY_SYNAP_DIR → exe 옆 synap/ → exe 옆 resources/synap/");
+    eprintln!("         (각 폴더에서 {}/ 하위폴더 먼저). 못 찾으면 문서를 읽기 전에 1016 synap_missing",
+              if cfg!(windows) { "windows" } else { "linux" });
+    eprintln!("  [환경변수] CSOCLASSIFY_SYNAP_MODE=off|fallback|only (인자가 이깁니다)");
+    eprintln!("");
+    eprintln!("─── ⑩-0b 등급 스트림 기록 — 문서 파일의 :mgrade 에 등급을 쓴다(Windows NTFS) ──");
+    eprintln!("  --write-grade-stream      최종 등급(C/S/O)을 NEOGradeToolApp -s 와 같은 12바이트로 씁니다");
+    eprintln!("                            같은 값이면 쓰지 않습니다. 압축 안 문서는 건너뛰고 압축 파일 자체에 집계 등급");
+    eprintln!("  --grade-stream-unclassified skip|none  등급 없는 문서: skip=건드리지 않음(기본), none=NONE(0)");
+    eprintln!("  --grade-stream-update-time 쓸 때 수정 시각이 바뀌게 둡니다(툴 기본, -k 없음)");
+    eprintln!("                            기본은 생성·접근·수정 시각을 그대로 둡니다");
+    eprintln!("  결과 레코드 grade_stream · 요약 grade_stream. 못 쓴 문서가 있으면 4002(종료코드 1)");
+    eprintln!("  리눅스에서는 1012 로 거절합니다(ADS 가 없다)");
+    eprintln!("");
+    eprintln!("─── ⑩-0c 사람이 정한 등급 ─────────────────────────────────────");
+    eprintln!("  --grade-overrides <파일>  사람 결정 목록(UI 의 cso_override.jsonl). 판정 뒤 사람 등급이 이깁니다");
+    eprintln!("                            결정 뒤 내용이 바뀐 문서는 더 엄격한 결정만 따릅니다(stale)");
+    eprintln!("  --set-grade C|S|O|NONE    --file 문서에 판정 없이 바로 등급을 정합니다(--dir 불가)");
+    eprintln!("                            --write-grade-stream 이면 파일에도 씁니다");
+    eprintln!("  --reviewer · --reason     --set-grade 결정을 --grade-overrides 에 덧붙일 때 필수");
+    eprintln!("");
     eprintln!("─── ⑩-1 파이썬 판에는 있고 이 판에는 없는 것 ──────────────────");
-    eprintln!("  [추출기] 이 판에는 사이냅(snf)이 없고 언제나 자체 파서로 추출합니다.");
-    eprintln!("  --hybridparse             이 판이 늘 하는 일이라 그대로 받아들임");
-    eprintln!("  --synap-only              지원하지 않음 — 오류로 종료(코드 3).");
-    eprintln!("                            본문이 달라져 등급까지 갈리므로 조용히 넘기지 않습니다");
     eprintln!("  [씨앗 자동 생성] 규칙 고신뢰 문서를 골라 씨앗을 만드는 기능은 이 판에 없습니다.");
     eprintln!("  --make-doctype-seeds      지원하지 않음 — 오류로 종료(코드 3).");
     eprintln!("                            파이썬 판으로 만드세요(만든 파일은 이 판도 그대로 읽습니다).");
@@ -507,7 +558,7 @@ fn parse_args() -> Result<Opts, String> {
         no_summary: false, hash: false, with_pii: false, with_text: false,
         rule_only: false, vector_only: false, doctype_vector_only: false,
         progress: false, embed_needed: false, no_timing: false,
-        build_doc_rule: false,
+        build_doc_rule: false, seed_fill_title: false,
         with_vector: false, propagate: None,
         auto_propagate: false, seeds: None,
         seed: seedcli::SeedArgs::default(),
@@ -515,6 +566,11 @@ fn parse_args() -> Result<Opts, String> {
         filelist: None, no_doc_id: false, report_missing_id: None,
         serve: false, status: false, stop: false, daemon: false, idle_timeout: 0,
         synap_only: false,
+        synap_fallback: false,
+        synap_path: None,
+        write_grade_stream: false, grade_stream_unclassified: None, grade_stream_update_time: false,
+        embed_flag: false,
+        grade_overrides: None, set_grade: None, reviewer: None, reason: None,
         size_limits: limits::Overrides::default(), no_size_limit: false,
         textsave: None,
         text_only: false,
@@ -589,6 +645,7 @@ fn parse_args() -> Result<Opts, String> {
             "--embed-needed" => o.embed_needed = true,
             "--no-timing" => o.no_timing = true,
             "--build-doc-rule" => o.build_doc_rule = true,
+            "--seed-fill-title" => o.seed_fill_title = true,
             "--suggest-terms" => o.suggest_terms = Some(take(false).unwrap()),
             "--overrides" => o.overrides = Some(take(false).unwrap()),
             "--text-dir" => o.text_dir = Some(take(false).unwrap()),
@@ -623,13 +680,24 @@ fn parse_args() -> Result<Opts, String> {
             "--json-errors" => o.json_errors = true,
             // 축약본만 받으면 "이 문서가 왜 C 인가"에 답할 수 없다.
             "--simple-why" => { o.simple_why = true; o.simple = true; }
-            // 추출기 선택. 이 판은 사이냅(snf)을 아예 담고 있지 않다.
-            //  · --hybridparse : 이 판이 언제나 하는 일이라 그대로 받아들인다
-            //  · --synap-only  : 못 해 준다. 게다가 조용히 무시하면 다른 추출기로
-            //    돌면서 **본문이 달라져 등급까지 갈린다** — 데몬 인자와 달리
-            //    결과가 바뀌는 요청이라 반드시 멈춰야 한다(handle_extractor_args).
+            // 추출기 선택(handle_extractor_args 가 모드를 정한다).
+            //  · --hybridparse    : 기본(자체 파서)과 같다 — 받아들이고 아무 일도 안 한다
+            //  · --synap-only     : 모든 문서를 사이냅으로
+            //  · --synap-fallback : 자체 파서가 못 읽은 문서만 사이냅으로
+            //  · --synap-path     : snf_exe 파일 경로
             "--hybridparse" => {}
             "--synap-only" => o.synap_only = true,
+            "--synap-fallback" => o.synap_fallback = true,
+            "--synap-path" => o.synap_path = take(false),
+            // 등급 스트림 기록(check_grade_stream_args 가 조합을 본다)
+            "--write-grade-stream" => o.write_grade_stream = true,
+            "--grade-stream-unclassified" => o.grade_stream_unclassified = Some(take(false).unwrap_or_default()),
+            "--grade-stream-update-time" => o.grade_stream_update_time = true,
+            // 사람 등급 지정(check_override_args 가 조합을 본다)
+            "--grade-overrides" => o.grade_overrides = Some(take(false).unwrap_or_default()),
+            "--set-grade" => o.set_grade = Some(take(false).unwrap_or_default()),
+            "--reviewer" => o.reviewer = Some(take(false).unwrap_or_default()),
+            "--reason" => o.reason = Some(take(false).unwrap_or_default()),
 
             // ── 문서 크기 상한(Size Gate) — 파이썬 판과 같은 이름·같은 뜻 ──
             // 어느 플래그든 0 이하는 '해제'로 읽는다(파이썬 판과 동일 규칙).
@@ -674,8 +742,10 @@ fn parse_args() -> Result<Opts, String> {
             // 파이썬 판에만 있는 옵션들 — 이 판에서는 할 일이 없다. 그래도 '모르는
             // 인자'로 막으면, 두 판을 같은 명령으로 부르던 호출부가 깨진다.
             // 값이 없는 것들:
+            // --embed 는 파이썬 판에서 '벡터만' 모드라, 등급 스트림과 함께면 막으려고 기억해 둔다.
+            "--embed" => o.embed_flag = true,
             "--classify"
-            | "--embed" | "--per-chunk" | "--normalize" | "--no-normalize"
+            | "--per-chunk" | "--normalize" | "--no-normalize"
             | "--timing" | "--recursive" | "-r" => {}
             // 분류 없이 본문만 — 파이썬 판과 같은 이름·같은 출력 모양이다.
             "--text-only" => o.text_only = true,
@@ -837,6 +907,8 @@ const REC_ORDER: &[&str] = &[
     "grade", "doctype", "error", "excluded", "why", "pii", "vector",
     // --textsave 표식은 판정값이 아니라 부속이다(파이썬 판과 같은 자리).
     "text_saved", "text_save_error",
+    // --write-grade-stream 결과(켠 실행에서만 있다) — 파이썬 판과 같은 자리.
+    "grade_stream",
     "meta", "elapsed_ms",
 ];
 
@@ -1502,6 +1574,69 @@ fn suggestion_json(res: &termsuggest::Suggestion) -> Value {
 /// 체계 JSON · 사전 · 본보기 · doc_rule.local.yaml 로 doc_rule.yaml 을 통째로 만들고,
 /// 방금 쓴 파일을 로더로 다시 읽어 검증한다.
 /// -out: 종료코드(0 정상 / 3 체계 JSON 없음 / 4 입력 오류·쓰기 실패)
+/// --seed-fill-title — 기준 문서에 제목(첫 줄)을 채운다(파이썬 run_seed_fill_title 과 같은 규칙 · 같은 안내).
+/// BM25 2차는 기준 문서의 제목 · 파일명을 비교한다. 예전에 등록한 줄에는 제목 칸이 없어 한 번 채운다.
+///  1) 제목이 이미 있는 줄은 건너뛴다
+///  2) 본문은 --text-dir/<지문>.txt 에서 먼저 찾고, 없으면 원본 파일을 다시 추출한다
+///  3) 하나라도 채웠으면 잠근 채로 다시 쓴다
+fn run_seed_fill_title(opts: &Opts) -> i32 {
+    let path = match opts.seeds.as_deref() {
+        Some(p) if std::path::Path::new(p).is_file() => p.to_string(),
+        other => errcodes::fail("bad_args", &format!(
+            "[MpowerClassify-rs] --seed-fill-title 은 기준 문서 파일이 필요합니다 (--seeds <class_seed.jsonl>): {}",
+            other.unwrap_or("(없음)")), None),
+    };
+    let _lock = match seedstore::SeedLock::acquire(&path) {
+        Ok(l) => l,
+        Err(e) => errcodes::fail("output_write_failed", &format!("[MpowerClassify-rs] {}", e), Some(path.as_str())),
+    };
+    let (mut rows, _skipped) = seedstore::load(&path);
+    let (mut filled, mut empty, mut nosrc, mut had) = (0u32, 0u32, 0u32, 0u32);
+    for r in rows.iter_mut() {
+        if r.get("title").and_then(|t| t.as_str()).map_or(false, |t| !t.is_empty()) {
+            had += 1;
+            continue;
+        }
+        let file = r.get("file").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let hash = r.get("hash").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        if !doctype::title_allowed(&file) {
+            // ppt · xls · xlsx 는 제목을 쓰지 않는다 — 원본을 다시 읽어 봐야 빈 제목이다
+            empty += 1;
+            continue;
+        }
+        let mut text: Option<String> = None;
+        if let (Some(dir), false) = (opts.text_dir.as_deref(), hash.is_empty()) {
+            let tp = std::path::Path::new(dir).join(format!("{}.txt", hash));
+            if let Ok(b) = std::fs::read(&tp) {
+                text = Some(String::from_utf8_lossy(&b).into_owned());
+            }
+        }
+        if text.is_none() && !file.is_empty() && std::path::Path::new(&file).is_file() {
+            // 저장해 둔 본문이 없으면 원본을 다시 읽는다
+            let p = std::path::Path::new(&file);
+            text = extract::extract_text_with(p, detect::detect_format(p), extract::mode(), &file).ok();
+        }
+        let Some(text) = text else { nosrc += 1; continue };
+        let t = bm25::title_of(&text, &file);
+        if t.is_empty() {
+            empty += 1;
+        } else if let Some(m) = r.as_object_mut() {
+            m.insert("title".into(), json!(t));
+            filled += 1;
+        }
+    }
+    if filled > 0 {
+        if let Err(e) = seedstore::save(&path, &rows) {
+            errcodes::fail("output_write_failed",
+                &format!("[MpowerClassify-rs] 기준 문서를 쓰지 못했습니다: {} :: {}", path, e), Some(path.as_str()));
+        }
+    }
+    // 결과 요약이라 --json-errors 여도 낸다(note! 는 그때 꺼진다 — 파이썬 판도 늘 낸다)
+    eprintln!("[seed-fill-title] 채움 {} · 제목 없음 {}(ppt·xls·빈 첫 줄) · 원문 못 찾음 {} · 이미 있음 {}",
+              filled, empty, nosrc, had);
+    0
+}
+
 fn run_build_doc_rule(opts: &Opts) -> i32 {
     // 출력은 '아직 없을 수 있는 파일'이라 is_file 로 거르지 않는다. 없으면 정책 폴더/exe 옆.
     let out_path = match &opts.doc_rules {
@@ -1891,13 +2026,19 @@ fn run_text_only(opts: &Opts) -> i32 {
         // 크기 상한은 분류 때와 같은 자를 쓴다 — 여기만 무제한이면 '이 판이 읽을 수
         // 있는 문서'의 범위가 모드마다 달라져 비교가 어긋난다.
         let limits_hit = limits::check_size_limit(path, fmt);
+        // 사이냅 모드에서 못 읽은 까닭(엔진별). 자체 파서 모드는 빈 문자열이라 예전 문장 그대로다.
+        let mut ext_why = String::new();
         let text = if let Some(why) = limits_hit.as_ref() {
             note!("[MpowerClassify-rs] 크기 초과: {} :: {}", job.label, why);
             code = 1;
             failed += 1;
             None
         } else {
-            extract::extract_text(path, fmt)
+            // 이번 실행의 추출 모드(자체 파서 · 사이냅 폴백 · 사이냅만)로 뽑는다.
+            match extract::extract_text_with(path, fmt, extract::mode(), &job.label) {
+                Ok(t) => Some(t),
+                Err(why) => { ext_why = why; None }
+            }
         };
         // 파서가 상한에서 멈췄다는 표식은 가져가서 비워 둔다(다음 문서에 안 묻게).
         let _ = limits::notes_take();
@@ -1909,8 +2050,13 @@ fn run_text_only(opts: &Opts) -> i32 {
             None => {
                 // 크기 초과로 이미 센 문서는 또 세지 않는다(text 가 None 인 까닭이 같다).
                 if limits_hit.is_none() { failed += 1; }
-                note!("[MpowerClassify-rs] 추출 실패: {} (감지={})",
-                          job.label, fmt.as_str());
+                if ext_why.is_empty() {
+                    note!("[MpowerClassify-rs] 추출 실패: {} (감지={})",
+                              job.label, fmt.as_str());
+                } else {
+                    note!("[MpowerClassify-rs] 추출 실패: {} (감지={}) :: {}",
+                              job.label, fmt.as_str(), ext_why);
+                }
                 code = 1;
             }
         }
@@ -2199,28 +2345,262 @@ fn glob_match(pat: &str, name: &str) -> bool {
 }
 
 //------------------------------------------------------------------
-// 추출기 선택 요청에 답한다 (이 판에는 사이냅이 없다)
-//=> 파이썬 판은 사이냅 문서필터(snf_exe)를 폴백으로 쓸 수 있고 --synap-only 로
-//   그것만 쓰게 할 수도 있다. 이 판은 사이냅을 아예 담고 있지 않다.
-//
-//   [왜 데몬 인자와 달리 멈추나] --daemon 은 결과가 같고 속도만 다르지만,
-//   --synap-only 는 **어떤 추출기로 본문을 뽑을지**를 정하는 요청이다. 조용히
-//   무시하면 다른 추출기로 돌면서 본문이 달라지고, 본문이 달라지면 PII 검출과
-//   등급까지 갈린다. "요청은 무시됐는데 결과는 그럴듯하게 나오는" 가장 나쁜 모양이라
-//   여기서 멈춘다. 두 판을 비교하는 자리에서 "Rust 는 snf 에서도 결과가 같더라"는
-//   잘못된 결론이 남는 것도 이 때문이다.
+// 추출 모드 정하기 — 자체 파서(기본) · 사이냅 폴백 · 사이냅만
+//=> 설계: plan/Rust-사이냅추출기-옵션-설계-20261019.html §3·§6
+//   기본은 지금처럼 자체 파서만 쓴다. 사이냅(snf_exe)은 명시할 때만 쓴다 — 옆에 있다고
+//   알아서 쓰면 같은 실행이 서버마다 다른 추출기로 돌아 본문 · 등급이 갈린다.
+//    1) 인자(--synap-fallback · --synap-only)가 있으면 그것, 없으면 환경변수
+//       CSOCLASSIFY_SYNAP_MODE(off · fallback · only)
+//    2) 두 인자를 함께 주면 1006 mode_conflict
+//    3) 사이냅 모드면 snf_exe 를 찾는다 — 없거나 실행할 수 없으면 문서를 한 건도 읽기
+//       전에 1016 synap_missing 으로 멈춘다(옵션이 무시된 채 그럴듯한 결과가 나오지 않게)
+//    4) 정한 모드를 일반 로그에 한 줄 남긴다(어느 추출기로 돌았는지 나중에 안다)
 //
 // -in: opts = 파싱된 실행 옵션
 //
-// -out: 없음 (--synap-only 면 종료)
-// -out: error = --synap-only 면 unsupported_option 으로 종료(코드 3)
+// -out: 없음(extract::set_mode 로 이번 실행의 모드를 새긴다)
+// -out: error = 1006 mode_conflict · 1016 synap_missing · 1003 bad_args(환경변수 값이 틀림)로 종료(코드 3)
 //------------------------------------------------------------------
 fn handle_extractor_args(opts: &Opts) {
-    if opts.synap_only {
-        errcodes::fail("unsupported_option",
-            "[MpowerClassify-rs] --synap-only 는 이 판에서 지원하지 않습니다 — 이 빌드에는 사이냅 문서필터(snf_exe)가 들어 있지 않고, 이 판은 언제나 자체 파서로 추출합니다. 사이냅으로 뽑아 비교하려면 파이썬 판(MpowerClassify.exe --synap-only)을 쓰십시오. 조용히 다른 추출기로 돌리면 본문이 달라져 등급까지 갈리므로 멈춥니다.",
-            None);
+    if opts.synap_fallback && opts.synap_only {
+        errcodes::fail("mode_conflict",
+            "[MpowerClassify-rs] --synap-fallback 과 --synap-only 는 함께 쓸 수 없습니다 — 하나만 고르세요.", None);
     }
+    // 인자가 환경변수를 이긴다. 인자가 없을 때만 운영용 환경변수를 본다.
+    let want = if opts.synap_only {
+        "only".to_string()
+    } else if opts.synap_fallback {
+        "fallback".to_string()
+    } else {
+        std::env::var("CSOCLASSIFY_SYNAP_MODE").unwrap_or_default().trim().to_ascii_lowercase()
+    };
+    let mode = match want.as_str() {
+        "" | "off" => {
+            // --synap-path 만 주고 모드를 안 고르면 쓰이지 않는다 — 조용히 넘기지 않고 알린다.
+            if opts.synap_path.is_some() {
+                note!("[MpowerClassify-rs] --synap-path 는 --synap-fallback 또는 --synap-only 와 함께 쓸 때만 쓰입니다(지금은 자체 파서만 씁니다).");
+            }
+            extract::ExtractMode::Builtin
+        }
+        "fallback" | "only" => {
+            let snf = match synap::find_snf(opts.synap_path.as_deref()) {
+                Ok(p) => p,
+                Err(why) => errcodes::fail("synap_missing",
+                    &format!("[MpowerClassify-rs] {}", why), opts.synap_path.as_deref()),
+            };
+            if want == "only" { extract::ExtractMode::SynapOnly(snf) } else { extract::ExtractMode::SynapFallback(snf) }
+        }
+        other => errcodes::fail("bad_args",
+            &format!("[MpowerClassify-rs] CSOCLASSIFY_SYNAP_MODE 값이 올바르지 않습니다: {} (off · fallback · only)", other), None),
+    };
+    match &mode {
+        extract::ExtractMode::Builtin => linfo!("실행 추출기={}", mode.name()),
+        extract::ExtractMode::SynapFallback(p) | extract::ExtractMode::SynapOnly(p) =>
+            linfo!("실행 추출기={} snf={}", mode.name(), p.display()),
+    }
+    extract::set_mode(mode);
+}
+
+//------------------------------------------------------------------
+// 등급 스트림 인자 검사 — 문서를 읽기 전에 끝낸다
+//=> 설계: plan/등급스트림-기록-옵션-설계-20261019.html §03 · §08. 파이썬 판 check_grade_stream_args 와 같다.
+//    1) 보조 옵션만 주면 1003 (켜는 옵션 없이 무시된 채 도는 일을 막는다)
+//    2) --grade-stream-unclassified 값은 skip · none 만 — 그 밖이면 1003
+//    3) 분류 결과를 내지 않는 모드(--text-only · --embed · --seed-add · 데몬 명령 ·
+//       --build-doc-rule · --suggest-terms)와 함께면 1006
+//    4) Windows 가 아니면(ADS 없음) 1012
+//
+// -in: opts = 해석된 인자
+//
+// -out: 없음(문제가 없으면 돌아온다)
+// -out: error = 위 조건이면 errcodes::fail 로 종료(코드 3)
+//------------------------------------------------------------------
+fn check_grade_stream_args(opts: &Opts) {
+    if !opts.write_grade_stream {
+        if opts.grade_stream_unclassified.is_some() || opts.grade_stream_update_time {
+            errcodes::fail("bad_args",
+                "[MpowerClassify-rs] --grade-stream-unclassified · --grade-stream-update-time 은 --write-grade-stream 과 함께 줘야 합니다.", None);
+        }
+        return;
+    }
+    if let Some(v) = &opts.grade_stream_unclassified {
+        if v != "skip" && v != "none" {
+            errcodes::fail("bad_args",
+                &format!("[MpowerClassify-rs] --grade-stream-unclassified 값은 skip 또는 none 입니다: {:?}", v), None);
+        }
+    }
+    // 분류 결과가 없는 모드에서는 쓸 등급이 없다 — 조용히 무시하지 않고 멈춘다
+    let modes = [
+        ("--text-only", opts.text_only),
+        ("--embed", opts.embed_flag),
+        ("--seed-add", !opts.seed.add.is_empty() || opts.seed.add_from.is_some()),
+        ("--serve", opts.serve), ("--status", opts.status), ("--stop", opts.stop),
+        ("--build-doc-rule", opts.build_doc_rule),
+        ("--seed-fill-title", opts.seed_fill_title),
+        ("--suggest-terms", opts.suggest_terms.is_some()),
+    ];
+    for (name, used) in modes {
+        if used {
+            errcodes::fail("mode_conflict", &format!(
+                "[MpowerClassify-rs] --write-grade-stream 은 {} 와 함께 쓸 수 없습니다 — 분류 결과를 내는 실행에서만 등급을 씁니다.", name), None);
+        }
+    }
+    if !gradestream::supported() {
+        errcodes::fail("unsupported_option",
+            "[MpowerClassify-rs] --write-grade-stream 은 Windows(NTFS)에서만 쓸 수 있습니다 — 이 플랫폼에는 대체 데이터 스트림이 없습니다.", None);
+    }
+}
+
+//------------------------------------------------------------------
+// 사람 등급 지정 인자 검사 — 문서를 읽기 전에 끝낸다
+//=> 설계: plan/사람등급지정-수동오버라이드-설계-20261020.html §08. 파이썬 판 check_override_args 와 같다.
+//    1) --set-grade 값은 C · S · O · NONE 만 — 그 밖이면 1003
+//    2) --set-grade 는 --file 하나에만. --dir 이면 1006, 대상이 없으면 1003, 분류 결과가 없는 모드와 함께면 1006
+//    3) 결정을 목록에 덧붙이려면(--grade-overrides) --reviewer · --reason 필수(1003)
+//    4) --reviewer · --reason 만 따로 주면 1003
+//    5) 분류에 --grade-overrides 를 주면 그 파일이 있어야 한다 — 없으면 2009
+//
+// -in: opts = 해석된 인자
+//
+// -out: 없음(문제가 없으면 돌아온다)
+// -out: error = 위 조건이면 errcodes::fail 로 종료
+//------------------------------------------------------------------
+fn check_override_args(opts: &Opts) {
+    let filled = |v: &Option<String>| v.as_deref().map_or(false, |s| !s.trim().is_empty());
+    if let Some(sg) = &opts.set_grade {
+        if !matches!(sg.trim().to_ascii_uppercase().as_str(), "C" | "S" | "O" | "NONE") {
+            errcodes::fail("bad_args", &format!("[MpowerClassify-rs] --set-grade 값은 C · S · O · NONE 입니다: {:?}", sg), None);
+        }
+        if opts.dir.is_some() {
+            errcodes::fail("mode_conflict",
+                "[MpowerClassify-rs] --set-grade 는 --dir 과 함께 쓸 수 없습니다 — 폴더 전체를 한 등급으로 정하는 실수를 막으려는 것입니다. 문서는 --file 로 하나씩 주세요.", None);
+        }
+        let modes = [
+            ("--text-only", opts.text_only), ("--embed", opts.embed_flag),
+            ("--seed-add", !opts.seed.add.is_empty() || opts.seed.add_from.is_some()),
+            ("--serve", opts.serve), ("--status", opts.status), ("--stop", opts.stop),
+        ];
+        for (name, used) in modes {
+            if used {
+                errcodes::fail("mode_conflict", &format!("[MpowerClassify-rs] --set-grade 는 {} 와 함께 쓸 수 없습니다.", name), None);
+            }
+        }
+        if opts.file.is_none() {
+            errcodes::fail("bad_args", "[MpowerClassify-rs] --set-grade 는 --file 로 대상 문서를 줘야 합니다.", None);
+        }
+        if opts.grade_overrides.is_some() && !(filled(&opts.reviewer) && filled(&opts.reason)) {
+            errcodes::fail("bad_args",
+                "[MpowerClassify-rs] --set-grade 결정을 --grade-overrides 에 덧붙이려면 --reviewer 와 --reason 을 함께 줘야 합니다(감사 기록).", None);
+        }
+        return;
+    }
+    if opts.reviewer.is_some() || opts.reason.is_some() {
+        errcodes::fail("bad_args",
+            "[MpowerClassify-rs] --reviewer · --reason 은 --set-grade 와 --grade-overrides 를 함께 줄 때만 쓰입니다.", None);
+    }
+    if let Some(ov) = &opts.grade_overrides {
+        if !Path::new(ov).is_file() {
+            errcodes::fail("grade_overrides_missing", &format!("[MpowerClassify-rs] 사람 결정 목록 파일이 없습니다: {}", ov), Some(ov));
+        }
+    }
+}
+
+//------------------------------------------------------------------
+// --set-grade — 문서 하나에 등급을 바로 정한다(파이썬 run_set_grade 와 같다)
+//=> 문서를 읽거나 판정하지 않는다. 지문 · 결과 레코드 · (선택) 파일 스트림 · (선택) 결정 목록.
+//
+// -in: opts = 해석된 인자
+//
+// -out: 없음(끝나면 프로세스를 끝낸다)
+// -out: error = 대상 없음 3004 · 스트림 실패 4002 · 목록 쓰기 실패 2010 — 종료코드로 알린다
+//------------------------------------------------------------------
+fn run_set_grade(opts: &Opts) -> ! {
+    let path = opts.file.clone().unwrap_or_default();
+    let grade = gradeoverride::norm_grade(Some(&json!(opts.set_grade.clone().unwrap_or_default())));
+    let label = grade.clone().unwrap_or_else(|| "NONE".to_string());
+    let mut code = 0;
+    let mut rec;
+    if !Path::new(&path).is_file() {
+        rec = json!({"file": path, "grade": Value::Null,
+                     "error": {"kind": "file_missing", "reason": "file_missing", "message": "파일이 없습니다"},
+                     "meta": {"ts": now_iso()}});
+        errcodes::set_status("file_missing", &format!("[MpowerClassify-rs] 파일이 없습니다: {}", path));
+        errcodes::set_counts(1, 1);
+        code = errcodes::exit_of("file_missing");
+    } else {
+        let doc_hash = file_hash(Path::new(&path));
+        let info = json!({"reviewer": opts.reviewer, "reason": opts.reason, "ts": now_iso(),
+                          "matched_by": "set-grade", "kind": "change", "applied": true});
+        rec = json!({"file": path, "hash": doc_hash, "grade": grade,
+                     "why": {"security": {"method": "manual_override", "decided_by": ["reviewer"], "override": info}},
+                     "meta": {"ts": now_iso()}});
+        // 결정 목록에 남길 '이전 등급' — 지금 파일에 써 있는 값(모르면 None)
+        let mut old: Option<String> = None;
+        if gradestream::supported() {
+            let (st, cur, _) = gradestream::read_state(&path);
+            if matches!(st, gradestream::State::Marked) {
+                old = cur.map(|c| gradestream::code_grade(c).to_string());
+            }
+        }
+        if opts.write_grade_stream {
+            let res = gradestream::mark(&path, &label, !opts.grade_stream_update_time);
+            linfo!("등급스트림 state={} file={} value={}", res["state"].as_str().unwrap_or(""), path, label);
+            if res["state"] == "failed" {
+                errcodes::set_status("grade_stream_write_failed", &format!(
+                    "[MpowerClassify-rs] 등급 스트림을 쓰지 못했습니다: {}", res["reason"].as_str().unwrap_or("")));
+                code = errcodes::exit_of("grade_stream_write_failed");
+            }
+            rec["grade_stream"] = res;
+        }
+        if let Some(ov) = &opts.grade_overrides {
+            if let Err(e) = gradeoverride::append_entry(ov, &path, old.as_deref(), grade.as_deref(),
+                    opts.reason.as_deref().unwrap_or(""), opts.reviewer.as_deref().unwrap_or(""), doc_hash.as_deref()) {
+                errcodes::set_status("grade_overrides_write_failed",
+                    &format!("[MpowerClassify-rs] 사람 결정 목록에 쓰지 못했습니다: {} ({})", ov, e));
+                code = errcodes::exit_of("grade_overrides_write_failed");
+            }
+        }
+        linfo!("사람등급 지정 file={} grade={} 목록={}", path, label, opts.grade_overrides.as_deref().unwrap_or("-"));
+        errcodes::set_counts(1, 0);
+    }
+    // 출력 — --simple 이면 문서명 · 해시 · 등급(파이썬 _simple_record 와 같은 칸)
+    let out_rec = if opts.simple {
+        let mut m = serde_json::Map::new();
+        m.insert("file".into(), rec["file"].clone());
+        m.insert("hash".into(), rec.get("hash").cloned().unwrap_or(Value::Null));
+        m.insert("grade".into(), rec["grade"].clone());
+        if let Some(e) = rec.get("error") {
+            m.insert("error".into(), e.get("reason").cloned().unwrap_or(Value::Null));
+        }
+        Value::Object(m)
+    } else { order_record(&rec) };
+    let mut out: Vec<Value> = vec![out_rec];
+    if errcodes::quiet() && opts.out.is_some() {
+        out.push(errcodes::status_object(code, Some(&path)));
+    }
+    // 상태 줄을 결과 파일에 함께 넣을 때만 json 이 배열이 된다(파이썬 판과 같다)
+    let body = if opts.fmt == "jsonl" {
+        out.iter().map(|r| serde_json::to_string(r).unwrap() + "\n").collect::<String>()
+    } else if out.len() == 1 {
+        format!("{}\n", serde_json::to_string_pretty(&out[0]).unwrap())
+    } else {
+        format!("{}\n", serde_json::to_string_pretty(&out).unwrap())
+    };
+    match &opts.out {
+        Some(p) => {
+            if let Some(parent) = Path::new(p).parent() {
+                if !parent.as_os_str().is_empty() { let _ = std::fs::create_dir_all(parent); }
+            }
+            if let Err(e) = std::fs::write(p, &body) {
+                errcodes::fail("output_write_failed", &format!("[MpowerClassify-rs] 출력 저장 실패 {}: {}", p, e), Some(p));
+            }
+        }
+        None => print!("{}", body),
+    }
+    let stream_note = rec.get("grade_stream").map(|g| format!(" (파일 스트림 {})", g["state"].as_str().unwrap_or(""))).unwrap_or_default();
+    let list_note = opts.grade_overrides.as_ref().map(|o| format!(" · 결정 목록 {}", o)).unwrap_or_default();
+    note!("[MpowerClassify-rs] 사람 등급 지정: {} → {}{}{}", path, label, stream_note, list_note);
+    std::process::exit(errcodes::finish(code, Some(&path)));
 }
 
 //------------------------------------------------------------------
@@ -2316,7 +2696,8 @@ fn default_seed_path() -> Option<String> {
 // -out: i32 = 0 전부 등록 · 1 일부 실패 · 2 한 건도 못 함
 // -out: error = 파일을 못 쓰면 output_write_failed 로 끝낸다(exit 1)
 //------------------------------------------------------------------
-fn finish_seed_add(opts: &Opts, plan: &[seedcli::Plan], records: &[Value]) -> i32 {
+fn finish_seed_add(opts: &Opts, plan: &[seedcli::Plan], records: &[Value],
+                   titles: &std::collections::HashMap<String, String>) -> i32 {
     // 레코드를 경로로 찾을 수 있게 정규화 키로 색인한다(표기만 다른 같은 문서 대비).
     let mut by_file: std::collections::HashMap<String, &Value> = Default::default();
     for r in records {
@@ -2384,6 +2765,17 @@ fn finish_seed_add(opts: &Opts, plan: &[seedcli::Plan], records: &[Value]) -> i3
         if !p.doctype.is_empty() {
             seedstore::set_axis(&mut rows, &p.file, "doctype", json!(p.doctype),
                                 &p.reviewer, seedcli::SOURCE, &p.note, Some(&vec), hash);
+        }
+        // BM25 2차가 비교할 제목(첫 줄)도 함께 남긴다 — 본문은 남기지 않는다(설계서 업무분류-2차-BM25 §09).
+        if let Some(t) = titles.get(&seedstore::norm_file(&p.file)).filter(|t| !t.is_empty()) {
+            let k = seedstore::norm_file(&p.file);
+            for r in rows.iter_mut() {
+                let same = r.get("file").and_then(|v| v.as_str())
+                    .map(|f| seedstore::norm_file(f)).as_deref() == Some(&k);
+                if same {
+                    if let Some(m) = r.as_object_mut() { m.insert("title".into(), json!(t)); }
+                }
+            }
         }
         // 문서 ID — 목록이 준 값이 먼저다(웹이 아는 진짜 신분증).
         if let Some(id) = seedcli::pick_doc_id(p, rec) {
@@ -2615,12 +3007,29 @@ fn main() {
 
     // 데몬 관련 요청에 답한다 — 규칙셋을 읽기 전에 해야 한다(--status 는 정책
     // 파일과 무관한 질의라, 규칙셋이 없다고 엉뚱한 곳에서 멈추면 안 된다).
+    // 등급 스트림 옵션 조합이 틀렸거나 쓸 수 없는 플랫폼이면 읽기 전에 끝낸다(데몬 명령보다 먼저 —
+    // --serve 와 함께 준 실수를 조용히 넘기지 않는다).
+    check_grade_stream_args(&opts);
+    // 사람 등급 지정 인자(--set-grade · --grade-overrides)도 읽기 전에 본다.
+    check_override_args(&opts);
+    // 결정 목록은 지문으로 잇고 내용 변경을 알아야 하므로 지문을 구한다.
+    if opts.grade_overrides.is_some() && opts.set_grade.is_none() {
+        opts.hash = true;
+    }
     handle_daemon_args(&opts);
     handle_extractor_args(&opts);
+    // --set-grade 는 문서를 읽지 않는 별도 모드다 — 규칙 · 모델을 올리기 전에 끝낸다.
+    if opts.set_grade.is_some() {
+        run_set_grade(&opts);
+    }
 
     // 업무분류 규칙 자동 생성 모드 — 체계 JSON 과 정책 폴더만 있으면 된다. 규칙셋을
     // 먼저 읽는 아래 흐름을 타면 "cso_rule.yaml 이 없다"고 엉뚱한 곳에서 멈추고,
     // 만들려던 doc_rule.yaml 이 아직 옛 모양이라는 이유로 축 로드에서 또 걸린다.
+    // 기준 문서 제목 채우기 — 기준 문서 파일과 본문(또는 원본)만 본다. 규칙셋을 읽기 전에 끝낸다.
+    if opts.seed_fill_title {
+        std::process::exit(errcodes::finish(run_seed_fill_title(&opts), None));
+    }
     if opts.build_doc_rule {
         std::process::exit(errcodes::finish(run_build_doc_rule(&opts), None));
     }
@@ -3077,6 +3486,12 @@ fn main() {
                   // 안(doctype.embed)에 넣는다 — 축이 둘이라는 사실이 레코드
                   // 모양에서 드러나야 한다. 조립은 아래에서 하므로 여기 들고 있는다.
                   dt_embed: Option<Value>,
+                  // 벡터 2차가 낸 업무분류 후보(후보, 판정 방법, 1등 유사도). 바로 합치지 않고
+                  // 들고 있다가 BM25 1위와 한 번에 합친다(설계서 업무분류-2차-BM25 §08).
+                  dt_embed_vals: Option<(Vec<(String, f64)>, String, f64)>,
+                  // 1차 업무분류가 본 파일 경로(sig_label). 정상 추출 경로에서만 Some —
+                  // BM25 제목 · 파일명 재료다(추출 실패 문서는 파이썬처럼 BM25 를 보지 않는다).
+                  sig: Option<String>,
                   // 이 문서가 나온 최상위 압축 경로(일반 파일이면 None).
                   // 압축 '자체'의 집계 등급(내부 최고 위험)을 매기는 데 쓴다.
                   origin: Option<String> }
@@ -3266,7 +3681,7 @@ fn main() {
                         }
                     }
                     items.push(Item {
-                        dt_embed: None, rec,
+                        dt_embed: None, dt_embed_vals: None, sig: None, rec,
                         grade: None, text: String::new(), seed_eligible: false,
                         vector: None, file: display.clone(), origin: None,
                         dt: dt_axis.as_ref().map(|(taxonomy, drs)|
@@ -3321,10 +3736,17 @@ fn main() {
         } else {
             None
         };
+        // 사이냅 모드에서 못 읽은 까닭(엔진별). 자체 파서 모드는 빈 문자열이라 예전 문장 그대로다.
+        let mut ext_why = String::new();
         let extracted = if size_reason.is_some() || vol_reason.is_some() {
             None
         } else {
-            extract::extract_text(path, fmt)
+            // 이번 실행의 추출 모드(자체 파서 · 사이냅 폴백 · 사이냅만)로 뽑는다.
+            // 로그에는 임시 경로 대신 원래 경로(shown)를 적는다.
+            match extract::extract_text_with(path, fmt, extract::mode(), &shown) {
+                Ok(t) => Some(t),
+                Err(why) => { ext_why = why; None }
+            }
         };
         // 파서가 '상한에서 멈췄다'를 남겼으면 가져온다(G5 관측). 가져가면 비워지므로
         // 다음 문서에 지난 표식이 남지 않는다.
@@ -3352,15 +3774,21 @@ fn main() {
                         n_size_skipped += 1;
                         ("size_limit", why.clone())
                     }
-                    (None, None) => {
+                    (None, None) if ext_why.is_empty() => {
                         errlog::err(&format!("[추출실패] {} (감지={})",
                                              shown, fmt.as_str()));
                         ("extract_failed", "텍스트를 추출하지 못했습니다".to_string())
                     }
+                    // 사이냅 모드 — 엔진마다 왜 못 읽었는지를 사유에 붙인다(파이썬 판과 같은 모양).
+                    (None, None) => {
+                        errlog::err(&format!("[추출실패] {} (감지={}) :: {}",
+                                             shown, fmt.as_str(), ext_why));
+                        ("extract_failed", format!("텍스트를 추출하지 못했습니다 — {}", ext_why))
+                    }
                 };
                 fail += 1;
                 items.push(Item {
-                    dt_embed: None,
+                    dt_embed: None, dt_embed_vals: None, sig: None,
                     rec: json!({
                         "file": display,
                         "grade": Value::Null,
@@ -3622,7 +4050,7 @@ fn main() {
             eprintln!("[progress] {}/{} {}", done + 1, files.len(), shown);
         }
         items.push(Item { rec, grade, text, seed_eligible: seed_elig, vector: None, file: display, dt,
-                          dt_embed: None,
+                          dt_embed: None, dt_embed_vals: None, sig: Some(sig_label.clone()),
                           origin: job.origin.clone() });
     }
 
@@ -3673,6 +4101,9 @@ fn main() {
         embed_mode == "all" || it.grade.is_none() || it.seed_eligible || dt_undecided
     };
     let need_any = items.iter().any(&need_vec);
+    // 2차 대상 표시는 지금(전파로 등급이 바뀌기 전) 정해 둔다 — 파이썬은 파일마다 도는 자리에서
+    // need_vec 을 보고 BM25 재료를 남기므로, 보안 전파 뒤에 다시 보면 대상이 달라진다.
+    let need_flags: Vec<bool> = items.iter().map(&need_vec).collect();
     if embed_mode != "none" && !need_any {
         // 조용히 넘어가면 "임베딩이 안 돌았다"와 "임베딩이 필요 없었다"가 구분되지 않는다.
         // 뒤에 붙던 [전파] 요약줄도 이 경우엔 안 나가므로, 그 자리를 이 줄이 대신한다.
@@ -3750,7 +4181,7 @@ fn main() {
                 // doctype 축 전파(설계서 5-4). security 와 달리 "이미 후보가 있어도"
                 // embed 가 후보를 더할 수 있다 — 다중 라벨이라 상향 전용이 아니라
                 // 추가 전용이다. 그래서 "이미 분류됐으면 건너뛴다"는 조건이 없다.
-                if let Some((taxonomy, drs)) = dt_axis.as_ref() {
+                if let Some((_, drs)) = dt_axis.as_ref() {
                     let dt_seeds = match &seeds_path {
                         Some(p) => propagate::DoctypeSeedIndex::from_seed_file(p),
                         None => propagate::DoctypeSeedIndex::empty(),
@@ -3758,37 +4189,28 @@ fn main() {
                     // 정책 파일의 embed: 블록이 이 단계의 스위치이자 임계값이다.
                     // 스위치가 꺼져 있으면 조용히 넘어가지 말고 이유를 남긴다 —
                     // 그러지 않으면 "왜 벡터가 안 도는지"를 아무도 못 찾는다.
-                    if dt_seeds.size() > 0 && !drs.embed.enabled {
-                        note!("[전파][업무분류] seed {}건이 있으나 doc_rule.yaml 의 \
-embed.enabled 가 false 라 2단계를 건너뜁니다", dt_seeds.size());
-                    } else if dt_seeds.size() > 0 {
+                    // (embed.enabled 가 꺼진 경우의 안내는 아래 '2차 합치기'에서 낸다 — BM25 만
+                    //  켜진 실행이면 2차가 여전히 돌기 때문이다)
+                    if dt_seeds.size() > 0 && drs.embed.enabled {
                         let dt_params = propagate::DoctypeParams {
                             k: drs.embed.k as usize,
                             dup_threshold: drs.embed.dup_threshold as f32,
                             min_sim: drs.embed.min_sim as f32,
                             min_share: drs.embed.min_share as f32,
                         };
-                        let mut contributed = 0u32;
                         let dt_total = items.len();
                         for (done, it) in items.iter_mut().enumerate() {
                             if opts.progress {
                                 eprintln!("[progress][전파·업무분류] {}/{} {}", done + 1, dt_total, it.file);
                             }
-                            let existing = match &it.dt { Some(sig) => sig.values.clone(), None => continue };
+                            if it.dt.is_none() { continue; }
                             let vec = match &it.vector { Some(v) => v.clone(), None => continue };
                             let esig = propagate::propagate_doctype(&vec, &dt_seeds, dt_params);
                             it.dt_embed = Some(esig.as_dict());
-                            let embed_values: Vec<(String, f64)> = esig.values.iter()
-                                .map(|(id, c)| (id.clone(), *c as f64)).collect();
-                            let merged = doctype::merge_embed_candidates(&existing, &embed_values, taxonomy, &drs.conflict,
-                                                       Some(drs.defaults.embed_cap),
-                                                       (esig.method.as_str(), esig.top_sim as f64));
-                            if merged.values.iter().any(|v| v.from.iter().any(|f| f == "embed")) {
-                                contributed += 1;
-                            }
-                            it.dt = Some(merged);
+                            // 합치기는 아래 '2차 합치기'에서 BM25 1위와 함께 한 번에 한다
+                            it.dt_embed_vals = Some((esig.values.iter().map(|(id, c)| (id.clone(), *c as f64)).collect(),
+                                                     esig.method.clone(), esig.top_sim as f64));
                         }
-                        note!("[전파][업무분류] seed={} embed기여={}", dt_seeds.size(), contributed);
                     }
                     // seed 가 없는 경우의 안내는 위(모드 결정 직후)에서 이미 냈다 — 그쪽은
                     // auto_prop 이 아예 꺼진 경우까지 잡아 주므로 여기서 또 내지 않는다.
@@ -3813,6 +4235,89 @@ embed.enabled 가 false 라 2단계를 건너뜁니다", dt_seeds.size());
         }
     }
 
+    // 2차 합치기 — 위에서 계산해 둔 벡터 후보와 BM25 1위를 1차 후보에 한 번에 얹는다
+    // (설계서 업무분류-2차-BM25 §08 · §16). BM25 는 벡터가 없어도 돈다 — 모델이 없거나
+    // 임베딩이 실패한 실행에서도 제목 · 파일명은 있기 때문이다. 그래서 임베딩 블록 밖에 둔다.
+    if auto_prop && embed_mode != "none" && need_any {
+        if let Some((taxonomy, drs)) = dt_axis.as_ref() {
+            let dt_seed_n = match &seeds_path {
+                Some(p) => propagate::DoctypeSeedIndex::from_seed_file(p).size(),
+                None => 0,
+            };
+            let bm = bm25_context(drs, seeds_path.as_deref());
+            let bm_thr = bm.as_ref().and_then(|b| b.1);
+            if dt_seed_n > 0 && !drs.embed.enabled && bm_thr.is_none() {
+                // 정책 파일의 embed: · bm25: 블록이 이 단계의 스위치다. 둘 다 꺼져 있으면
+                // 조용히 넘어가지 말고 이유를 남긴다 — "왜 2차가 안 도는지"를 아무도 못 찾는다.
+                note!("[전파][업무분류] seed {}건이 있으나 doc_rule.yaml 의 \
+embed.enabled 가 false 라 2단계를 건너뜁니다", dt_seed_n);
+            } else if dt_seed_n > 0 {
+                let (mut contributed, mut no_vector) = (0u32, 0u32);
+                let (mut picked, mut agree, mut alone, mut name_only) = (0u32, 0u32, 0u32, 0u32);
+                let no_skip: std::collections::HashSet<usize> = std::collections::HashSet::new();
+                for (i, it) in items.iter_mut().enumerate() {
+                    let existing = match &it.dt { Some(sig) => sig.values.clone(), None => continue };
+                    let emb = it.dt_embed_vals.take();
+                    let mut pick: Option<doctype::Bm25Pick> = None;
+                    if let (Some((idx, Some(thr))), Some(sig), true) = (bm.as_ref(), it.sig.as_ref(), need_flags[i]) {
+                        let sp = &drs.bm25;
+                        let title = bm25::title_of(&it.text, sig);
+                        let q = bm25::field_tokens(&title, sig, sp, &drs.head_noise);
+                        let rk = idx.rank(&q, &no_skip);
+                        if let Some(top) = bm25::pick(&rk, *thr, sp.min_margin) {
+                            let part = rk.parts.get(&top).cloned().unwrap_or_default();
+                            let (pt, pn) = (*part.get("title").unwrap_or(&0.0), *part.get("name").unwrap_or(&0.0));
+                            let agrees = emb.as_ref().map_or(false, |(v, _, _)| v.iter().any(|(d, _)| *d == top));
+                            if pt > 0.0 || agrees || sp.name_only_allow {
+                                pick = Some(doctype::Bm25Pick {
+                                    score: rk.ranked[0].1, threshold: *thr, title: pt, name: pn,
+                                    words: rk.words.get(&top).cloned().unwrap_or_default(), dc_id: top,
+                                });
+                            }
+                        }
+                    }
+                    if emb.is_none() && pick.is_none() {
+                        // 벡터도 BM25 1위도 없으면 1차 결과를 그대로 둔다(파이썬과 같다).
+                        no_vector += 1;
+                        continue;
+                    }
+                    let merged = doctype::merge_second_stage(
+                        &existing,
+                        emb.as_ref().map(|(v, m, t)| (v.as_slice(), (m.as_str(), *t))),
+                        taxonomy, &drs.conflict, Some(drs.defaults.embed_cap),
+                        pick.as_ref().map(|p| (p, &drs.bm25)));
+                    if merged.values.iter().any(|v| v.from.iter().any(|f| f == "embed")) {
+                        contributed += 1;
+                    }
+                    if let Some(p) = &pick {
+                        picked += 1;
+                        if let Some(got) = merged.values.iter().find(|v| v.dc_id == p.dc_id) {
+                            if got.from.iter().any(|f| f == "bm25") {
+                                if got.basis == "bm25_name_only" { name_only += 1; }
+                                else if got.from.iter().any(|f| f == "embed") { agree += 1; }
+                                else if got.basis == "bm25" { alone += 1; }
+                            }
+                        }
+                    }
+                    it.dt = Some(merged);
+                }
+                note!("[전파][업무분류] seed={} embed기여={} 벡터없음={}", dt_seed_n, contributed, no_vector);
+                if bm_thr.is_some() {
+                    note!("[전파][업무분류][bm25] 후보={} 합의={} 단독={} 파일명단독={}",
+                          picked, agree, alone, name_only);
+                }
+            }
+        }
+    }
+
+    // 기준 문서 등록이면 문서마다 제목(첫 줄)을 떠 둔다 — 아래에서 본문이 사라지기 전에.
+    let seed_titles: std::collections::HashMap<String, String> = if seed_plan.is_empty() {
+        Default::default()
+    } else {
+        items.iter().filter_map(|it| it.sig.as_ref().map(|sig|
+            (seedstore::norm_file(&it.file), bm25::title_of(&it.text, sig)))).collect()
+    };
+
     // 3차: 집계 + 출력 레코드 조립.
     let (mut c, mut s_, mut o_, mut none) = (0u32, 0u32, 0u32, 0u32);
     // 업무분류 집계(7-3 뿌리 카테고리 롤업). 이 축이 한 건도 안 돌았으면 0 으로
@@ -3830,7 +4335,35 @@ embed.enabled 가 false 라 2단계를 건너뜁니다", dt_seeds.size());
     let mut records: Vec<Value> = vec![];
     // --simple 일 때만 채운다 — 감사용 전체 결과 파일에 쓸 원본 레코드.
     let mut full_records: Vec<Value> = vec![];
+    // 등급 스트림 기록기 — --write-grade-stream 일 때만 만든다(꺼진 실행은 파일을 건드리지 않는다).
+    // 전파까지 끝난 이 루프가 등급이 최종인 자리라 여기서 쓴다(설계 §10).
+    let mut grade_marker = if opts.write_grade_stream {
+        Some(gradestream::Marker::new(
+            opts.grade_stream_unclassified.as_deref() == Some("none"),
+            // 기본은 시각 보존 — --grade-stream-update-time 일 때만 수정 시각이 바뀐다
+            !opts.grade_stream_update_time))
+    } else { None };
+    // 사람 결정 목록 — 판정 · 전파가 끝난 이 루프에서 사람 등급이 이긴다(설계: 사람등급지정 §03).
+    let mut ov_applier = match &opts.grade_overrides {
+        Some(p) => match gradeoverride::load(p) {
+            Ok(idx) => {
+                note!("[MpowerClassify-rs] 사람 결정 목록: {} · 보안등급 결정 {}건{}", p, idx.latest.len(),
+                      if idx.broken > 0 { format!(" · 읽지 못한 줄 {}건", idx.broken) } else { String::new() });
+                Some(gradeoverride::Applier::new(idx))
+            }
+            Err(e) => errcodes::fail("grade_overrides_missing",
+                &format!("[MpowerClassify-rs] 사람 결정 목록을 읽지 못했습니다: {} ({})", p, e), Some(p)),
+        },
+        None => None,
+    };
     for it in items {
+        let mut it = it;
+        // 사람 결정을 먼저 적용해, 아래 등급별 건수 · 압축 집계가 사람 등급을 쓰게 한다.
+        if let Some(ap) = ov_applier.as_mut() {
+            if ap.apply(&mut it.rec) {
+                it.grade = it.rec.get("grade").and_then(|v| v.as_str()).and_then(Grade::from_str_exact);
+            }
+        }
         match it.grade {
             Some(Grade::C) => c += 1,
             Some(Grade::S) => s_ += 1,
@@ -3899,6 +4432,10 @@ embed.enabled 가 false 라 2단계를 건너뜁니다", dt_seeds.size());
             }
         }
 
+        // 등급 스트림은 출력 모양(--summary · --simple)과 상관없이 쓴다 — 기록은 판정의 결과다.
+        if let Some(gm) = grade_marker.as_mut() {
+            gm.apply(&mut rec, it.origin.is_some());
+        }
         if opts.summary_only { continue; }
         let out_rec = if opts.simple {
             // 읽는 차례로 넣는다 — 무엇을(file·hash·doc_id) → 어떻게 됐나(grade·doctype)
@@ -3960,11 +4497,16 @@ embed.enabled 가 false 라 2단계를 건너뜁니다", dt_seeds.size());
     // 이게 없으면 결과에 압축파일이 아예 안 보여, "이 zip 은 검사했나"에 답할 수 없다.
     let n_archives = arch_members.len();
     for (origin, grades) in &arch_members {
-        records.push(order_record(&archive_record(
-            origin,
-            grades,
-            arch_doctypes.get(origin),
-        )));
+        let mut arec = archive_record(origin, grades, arch_doctypes.get(origin));
+        // 압축 파일 자체에 사람 결정이 있으면 그것이 이긴다.
+        if let Some(ap) = ov_applier.as_mut() {
+            ap.apply(&mut arec);
+        }
+        // 압축 파일 자체에는 집계 등급을 쓴다(엔진은 zip 을 열 때 zip 의 스트림을 본다).
+        if let Some(gm) = grade_marker.as_mut() {
+            gm.apply(&mut arec, false);
+        }
+        records.push(order_record(&arec));
     }
 
     // 목록에 있으나 없는 파일 — 결과에도 한 줄씩 남긴다(F4 를 stderr 에만 두지 않는다).
@@ -3974,7 +4516,12 @@ embed.enabled 가 false 라 2단계를 건너뜁니다", dt_seeds.size());
     if filelist_is_target(&opts) {
         if let Some(fl) = flist.as_ref() {
             for (path, sfid) in fl.missing_entries() {
-                records.push(order_record(&missing_file_record(&path, &sfid, &rs.version)));
+                let mut mrec = missing_file_record(&path, &sfid, &rs.version);
+                // 없는 파일은 쓸 대상이 아니다 — 파이썬 판처럼 skipped(not_read)로 표시만 한다
+                if let Some(gm) = grade_marker.as_mut() {
+                    gm.apply(&mut mrec, false);
+                }
+                records.push(order_record(&mrec));
                 n_missing_file += 1;
                 none += 1;
             }
@@ -3988,7 +4535,7 @@ embed.enabled 가 false 라 2단계를 건너뜁니다", dt_seeds.size());
     // 기준 문서 등록 모드는 여기가 본론이다 — 위의 분류는 지문과 벡터를 얻는
     // 과정이었을 뿐이고, 이제 그 결과를 기준 문서 줄로 바꿔 쓴다.
     if !seed_plan.is_empty() {
-        let code = finish_seed_add(&opts, &seed_plan, &records);
+        let code = finish_seed_add(&opts, &seed_plan, &records, &seed_titles);
         // 한 건도 못 넣은 까닭이 '모델을 못 올림'이면 그것을 알린다 — 대응(설치 점검)이
         // 문서 탓(embed_failed)과 다르다. 둘 다 종료코드 2 라 번호만 달라진다.
         if code == errcodes::exit_of("model_load_failed") {
@@ -4055,6 +4602,14 @@ embed.enabled 가 false 라 2단계를 건너뜁니다", dt_seeds.size());
     if !arc_stats.unsupported.is_empty() {
         summary["archive_unsupported"] = json!(arc_stats.unsupported.len());
     }
+    // 등급 스트림 — 옵션을 켠 실행에서만 싣는다(끈 실행의 요약은 글자 하나 다르지 않다).
+    if let Some(gm) = grade_marker.as_ref() {
+        summary["grade_stream"] = gm.summary();
+    }
+    // 사람 결정 — --grade-overrides 를 준 실행에서만.
+    if let Some(ap) = ov_applier.as_ref() {
+        summary["grade_overrides"] = ap.summary();
+    }
     if dt_total > 0 {
         let by_root: serde_json::Map<String, Value> = dt_root_totals.iter()
             .map(|(k, v)| (k.clone(), json!(v))).collect();
@@ -4095,6 +4650,16 @@ embed.enabled 가 false 라 2단계를 건너뜁니다", dt_seeds.size());
     if let Some(m) = model_fail.as_ref() {
         errcodes::set_status("model_load_failed", m);
         code = errcodes::exit_of("model_load_failed");
+    }
+    // 등급 스트림을 못 쓴 문서가 있으면 알린다(4002, 종료코드 1). 결과 파일은 온전하다.
+    // 다른 실패가 이미 있으면 그쪽 까닭을 그대로 둔다 — 건수는 요약 grade_stream 에 남는다.
+    if let Some(gm) = grade_marker.as_ref() {
+        if gm.failed() > 0 && code == 0 {
+            errcodes::set_status("grade_stream_write_failed", &format!(
+                "[MpowerClassify-rs] 등급 스트림을 쓰지 못한 문서 {}건 — 결과의 grade_stream.reason 을 보세요",
+                gm.failed()));
+            code = errcodes::exit_of("grade_stream_write_failed");
+        }
     }
 
     // 출력 조립. --out 으로 저장할 때는 상태도 파일 안에 남긴다 — 파일만 받아
@@ -4261,6 +4826,16 @@ embed.enabled 가 false 라 2단계를 건너뜁니다", dt_seeds.size());
         } else {
             eprintln!("[summary] 총 {}개 / 검출 {}, C={} S={} O={} 미분류={} 추출실패={}{}{}{}{}{}{}{}{}, 총시간={}ms",
                 total, detected, c, s_, o_, none, fail, excl_note, trunc_note, size_note, part_note, arch_note, arch_bad, vol_note, ts_note, total_ms);
+        }
+        // 사람 결정은 --grade-overrides 를 준 실행에서만 한 줄 더 낸다(파이썬 판과 같은 문구).
+        if let Some(ap) = ov_applier.as_ref() {
+            eprintln!("[summary][사람결정] 적용={} 확인={} 내용바뀜={} (목록 {}건)",
+                ap.applied, ap.confirmed, ap.stale, ap.loaded);
+        }
+        // 등급 스트림은 켠 실행에서만 한 줄 더 낸다(파이썬 판과 같은 문구).
+        if let Some(gm) = grade_marker.as_ref() {
+            eprintln!("[summary][등급스트림] written={} unchanged={} skipped={} failed={}",
+                gm.counts["written"], gm.counts["unchanged"], gm.counts["skipped"], gm.counts["failed"]);
         }
         // 숫자만 던지면 운영자가 상한을 올려야 할지 그 문서를 따로 봐야 할지 판단할
         // 근거가 없다 — 무엇을 하면 되는지까지 알려 준다(파이썬 판과 같은 문구).
@@ -4604,6 +5179,33 @@ embed.enabled 가 false 라 2단계를 건너뜁니다", dt_seeds.size());
 
 /// 레코드의 `vector` 필드(JSON 숫자 배열) → `Vec<f32>`.
 /// 배열이 아니거나 비어 있으면 None — '벡터 없음'과 같이 취급해 전파에서 건너뛴다.
+/// BM25 2차 재료 만들기(파이썬 cli._bm25_context 와 같은 규칙 · 같은 안내 문구).
+/// bm25.enabled 일 때 기준 문서로 분류 단위 색인을 만들고 최소 점수를 정한다.
+/// 반환: (색인, 문턱) — 문턱이 None 이면 그 실행은 BM25 를 건너뛴다. bm25 를 안 쓰면 None.
+fn bm25_context(drs: &doc_rules::DocRuleSet, seeds_path: Option<&str>) -> Option<(bm25::Bm25Index, Option<f64>)> {
+    let sp = &drs.bm25;
+    let path = seeds_path?;
+    if !sp.enabled || !std::path::Path::new(path).is_file() {
+        return None;
+    }
+    let index = bm25::Bm25Index::from_seed_file(path, sp, &drs.head_noise);
+    if sp.mode == "fixed" {
+        note!("[전파][업무분류][bm25] 문턱 {:.3}(고정) · 기준 문서 {}건", sp.min_score, index.size());
+        return Some((index, Some(sp.min_score)));
+    }
+    let auto = bm25::auto_threshold(&index, drs.embed.dup_threshold);
+    match auto.threshold {
+        None => note!("[전파][업무분류][bm25] 기준 문서가 부족해 문턱을 정하지 못해 이번 실행은 BM25 를 \
+건너뜁니다(기준 문서 {}건 · 모의시험 {}건) — 기준 문서 50건 이상(분류마다 3건 이상)을 권합니다",
+                      index.size(), auto.scored),
+        Some(t) => note!("[전파][업무분류][bm25] 문턱 {:.3} — 기준 문서 {}건 자기 제외 모의시험(통과 {} · 정답 {} · {:.1}%)",
+                         t, index.size(), auto.passed, auto.correct,
+                         auto.correct as f64 / auto.passed as f64 * 100.0),
+    }
+    let t = auto.threshold;
+    Some((index, t))
+}
+
 fn vector_from_json(v: &Value) -> Option<Vec<f32>> {
     let arr = v.as_array()?;
     if arr.is_empty() { return None; }

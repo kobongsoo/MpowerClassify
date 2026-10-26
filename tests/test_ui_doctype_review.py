@@ -416,3 +416,24 @@ def test_검토대상_라벨은_근거와_경고를_보여준다():
     assert "파일 이름 끝자리" in line and "매뉴얼" in line
     assert "분류 이름" in line          # 어디서 나온 말인지 말해 준다
     assert "파일 이름만" in block["warn"] and "확정하지" in block["warn"]
+
+
+#------------------------------------------------------------------
+# BM25 후보는 근거 줄과 경고가 '말 겹침'으로 나온다(파일 이름만 경고와 구분)
+#
+# -in: 없음
+# -out: 없음(단언)
+# -out: error = 없음
+#------------------------------------------------------------------
+def test_BM25_후보의_근거와_경고():
+    ev = {"score": 18.2, "threshold": 14.8, "field": "name", "words": ["매뉴얼"], "c": 0.55}
+    block = DR.reason_block({"dc_id": "DC_X", "confidence": 0.55, "from": ["bm25"], "stage": "bm25",
+                             "review": True, "basis": "bm25_name_only", "signals": {"bm25": ev}})
+    line = block["lines"][0]["text"]
+    assert "기준 문서와 말 겹침" in line and "파일명에서만" in line and "매뉴얼" in line
+    assert "파일명에서만" in block["warn"] and "파일 이름만 보고" not in block["warn"]
+    ev2 = dict(ev, field="title+name", c=0.6)
+    block = DR.reason_block({"dc_id": "DC_X", "confidence": 0.6, "from": ["bm25"], "stage": "bm25",
+                             "review": True, "basis": "bm25", "signals": {"bm25": ev2}})
+    assert "제목 · 파일명" in block["lines"][0]["text"]
+    assert "말이 겹쳐" in block["warn"]

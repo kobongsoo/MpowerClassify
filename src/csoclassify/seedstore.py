@@ -318,7 +318,7 @@ def project(entry):
 # -out: error = 없음
 #------------------------------------------------------------------
 def _ordered(entry):
-    head = ("v", "file", "doc_id", "hash", "grade", "doctype", "hold",
+    head = ("v", "file", "doc_id", "hash", "grade", "doctype", "title", "hold",
             "source", "approved_by", "note", "ts", "dim", "engine")
     out = {}
     for k in head:

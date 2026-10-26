@@ -410,7 +410,7 @@ def load_text_index(text_dir):
 # -in: labels   = 이 문서로 확정된 dc_id 집합
 # -in: rejected = 이 문서에서 거절된 dc_id 집합
 # -in: text     = 저장된 추출 본문(없으면 None — 제목·파일 이름만으로 참여한다)
-# -in: head_chars = 앞부분으로 볼 글자 수(기본 400)
+# -in: head_chars = 앞부분으로 볼 글자 수(공백 묶음을 한 칸으로 센다, 기본 400)
 #
 # -out: dict = {key,file,name,folder,cluster,title,head,body,labels,rejected,has_text}
 # -out: error = 없음
@@ -424,10 +424,13 @@ def make_doc(file, labels=(), rejected=(), text=None, head_chars=HEAD_CHARS):
         if line.strip():
             title = line.strip()
             break
+    # 앞부분은 엔진의 표제부와 같은 규칙(공백 묶음을 한 칸으로 본 앞 n 자)으로 자른다 —
+    # 다르면 제안한 낱말이 실제 판정의 표제부에서는 안 걸린다.
+    from .doctype import head_scope
     return {"key": norm_key(file), "file": file, "name": name,
             "folder": os.path.dirname(str(file or "")),
             "cluster": cluster_of(file),
-            "title": title, "head": body[:head_chars], "body": body,
+            "title": title, "head": head_scope(body, head_chars), "body": body,
             "labels": set(labels), "rejected": set(rejected),
             "has_text": bool(text)}
 

@@ -22,7 +22,7 @@ pub const CELLS: [&str; 5] = ["title_terms", "head_terms", "terms", "filename", 
 /// 규칙마다 덮을 수 있는 숫자 칸.
 const NUM_FIELDS: [&str; 3] = ["head_chars", "min_count", "min_distinct"];
 /// 본보기에서 가져와 local 의 settings 로 덮는 전체 설정 칸.
-const SETTING_SECTIONS: [&str; 4] = ["conflict", "defaults", "signals", "embed"];
+const SETTING_SECTIONS: [&str; 5] = ["conflict", "defaults", "signals", "embed", "bm25"];
 const GENERATED_BY: &str = "MpowerClassify --build-doc-rule";
 
 /// 만들어진 파일 맨 위 안내 — Python 판 GEN_HEADER 와 글자까지 같아야 한다.

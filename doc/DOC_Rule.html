@@ -221,7 +221,7 @@
     <tr><td class="f">terms</td><td class="opt">선택</td><td><b>본문 어디든</b> 이 말이 나오면(보조 — 혼자서는 라벨을 못 만듭니다)</td><td>—</td></tr>
     <tr><td class="f">filename</td><td class="opt">선택</td><td><b>파일 이름</b>(폴더 제외)에 이 말이 있으면</td><td>—</td></tr>
     <tr><td class="f">exclude</td><td class="opt">선택</td><td>이 말 <b>안에</b> 든 매치는 세지 않습니다. 네 칸 모두에 적용</td><td>—</td></tr>
-    <tr><td class="f">head_chars</td><td class="opt">선택</td><td>이 규칙만 앞부분 길이를 바꿀 때</td><td><code>defaults</code> 값(400)</td></tr>
+    <tr><td class="f">head_chars</td><td class="opt">선택</td><td>이 규칙만 앞부분 길이를 바꿀 때. 공백 묶음은 한 칸으로 센다(2026-10-19)</td><td><code>defaults</code> 값(400)</td></tr>
     <tr><td class="f">min_distinct</td><td class="opt">선택</td><td>본문 신호: 서로 다른 말이 몇 종 이상 나와야 하나</td><td><code>defaults</code> 값(1)</td></tr>
     <tr><td class="f">min_count</td><td class="opt">선택</td><td>본문 신호: 합쳐서 몇 번 이상 나와야 하나</td><td><code>defaults</code> 값(1)</td></tr>
     <tr><td class="f">title · path · path_ids</td><td class="opt">자동</td><td>분류 제목·경로·조상 id. 판정할 때 분류 체계를 이 칸들에서 다시 짓습니다</td><td>—</td></tr>
@@ -461,7 +461,7 @@ defaults:
   <h3>defaults</h3>
   <div class="scroll"><table>
     <tr><th>키</th><th>뜻</th><th>기본</th><th>쓰이나</th></tr>
-    <tr><td class="f">head_chars</td><td>앞부분 신호가 보는 글자 수</td><td class="num">400</td><td class="ok">씀</td></tr>
+    <tr><td class="f">head_chars</td><td>앞부분 신호가 보는 글자 수 — 빈 줄 · 줄 앞 공백 · 탭이 이어지면 한 칸으로 센다(2026-10-19, 파서마다 다른 공백이 경계를 밀지 않게)</td><td class="num">400</td><td class="ok">씀</td></tr>
     <tr><td class="f">min_distinct</td><td>본문 신호: 서로 다른 말 최소 종류</td><td class="num">1</td><td class="ok">씀</td></tr>
     <tr><td class="f">min_count</td><td>본문 신호: 합친 최소 횟수</td><td class="num">1</td><td class="ok">씀</td></tr>
     <tr><td class="f">t_low</td><td><b>후보 문턱</b> — 이 점수 미만은 버림. 핵어 층 점수도 이 값</td><td class="num">0.35</td><td class="ok">씀</td></tr>

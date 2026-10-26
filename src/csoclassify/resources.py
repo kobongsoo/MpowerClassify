@@ -98,10 +98,49 @@ def synap_os_subdir():
     return "windows" if os.name == "nt" else "linux"
 
 
+# --synap-path 로 준 사이냅 실행파일(있으면 찾기 순서를 건너뛴다). set_synap_override 가 채운다.
+_SYNAP_OVERRIDE = None
+
+
+#------------------------------------------------------------------
+# 사이냅 실행파일을 직접 정하기(--synap-path)
+#=> 명령줄로 준 경로를 이번 실행 동안 쓴다. 이 값이 있으면 synap_exe_path 가 찾기를
+#   건너뛰고 그대로 돌려준다(Rust 판 synap::find_snf 의 explicit 과 같은 뜻).
+#
+# -in: path = snf_exe 파일 경로(None 이면 지운다)
+#
+# -out: 없음
+# -out: error = 없음
+#------------------------------------------------------------------
+def set_synap_override(path):
+    global _SYNAP_OVERRIDE
+    _SYNAP_OVERRIDE = path or None
+
+
+#------------------------------------------------------------------
+# 사이냅을 찾아본 곳 목록
+#=> 못 찾았을 때 오류 문장(1016 synap_missing)에 그대로 싣는다 — 어디에 두면 되는지 바로 안다.
+#
+# -in: 없음
+#
+# -out: list[str] = 찾아본 실행파일 경로들(찾는 차례대로)
+# -out: error = 없음
+#------------------------------------------------------------------
+def synap_search_paths():
+    if _SYNAP_OVERRIDE:
+        return [_SYNAP_OVERRIDE]
+    name, sub = synap_exe_name(), synap_os_subdir()
+    out = []
+    for d in _synap_dir_candidates():
+        out += [os.path.join(d, sub, name), os.path.join(d, name)]
+    return out
+
+
 #------------------------------------------------------------------
 # 사이냅 실행파일 경로
 #=> 텍스트 추출에 쓸 사이냅 실행파일(Windows=snf_exe.exe / Linux=snf_exe)을 후보
 #   폴더에서 찾는다. onefile 상주 데몬에서도 사라지지 않도록 exe 옆(안정 경로)을 우선.
+#   --synap-path 로 직접 줬으면(set_synap_override) 그 경로를 그대로 쓴다.
 #
 # -in: 없음
 #
@@ -109,6 +148,9 @@ def synap_os_subdir():
 # -out: error = 없음
 #------------------------------------------------------------------
 def synap_exe_path():
+    # 직접 준 경로가 이긴다 — 있든 없든 그것을 돌려주고, 없으면 부른 쪽이 1016 으로 알린다.
+    if _SYNAP_OVERRIDE:
+        return _SYNAP_OVERRIDE
     name = synap_exe_name()
     sub = synap_os_subdir()
     for d in _synap_dir_candidates():

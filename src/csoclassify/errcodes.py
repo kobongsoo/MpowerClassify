@@ -49,6 +49,9 @@ ERRORS = {
     # --decrypt 조합이 틀렸거나 도구가 없는 것은 부른 쪽이 고칠 수 있어 3 이다.
     "decrypt_args_invalid":     (1014, 3),
     "decrypt_cmd_missing":      (1015, 3),
+    # 사이냅(snf_exe)을 명시해 골랐는데(--synap-fallback · --synap-only) 실행파일이 없거나
+    # 실행할 수 없다(설계: plan/Rust-사이냅추출기-옵션-설계-20261019.html §6). 놓아 주면 되므로 3.
+    "synap_missing":            (1016, 3),
     # ── 2000 정책 파일(규칙셋 · 분류체계) ─────────────────────────
     "rules_missing":            (2001, 3),
     "rules_invalid":            (2002, 4),
@@ -58,6 +61,10 @@ ERRORS = {
     "doc_rules_write_failed":   (2006, 4),
     "export_input_missing":     (2007, 3),
     "export_input_invalid":     (2008, 4),
+    # 사람 결정 목록(설계: plan/사람등급지정-수동오버라이드-설계-20261020.html §08).
+    # 없는 목록은 경로를 고치면 되므로 3, 목록에 덧붙이지 못한 것은 쓰기 문제라 4.
+    "grade_overrides_missing":  (2009, 3),
+    "grade_overrides_write_failed": (2010, 4),
     # ── 3000 처리(추출 · 임베딩) ──────────────────────────────────
     "extract_failed":           (3001, 1),
     # 목록(--filelist)에 있는데 디스크에 없는 문서. 요청받고도 처리하지 못한
@@ -73,6 +80,9 @@ ERRORS = {
     "embed_failed":             (3003, 2),
     # ── 4000 출력 ─────────────────────────────────────────────────
     "output_write_failed":      (4001, 1),
+    # 분류 결과는 냈는데 등급 스트림(:mgrade)을 못 쓴 문서가 있다(설계:
+    # plan/등급스트림-기록-옵션-설계-20261019.html §08). 일부 실패라 1 이다.
+    "grade_stream_write_failed": (4002, 1),
     # ── 9000 그 밖 ────────────────────────────────────────────────
     "internal_error":           (9001, 1),
 }

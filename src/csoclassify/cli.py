@@ -21,6 +21,8 @@ from . import errcodes
 from . import logsetup
 from . import output
 from . import seedcli
+from .classify import bm25 as bm25mod
+from .seedstore import norm_file as seedstore_norm_file
 from .timing import Timing
 
 
@@ -304,6 +306,34 @@ def build_parser():
     p.add_argument("--synap-only", dest="hybridparse", action="store_false",
                    help="종전 방식 — 모든 포맷을 사이냅(snf_exe) 하나로만 추출한다. "
                         "자체 파서가 특정 문서에서 이상할 때 비교용으로 쓴다.")
+    # 설계: plan/Rust-사이냅추출기-옵션-설계-20261019.html — Rust 판과 같은 이름을 받는다.
+    p.add_argument("--synap-fallback", dest="synap_fallback", action="store_true",
+                   help="자체 파서가 못 읽은 문서만 사이냅으로(기본 동작과 같다). 명시하면 "
+                        "snf_exe 가 꼭 있어야 하고, 없으면 문서를 읽기 전에 1016 synap_missing 으로 멈춘다")
+    p.add_argument("--synap-path", dest="synap_path", default=None, metavar="경로",
+                   help="사이냅 실행파일(snf_exe) 경로를 직접 준다(찾기 순서를 건너뛴다)")
+
+    # 등급 스트림 기록(설계: plan/등급스트림-기록-옵션-설계-20261019.html). Rust 판과 같은 이름이다.
+    p.add_argument("--write-grade-stream", dest="write_grade_stream", action="store_true",
+                   help="분류한 문서의 NTFS 대체 스트림(:mgrade)에 최종 등급(C/S/O)을 쓴다 — "
+                        "NEOGradeToolApp -s 와 같은 형식. Windows(NTFS)만")
+    p.add_argument("--grade-stream-unclassified", dest="grade_stream_unclassified", default=None,
+                   metavar="skip|none",
+                   help="등급을 못 정한 문서: skip=건드리지 않음(기본), none=NONE(0) 기록")
+    # 사람이 정한 등급(설계: plan/사람등급지정-수동오버라이드-설계-20261020.html). Rust 판과 같은 이름.
+    p.add_argument("--grade-overrides", dest="grade_overrides", default=None, metavar="파일",
+                   help="사람 결정 목록(UI 의 cso_override.jsonl). 판정이 끝난 뒤 사람 등급이 판정을 이긴다. "
+                        "--set-grade 와 함께면 그 결정을 이 파일에 덧붙인다")
+    p.add_argument("--set-grade", dest="set_grade", default=None, metavar="C|S|O|NONE",
+                   help="문서를 읽지 않고 --file 문서에 이 등급을 바로 정한다(--write-grade-stream 이면 파일에도 쓴다)")
+    p.add_argument("--reviewer", dest="reviewer", default=None, metavar="이름",
+                   help="--set-grade 결정을 --grade-overrides 에 덧붙일 때 검토자(필수)")
+    p.add_argument("--reason", dest="reason", default=None, metavar="사유",
+                   help="--set-grade 결정을 --grade-overrides 에 덧붙일 때 사유(필수)")
+    # 시각 보존이 기본이다(설계 §14) — 바꾸고 싶을 때만 이 옵션을 준다.
+    p.add_argument("--grade-stream-update-time", dest="grade_stream_update_time", action="store_true",
+                   help="등급을 쓸 때 문서의 수정 시각이 바뀌게 둔다(툴 기본, -k 없음). "
+                        "기본은 생성·접근·수정 시각을 그대로 둔다")
 
     # 처리 모드 — 기본은 C/S/O 자동 분류다. 임베딩 벡터만 필요하면 --embed,
     # 추출 텍스트만 필요하면 --text-only 를 준다.
@@ -347,6 +377,9 @@ def build_parser():
     p.add_argument("--export-input", dest="export_input", default=None,
                    help="--build-doc-rule 의 원본 체계 JSON 경로(기본: 규칙 파일 옆 "
                         "doc_classification_export.json)")
+    p.add_argument("--seed-fill-title", dest="seed_fill_title", action="store_true",
+                   help="기준 문서(--seeds)에 제목(첫 줄)을 채운다 — 업무분류 BM25 2차의 재료. "
+                        "본문은 --text-dir/<지문>.txt 에서 먼저 찾고, 없으면 원본 파일을 다시 읽는다")
     p.add_argument("--build-doc-rule", dest="build_doc_rule", action="store_true",
                    help="체계 JSON(--export-input) · 유의어 사전 · 본보기 · doc_rule.local.yaml 로 "
                         "--doc-rules 파일을 통째로 새로 만든다(자동 생성 — 사람이 고치지 않는 파일). "
@@ -786,6 +819,233 @@ def _cli_dec_size(args):
     if not s.isdigit():
         raise ValueError(f"--size 는 0 이상의 정수(바이트)여야 합니다: {raw}")
     return int(s)
+
+
+#------------------------------------------------------------------
+# 사이냅 관련 인자 검사 — 문서를 읽기 전에 끝낸다
+#=> 설계: plan/Rust-사이냅추출기-옵션-설계-20261019.html §6. Rust 판 handle_extractor_args 와 같다.
+#    1) --synap-path 를 주면 이번 실행 동안 그 경로를 쓴다
+#    2) --synap-fallback 과 --synap-only 를 함께 주면 1006 mode_conflict
+#    3) 사이냅을 명시해 골랐으면(--synap-fallback · --synap-only · CSOCLASSIFY_HYBRID=0)
+#       snf_exe 가 있어야 한다 — 없거나 실행할 수 없으면 1016 synap_missing.
+#       명시하지 않은 기본 실행은 지금처럼 '있으면 폴백, 없으면 자체 파서만'이다
+#
+# -in: args = 파싱된 인자
+#
+# -out: None = 문제 없음 / int = 종료코드(이미 오류를 알렸다 — 그대로 return 한다)
+# -out: error = 예외 없음
+#------------------------------------------------------------------
+def check_synap_args(args):
+    from . import resources
+    if getattr(args, "synap_path", None):
+        resources.set_synap_override(args.synap_path)
+    synap_only = not getattr(args, "hybridparse", True)
+    fallback = getattr(args, "synap_fallback", False)
+    if synap_only and fallback:
+        return fail_err("mode_conflict",
+                        "[MpowerClassify] --synap-fallback 과 --synap-only 는 함께 쓸 수 없습니다 — 하나만 고르세요.")
+    if not (synap_only or fallback):
+        return None
+    exe = resources.synap_exe_path()
+    if not os.path.isfile(exe):
+        tried = " , ".join(resources.synap_search_paths())
+        return fail_err("synap_missing",
+                        f"[MpowerClassify] 사이냅 실행파일({resources.synap_exe_name()})을 찾을 수 없습니다 — "
+                        f"찾아본 곳: {tried} (--synap-path 또는 환경변수 CSOCLASSIFY_SYNAP_DIR 로 알려 주세요)", exe)
+    # 리눅스는 실행 비트가 있어야 한다(윈도우는 늘 참이다).
+    if os.name != "nt" and not os.access(exe, os.X_OK):
+        return fail_err("synap_missing",
+                        f"[MpowerClassify] 사이냅 실행파일에 실행 권한이 없습니다: {exe} (chmod +x)", exe)
+    return None
+
+
+#------------------------------------------------------------------
+# 등급 스트림 인자 검사 — 문서를 읽기 전에 끝낸다
+#=> 설계: plan/등급스트림-기록-옵션-설계-20261019.html §03 · §08. Rust 판 check_grade_stream_args 와 같다.
+#    1) 보조 옵션(--grade-stream-unclassified · --grade-stream-update-time)만 주면 1003
+#       (켜는 옵션 없이 무시된 채 도는 일을 막는다)
+#    2) --grade-stream-unclassified 값은 skip · none 만 — 그 밖이면 1003
+#    3) 분류 결과를 내지 않는 모드(--text-only · --embed · --seed-add · 데몬 명령 ·
+#       --build-doc-rule · --suggest-terms)와 함께면 1006
+#    4) Windows 가 아니면(ADS 없음) 1012
+#
+# -in: args = 파싱된 인자
+#
+# -out: None = 문제 없음 / int = 종료코드(이미 오류를 알렸다 — 그대로 return 한다)
+# -out: error = 예외 없음
+#------------------------------------------------------------------
+def check_grade_stream_args(args):
+    from . import gradestream, seedcli
+    on = getattr(args, "write_grade_stream", False)
+    uncl = getattr(args, "grade_stream_unclassified", None)
+    upd = getattr(args, "grade_stream_update_time", False)
+    if not on:
+        if uncl is not None or upd:
+            return fail_err("bad_args",
+                            "[MpowerClassify] --grade-stream-unclassified · --grade-stream-update-time 은 "
+                            "--write-grade-stream 과 함께 줘야 합니다.")
+        return None
+    if uncl is not None and uncl not in ("skip", "none"):
+        return fail_err("bad_args",
+                        f"[MpowerClassify] --grade-stream-unclassified 값은 skip 또는 none 입니다: {uncl!r}")
+    # 분류 결과가 없는 모드에서는 쓸 등급이 없다 — 조용히 무시하지 않고 멈춘다
+    modes = [("--text-only", getattr(args, "text_only", False)),
+             ("--embed", getattr(args, "embed", False)),
+             ("--seed-add", seedcli.is_seed_add(args)),
+             ("--serve", getattr(args, "serve", False)),
+             ("--status", getattr(args, "status", False)),
+             ("--stop", getattr(args, "stop", False)),
+             ("--build-doc-rule", getattr(args, "build_doc_rule", False)),
+             ("--seed-fill-title", getattr(args, "seed_fill_title", False)),
+             ("--suggest-terms", bool(getattr(args, "suggest_terms", None)))]
+    for name, used in modes:
+        if used:
+            return fail_err("mode_conflict",
+                            f"[MpowerClassify] --write-grade-stream 은 {name} 와 함께 쓸 수 없습니다 — "
+                            f"분류 결과를 내는 실행에서만 등급을 씁니다.")
+    if not gradestream.supported():
+        return fail_err("unsupported_option",
+                        "[MpowerClassify] --write-grade-stream 은 Windows(NTFS)에서만 쓸 수 있습니다 — "
+                        "이 플랫폼에는 대체 데이터 스트림이 없습니다.")
+    return None
+
+
+#------------------------------------------------------------------
+# 사람 등급 지정 인자 검사 — 문서를 읽기 전에 끝낸다
+#=> 설계: plan/사람등급지정-수동오버라이드-설계-20261020.html §08. Rust 판 check_override_args 와 같다.
+#    1) --set-grade 값은 C · S · O · NONE 만 — 그 밖이면 1003
+#    2) --set-grade 는 --file 하나에만. --dir 이면 1006(폴더 전체를 한 등급으로 찍는 실수 방지),
+#       대상이 없으면 1003. 분류 결과를 내지 않는 모드와 함께면 1006
+#    3) --set-grade 결정을 목록에 덧붙이려면(--grade-overrides) --reviewer · --reason 필수(1003)
+#    4) --reviewer · --reason 만 따로 주면 1003(쓰이지 않은 채 도는 일 방지)
+#    5) 분류에 --grade-overrides 를 주면 그 파일이 있어야 한다 — 없으면 2009
+#
+# -in: args = 파싱된 인자
+#
+# -out: None = 문제 없음 / int = 종료코드(이미 오류를 알렸다)
+# -out: error = 예외 없음
+#------------------------------------------------------------------
+def check_override_args(args):
+    from . import seedcli
+    sg = getattr(args, "set_grade", None)
+    ov = getattr(args, "grade_overrides", None)
+    who = getattr(args, "reviewer", None)
+    why = getattr(args, "reason", None)
+    if sg is not None:
+        if str(sg).strip().upper() not in ("C", "S", "O", "NONE"):
+            return fail_err("bad_args", f"[MpowerClassify] --set-grade 값은 C · S · O · NONE 입니다: {sg!r}")
+        if getattr(args, "dir", None):
+            return fail_err("mode_conflict",
+                            "[MpowerClassify] --set-grade 는 --dir 과 함께 쓸 수 없습니다 — 폴더 전체를 한 "
+                            "등급으로 정하는 실수를 막으려는 것입니다. 문서는 --file 로 하나씩 주세요.")
+        modes = [("--text-only", getattr(args, "text_only", False)),
+                 ("--embed", getattr(args, "embed", False)),
+                 ("--seed-add", seedcli.is_seed_add(args)),
+                 ("--serve", getattr(args, "serve", False)),
+                 ("--status", getattr(args, "status", False)),
+                 ("--stop", getattr(args, "stop", False))]
+        for name, used in modes:
+            if used:
+                return fail_err("mode_conflict",
+                                f"[MpowerClassify] --set-grade 는 {name} 와 함께 쓸 수 없습니다.")
+        if not getattr(args, "file", None):
+            return fail_err("bad_args", "[MpowerClassify] --set-grade 는 --file 로 대상 문서를 줘야 합니다.")
+        if ov and not ((who or "").strip() and (why or "").strip()):
+            return fail_err("bad_args",
+                            "[MpowerClassify] --set-grade 결정을 --grade-overrides 에 덧붙이려면 "
+                            "--reviewer 와 --reason 을 함께 줘야 합니다(감사 기록).")
+        return None
+    if who is not None or why is not None:
+        return fail_err("bad_args",
+                        "[MpowerClassify] --reviewer · --reason 은 --set-grade 와 --grade-overrides 를 "
+                        "함께 줄 때만 쓰입니다.")
+    if ov and not os.path.isfile(ov):
+        return fail_err("grade_overrides_missing",
+                        f"[MpowerClassify] 사람 결정 목록 파일이 없습니다: {ov}", ov)
+    return None
+
+
+#------------------------------------------------------------------
+# --set-grade — 문서 하나에 등급을 바로 정한다
+#=> 설계 §04. 문서를 읽거나 판정하지 않는다(암호화 문서도 풀지 않는다).
+#    1) 대상이 없으면 file_missing 레코드 + 3004(종료 1)
+#    2) 내용 지문을 구하고, 결과 레코드(method:manual_override)를 만든다
+#    3) --write-grade-stream 이면 그 등급을 파일 스트림에 쓴다(NONE 은 '미분류' 로)
+#    4) --grade-overrides 면 결정을 한 줄 덧붙인다 — 못 쓰면 2010(종료 4)
+#
+# -in: args   = 파싱된 인자
+# -in: out_fp = 결과를 쓸 파일(None 이면 표준출력)
+#
+# -out: int = 종료코드
+# -out: error = 예외 없음(실패는 오류코드로 알린다)
+#------------------------------------------------------------------
+def run_set_grade(args, out_fp):
+    import datetime
+    from . import gradeoverride, gradestream
+    from .classify import now_iso
+    # 이 함수는 main 밖에서 불려 main 의 log 를 못 본다 — 같은 이름의 로거를 직접 얻는다
+    log = logsetup.get_logger("csoclassify")
+    path = args.file
+    grade = gradeoverride.norm_grade(args.set_grade)       # NONE → None
+    label = grade or "NONE"
+    code = config.EXIT_OK
+    # 상태 줄을 결과 파일에 함께 넣을 때만(--out + --json-errors) json 이 배열이 된다 — Rust 판과 같다
+    writer = output.RecordWriter(out_fp or sys.stdout, args.fmt,
+                                 multi=bool(errcodes.is_json() and args.out))
+    if not os.path.isfile(path):
+        rec = {"file": path, "grade": None,
+               "error": {"kind": "file_missing", "reason": "file_missing",
+                         "message": "파일이 없습니다"},
+               "meta": {"ts": now_iso()}}
+        errcodes.set_status("file_missing", f"[MpowerClassify] 파일이 없습니다: {path}")
+        errcodes.set_counts(1, 1)
+        writer.write_record(_simple_record(rec) if getattr(args, "simple", False) else _order_record(rec))
+        if errcodes.is_json() and args.out and args.fmt in ("json", "jsonl"):
+            writer.write_record(errcodes.status_object(errcodes.exit_of("file_missing"), path))
+        writer.close()
+        return errcodes.exit_of("file_missing")
+    doc_hash = _file_hash(path)
+    info = {"reviewer": getattr(args, "reviewer", None), "reason": getattr(args, "reason", None),
+            "ts": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "matched_by": "set-grade", "kind": "change", "applied": True}
+    rec = {"file": path, "hash": doc_hash, "grade": grade,
+           "why": {"security": {"method": "manual_override", "decided_by": ["reviewer"],
+                                "override": info}},
+           "meta": {"ts": now_iso()}}
+    # 결정 목록에 남길 '이전 등급' — 지금 파일에 써 있는 값(모르면 None)
+    old = None
+    if gradestream.supported():
+        st, cur, _w = gradestream.read_state(path)
+        if st in (gradestream.ST_MARKED, gradestream.ST_UNCLASSIFIED):
+            old = gradestream.CODE_GRADE.get(cur)
+            old = None if old == "NONE" else old
+    if getattr(args, "write_grade_stream", False):
+        res = gradestream.mark(path, label,
+                               keep_time=not getattr(args, "grade_stream_update_time", False))
+        rec["grade_stream"] = res
+        log.info("등급스트림 state=%s file=%s value=%s", res.get("state"), path, label)
+        if res.get("state") == "failed":
+            errcodes.set_status("grade_stream_write_failed",
+                                f"[MpowerClassify] 등급 스트림을 쓰지 못했습니다: {res.get('reason')}")
+            code = errcodes.exit_of("grade_stream_write_failed")
+    ov = getattr(args, "grade_overrides", None)
+    if ov:
+        try:
+            gradeoverride.append_entry(ov, path, old, grade, args.reason, args.reviewer, doc_hash)
+        except OSError as e:
+            errcodes.set_status("grade_overrides_write_failed",
+                                f"[MpowerClassify] 사람 결정 목록에 쓰지 못했습니다: {ov} ({e})")
+            code = errcodes.exit_of("grade_overrides_write_failed")
+    log.info("사람등급 지정 file=%s grade=%s 목록=%s", path, label, ov or "-")
+    errcodes.set_counts(1, 0)
+    writer.write_record(_simple_record(rec) if getattr(args, "simple", False) else _order_record(rec))
+    if errcodes.is_json() and args.out and args.fmt in ("json", "jsonl"):
+        writer.write_record(errcodes.status_object(code, path))
+    writer.close()
+    print(f"[MpowerClassify] 사람 등급 지정: {path} → {label}"
+          + (f" (파일 스트림 {rec['grade_stream'].get('state')})" if "grade_stream" in rec else "")
+          + (f" · 결정 목록 {ov}" if ov else ""), file=sys.stderr)
+    return code
 
 
 #------------------------------------------------------------------
@@ -1782,7 +2042,7 @@ def _save_text_file(save_dir, rec, text, path, truncated, ts):
 # 신원 세 칸(file · hash · doc_id)이 맨 앞이라는 약속은 그대로 두고 그 뒤에 넣는다.
 _REC_ORDER = ("file", "hash", "doc_id", "doc_id_source", "rematched_by", "name",
               "grade", "doctype", "error", "excluded", "why", "pii", "vector",
-              "text_saved", "text_save_error", "meta", "elapsed_ms")
+              "text_saved", "text_save_error", "grade_stream", "meta", "elapsed_ms")
 
 
 # doctype 축 안쪽 칸 차례. 2026-09-10 부터 truncated·conflicts 는 값이 있을 때만,
@@ -2209,6 +2469,124 @@ def _doctype_breakdown(doctype_label):
 
 
 #------------------------------------------------------------------
+# --seed-fill-title — 기준 문서에 제목(첫 줄)을 채운다
+#=> BM25 2차는 기준 문서의 제목 · 파일명을 비교한다(설계서 업무분류-2차-BM25 §09).
+#   예전에 등록한 기준 문서에는 제목 칸이 없으므로 한 번 채워 준다.
+#    1) 제목이 이미 있는 줄은 건너뛴다
+#    2) 본문은 --text-dir/<지문>.txt 에서 먼저 찾고, 없으면 원본 파일을 다시 추출한다
+#    3) ppt · xls · xlsx 이거나 첫 줄이 비면 제목은 비어 있다(파일명만으로 비교)
+#    4) 하나라도 채웠으면 잠근 채로 다시 쓴다
+#
+# -in: args = 파싱된 인자(seeds · text_dir)
+#
+# -out: int = 종료코드(정상 0)
+# -out: error = --seeds 가 없거나 파일이 없으면 bad_args(1003), 쓰기 실패면 output_write_failed
+#------------------------------------------------------------------
+def run_seed_fill_title(args):
+    from . import seedstore
+    from .extract import build_extractor
+    from .extract.base import ExtractError
+    from .clean import clean_text
+    from .classify.doctype import _title_allowed
+
+    path = getattr(args, "seeds", None)
+    if not path or not os.path.isfile(path):
+        return fail_err("bad_args", "[MpowerClassify] --seed-fill-title 은 기준 문서 파일이 필요합니다 "
+                        f"(--seeds <class_seed.jsonl>): {path or '(없음)'}")
+    text_dir = getattr(args, "text_dir", None)
+    extractor = None
+    filled = empty = nosrc = had = 0
+    try:
+        with seedstore.seed_lock(path):
+            rows = seedstore.load_seeds(path)
+            for r in rows:
+                if r.get("title"):
+                    had += 1
+                    continue
+                text, h, f = None, r.get("hash"), r.get("file") or ""
+                if not _title_allowed(f):
+                    # ppt · xls · xlsx 는 제목을 쓰지 않는다 — 원본을 다시 읽어 봐야 빈 제목이다
+                    empty += 1
+                    continue
+                if text_dir and h and os.path.isfile(os.path.join(text_dir, f"{h}.txt")):
+                    with open(os.path.join(text_dir, f"{h}.txt"), encoding="utf-8", errors="replace") as fh:
+                        text = fh.read()
+                if text is None and f and os.path.isfile(f):
+                    try:
+                        # 저장해 둔 본문이 없으면 원본을 다시 읽는다(추출기는 처음 필요할 때만 만든다)
+                        extractor = extractor or build_extractor()
+                        text = clean_text(extractor.extract(f, save_dir=None))
+                    except (ExtractError, OSError):
+                        text = None
+                if text is None:
+                    nosrc += 1
+                    continue
+                t = bm25mod.title_of(text, f)
+                if t:
+                    r["title"] = t
+                    filled += 1
+                else:
+                    empty += 1
+            if filled:
+                seedstore.save_seeds(path, rows)
+    except (TimeoutError, OSError) as e:
+        return fail_err("output_write_failed", f"[MpowerClassify] 기준 문서를 쓰지 못했습니다: {path} :: {e}", path)
+    print(f"[seed-fill-title] 채움 {filled} · 제목 없음 {empty}(ppt·xls·빈 첫 줄) · "
+          f"원문 못 찾음 {nosrc} · 이미 있음 {had}", file=sys.stderr)
+    return 0
+
+
+#------------------------------------------------------------------
+# BM25 2차 재료 만들기(색인 · 자동 문턱)
+#=> doc_rule.yaml 의 bm25.enabled 일 때, 기준 문서로 분류 단위 BM25 색인을 만들고
+#   최소 점수를 정한다(설계서 §15 · §16).
+#    1) mode=auto  — 기준 문서끼리 자기 제외 모의시험으로 문턱을 계산한다
+#    2) mode=fixed — 규칙 파일의 min_score 를 쓴다
+#    3) 문턱을 못 정하면 threshold=None — 그 실행은 BM25 를 건너뛰고 이유를 알린다
+#
+# -in: doc_rules_set = DocRuleSet(bm25 · head_noise 를 쓴다)
+# -in: seeds_path    = class_seed.jsonl 경로
+# -in: dup           = 거의 같은 기준 문서로 볼 벡터 유사도(embed.dup_threshold)
+# -in: fields        = {레코드 번호: (제목, 경로)} — 2차 대상 문서의 BM25 재료
+#
+# -out: dict | None = {index, spec, threshold, noise, fields, auto} (bm25 를 안 쓰면 None)
+# -out: error = 없음(기준 문서 파일이 깨졌으면 읽을 수 있는 줄만 쓴다)
+#------------------------------------------------------------------
+def _bm25_context(doc_rules_set, seeds_path, dup, fields):
+    sp = doc_rules_set.bm25
+    if not sp.enabled or not seeds_path or not os.path.isfile(seeds_path):
+        return None
+    rows = []
+    with open(seeds_path, encoding="utf-8") as fp:
+        for line in fp:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except ValueError:
+                continue   # 깨진 줄 하나 때문에 2차 전체를 멈추지 않는다
+    noise = tuple(doc_rules_set.head_noise or ())
+    index = bm25mod.Bm25Index(rows, sp, noise)
+    if sp.mode == "fixed":
+        auto = {"threshold": sp.min_score, "passed": 0, "correct": 0, "scored": 0}
+        print(f"[전파][업무분류][bm25] 문턱 {sp.min_score:.3f}(고정) · 기준 문서 {index.size()}건",
+              file=sys.stderr)
+    else:
+        auto = bm25mod.auto_threshold(index, dup)
+        if auto["threshold"] is None:
+            print(f"[전파][업무분류][bm25] 기준 문서가 부족해 문턱을 정하지 못해 이번 실행은 BM25 를 "
+                  f"건너뜁니다(기준 문서 {index.size()}건 · 모의시험 {auto['scored']}건) — "
+                  f"기준 문서 50건 이상(분류마다 3건 이상)을 권합니다", file=sys.stderr)
+        else:
+            print(f"[전파][업무분류][bm25] 문턱 {auto['threshold']:.3f} — 기준 문서 {index.size()}건 "
+                  f"자기 제외 모의시험(통과 {auto['passed']} · 정답 {auto['correct']} · "
+                  f"{auto['correct'] / auto['passed'] * 100:.1f}%)", file=sys.stderr)
+    return {"index": index, "spec": sp, "threshold": auto["threshold"], "noise": noise,
+            "fields": fields, "auto": auto}
+
+
+#------------------------------------------------------------------
 # C/S/O 보안등급 & 업무분류 분류 처리 (기본 모드 · 예전 --classify)
 #=> 추출→정제한 텍스트에 규칙 스캔(Signal A)을 걸어 보안등급(C/S/O)과 업무분류(doctype)
 #   를 동시에 수행하여 문서마다 분류 결과 레코드를 출력한다.
@@ -2543,6 +2921,17 @@ def run_classify(files, args, out_fp):
     text_save_dir = getattr(args, "textsave", None)
     need_hash = (getattr(args, "hash", False) or simple
                  or bool(text_save_dir))    # --hash/--simple/--textsave 면 해시 계산
+    # 사람 결정 목록 — 판정이 끝난 뒤 사람 등급이 이긴다(설계: 사람등급지정 §03).
+    # 지문으로 잇고 내용 변경을 알아야 하므로 지문도 구한다.
+    ov_applier = None
+    if getattr(args, "grade_overrides", None):
+        from . import gradeoverride
+        _ov_index = gradeoverride.load(args.grade_overrides)
+        ov_applier = gradeoverride.Applier(_ov_index)
+        need_hash = True
+        print(f"[MpowerClassify] 사람 결정 목록: {args.grade_overrides} · 보안등급 결정 "
+              f"{len(_ov_index.latest)}건" + (f" · 읽지 못한 줄 {_ov_index.broken}건" if _ov_index.broken else ""),
+              file=sys.stderr)
 
     #--------------------------------------------------------------
     # 레코드 1개 출력(+로그)
@@ -2634,6 +3023,48 @@ def run_classify(files, args, out_fp):
 
     _header_done = []
 
+    # 등급 스트림 기록기 — --write-grade-stream 일 때만 만든다(꺼진 실행은 파일을 건드리지 않는다).
+    # 출력 직전(_emit)이 등급이 최종인 자리라 거기서 쓴다(설계 §10).
+    grade_marker = None
+    if getattr(args, "write_grade_stream", False):
+        from . import gradestream
+        grade_marker = gradestream.Marker(
+            unclassified=getattr(args, "grade_stream_unclassified", None) or "skip",
+            # 기본은 시각 보존 — --grade-stream-update-time 일 때만 수정 시각이 바뀐다
+            keep_time=not getattr(args, "grade_stream_update_time", False))
+
+    #--------------------------------------------------------------
+    # 사람 결정 적용(+ 등급별 건수 보정)
+    #=> 레코드가 최종이 된 자리에서 부른다. 이미 센 건수(counts)를 사람 등급으로 옮긴다.
+    #   adjust=False 는 건수를 아직 세지 않은 자리(전파 뒤 다시 세는 루프 · 압축 집계)용이다.
+    #
+    # -in: rec    = 결과 레코드
+    # -in: adjust = 등급별 건수를 고칠지
+    #
+    # -out: 없음
+    # -out: error = 없음
+    #--------------------------------------------------------------
+    def _ov(rec, adjust=True):
+        if ov_applier is None:
+            return
+        changed = ov_applier(rec)
+        if changed and adjust and changed[0] != changed[1]:
+            o, n = changed[0] or "none", changed[1] or "none"
+            counts[o] = counts.get(o, 0) - 1
+            counts[n] = counts.get(n, 0) + 1
+
+    #--------------------------------------------------------------
+    # 압축 집계에 넣을 등급 — 못 읽은 문서는 None 이지만 사람이 정했으면 그 등급
+    #
+    # -in: rec = 결과 레코드
+    #
+    # -out: 등급 | None
+    # -out: error = 없음
+    #--------------------------------------------------------------
+    def _member_grade(rec):
+        sec = (rec.get("why") or {}).get("security") or {}
+        return rec.get("grade") if sec.get("method") == "manual_override" else None
+
     def _emit_header_once():
         if _header_done:
             return
@@ -2652,6 +3083,9 @@ def run_classify(files, args, out_fp):
         if getattr(args, "_seed_plan", None) is not None:
             args._seed_recs.append(rec)
             return
+        # 등급 스트림은 출력 모양(--summary · --simple)과 상관없이 쓴다 — 기록은 판정의 결과다.
+        if grade_marker is not None:
+            grade_marker.apply(rec)
         # --summary 면 파일별/집계 레코드는 아예 출력하지 않는다(맨 끝 요약만 낸다).
         if summary_only:
             return
@@ -2713,6 +3147,8 @@ def run_classify(files, args, out_fp):
     do_timing = getattr(args, "timing", True)   # 결과 레코드에 elapsed_ms 를 넣을지(--no-timing 이면 끔)
     totals = []       # 파일별 total ms(배치 요약용)
     records = []      # auto_prop 일 때만 모아 뒀다가 전파 후 한꺼번에 출력
+    # 2차 대상 문서의 BM25 재료 {레코드 번호: (제목, 경로)} — 본문 대신 제목 한 줄만 남긴다
+    bm25_fields = {}
     # 업무분류 seed 후보. 전파가 라벨을 더하기 '전' 상태로 담아 둔다 —
     # 전파로 붙은 라벨은 절대 씨앗이 되면 안 되기 때문이다(재설계 10-4 drift 방지).
     # 본문 전체가 아니라 길이만 담는다(문서 하나가 수 MB 인 경우가 있다).
@@ -2788,6 +3224,7 @@ def run_classify(files, args, out_fp):
                 records.append(rec)
                 rec_origins.append(None)
             else:
+                _ov(rec)
                 _finalize_doctype(rec)
                 _emit(rec)
             if show_progress:
@@ -2796,6 +3233,9 @@ def run_classify(files, args, out_fp):
         # src=실제 읽을 경로(압축 내부면 임시파일), path(label)=표시·규칙신호용(압축경로/내부경로),
         # origin=이 파일이 나온 최상위 압축경로(일반 파일이면 None).
         src, path, origin = _as_job(item)
+        # 압축 안에서 나온 문서는 등급 스트림 대상이 아니다 — 표시 경로를 기억해 둔다.
+        if grade_marker is not None and origin is not None:
+            grade_marker.members.add(path)
         # 엠파워 v11 문서면 (원래 이름, 도구를 불렀는가). 파일명 신호에는 원래 이름을 쓴다 —
         # 저장 이름(F_….SMF)에는 단서가 없다. 결과의 file 칸은 언제나 path 다.
         _dm = dec_ctx.meta.get(path) if dec_ctx is not None else None
@@ -2830,10 +3270,11 @@ def run_classify(files, args, out_fp):
                 records.append(rec)
                 rec_origins.append(origin)
             else:
+                _ov(rec)
                 _finalize_doctype(rec)
                 _emit(rec)
                 if origin is not None:
-                    arch_members.setdefault(origin, []).append(None)
+                    arch_members.setdefault(origin, []).append(_member_grade(rec))
                     _collect_archive_doctype(arch_doctypes, origin, rec)
             if show_progress:
                 print(f"[progress] {i}/{total} {path}", file=sys.stderr, flush=True)
@@ -2923,10 +3364,11 @@ def run_classify(files, args, out_fp):
                 records.append(rec)
                 rec_origins.append(origin)
             else:
+                _ov(rec)
                 _finalize_doctype(rec)
                 _emit(rec)
                 if origin is not None:
-                    arch_members.setdefault(origin, []).append(None)
+                    arch_members.setdefault(origin, []).append(_member_grade(rec))
                     _collect_archive_doctype(arch_doctypes, origin, rec)
             # 실패해도 진행수는 늘려 UI 바가 멈추지 않게 한다.
             if show_progress:
@@ -3116,11 +3558,21 @@ def run_classify(files, args, out_fp):
             seed_pool.append({"file": rec.get("file"), "doctype": rec.get("doctype"),
                               "vector": rec["vector"], "text_len": len(text or "")})
 
+        # 기준 문서 등록이면 제목(첫 줄)을 떠 둔다 — 등록할 때 BM25 재료로 줄에 넣는다
+        if getattr(args, "_seed_plan", None):
+            args._seed_titles[seedstore_norm_file(rec.get("file") or path)] = \
+                bm25mod.title_of(text, sig_path)
+
         # auto_prop 면 전파 후 출력하려고 모아 두고, 아니면 바로 출력.
         if auto_prop:
+            # 2차 대상이면 BM25 에 쓸 제목 · 파일명 경로를 레코드 번호로 남긴다(본문은 남기지 않는다)
+            if need_vec and dt_label is not None:
+                bm25_fields[len(records)] = (bm25mod.title_of(text, sig_path), sig_path)
             records.append(rec)
             rec_origins.append(origin)   # 압축 집계용 origin 을 레코드와 나란히 보관
         else:
+            # 스트리밍 경로는 전파가 없으니 지금이 최종 — 사람 결정을 여기서 적용한다.
+            _ov(rec)
             # 스트리밍 경로는 전파가 없으니 지금이 최종 — 여기서 업무분류를 센다.
             _finalize_doctype(rec)
             _emit(rec)
@@ -3236,8 +3688,10 @@ def run_classify(files, args, out_fp):
             # 외부 class_seed.jsonl 파일 읽어오기
             dt_seeds = DoctypeSeedIndex.from_seed_file(seeds_path)
             emb = doc_rules_set.embed
+            # BM25 2차 재료(색인 · 자동 문턱) — bm25.enabled 가 아니면 None
+            bm = _bm25_context(doc_rules_set, seeds_path, emb.dup_threshold, bm25_fields)
 
-            if dt_seeds.size and not emb.enabled:
+            if dt_seeds.size and not emb.enabled and (bm is None or bm["threshold"] is None):
                 # seed 는 있는데 스위치가 꺼져 있는 상태. 조용히 넘어가면
                 # "왜 벡터가 안 도는지" 를 아무도 못 찾는다.
                 print(f"[전파][업무분류] seed {dt_seeds.size}건이 있으나 "
@@ -3249,16 +3703,23 @@ def run_classify(files, args, out_fp):
                 records, dt_stats = propagate_doctype_records(
                     records, dt_seeds, taxonomy, doc_rules_set.conflict,
                     embed_cap=doc_rules_set.defaults.embed_cap,
-                    on_progress=_prop_progress("전파·업무분류"), **emb.kwargs())
+                    on_progress=_prop_progress("전파·업무분류"),
+                    use_embed=emb.enabled, bm25=bm, **emb.kwargs())
                 print(f"[전파][업무분류] seed={dt_stats['seeds']} "
                       f"embed기여={dt_stats['embed_contributed']} "
                       f"벡터없음={dt_stats['no_vector']}", file=sys.stderr)
+                if bm is not None and bm["threshold"] is not None:
+                    print(f"[전파][업무분류][bm25] 후보={dt_stats['bm25_picked']} "
+                          f"합의={dt_stats['bm25_agree']} 단독={dt_stats['bm25_alone']} "
+                          f"파일명단독={dt_stats['bm25_name_only']}", file=sys.stderr)
             # seed 가 없는 경우의 안내는 위(모드 결정 직후)에서 이미 냈다 — 그쪽은
             # auto_prop 이 아예 꺼진 경우까지 잡아 주므로 여기서 또 내지 않는다.
 
         # 전파로 등급이 바뀌었을 수 있으니 분포를 다시 집계한 뒤 출력.
         counts = {"C": 0, "S": 0, "O": 0, "none": 0}
         for rec, origin in zip(records, rec_origins):
+            # 전파까지 끝난 뒤 사람 결정을 적용한다(건수는 바로 아래에서 새로 센다).
+            _ov(rec, adjust=False)
             g = record.grade_of(rec)
             counts[g or "none"] = counts.get(g or "none", 0) + 1
             # 전파까지 끝난 지금이 최종 — 여기서 업무분류를 센다(전파로 붙은 라벨 포함).
@@ -3286,6 +3747,8 @@ def run_classify(files, args, out_fp):
             # --hash/--simple 이면 압축파일 자체의 해시도 함께 싣는다(origin=압축파일 실경로).
             if need_hash:
                 arec["hash"] = _file_hash(origin)
+            # 압축 파일 자체에 사람 결정이 있으면 그것이 이긴다.
+            _ov(arec, adjust=False)
             arch_recs.append(arec)
             _emit(arec)
 
@@ -3342,6 +3805,13 @@ def run_classify(files, args, out_fp):
                             f"[MpowerClassify] 복호화하지 못한 문서 {n_dec_fail}건 — "
                             f"결과에 error.kind=decrypt_failed 로 남겼습니다")
         code = errcodes.exit_of("decrypt_failed")
+    # 등급 스트림을 못 쓴 문서가 있으면 알린다(4002, 종료코드 1). 결과 파일은 온전하다.
+    # 다른 실패가 이미 있으면 그쪽 까닭을 그대로 둔다 — 건수는 요약 grade_stream 에 남는다.
+    if grade_marker is not None and grade_marker.counts["failed"] and code == 0:
+        errcodes.set_status("grade_stream_write_failed",
+                            f"[MpowerClassify] 등급 스트림을 쓰지 못한 문서 "
+                            f"{grade_marker.counts['failed']}건 — 결과의 grade_stream.reason 을 보세요")
+        code = errcodes.exit_of("grade_stream_write_failed")
     errcodes.set_counts(total_files, n_extract_failed + n_missing_file + n_dec_fail)
     # 정책 버전도 함께 — 결과만 있고 '어떤 규칙으로 판정했는지'가 없으면 나중에
     # 재현할 수 없다(--simple --nosummary 면 지금까지 어디에도 안 남았다).
@@ -3387,6 +3857,12 @@ def run_classify(files, args, out_fp):
     # 압축파일 집계 레코드가 있으면 개수도 요약에 표기(내부 파일 total 과는 별개).
     if arch_recs:
         summary["archives"] = len(arch_recs)
+    # 등급 스트림 — 옵션을 켠 실행에서만 싣는다(끈 실행의 요약은 글자 하나 다르지 않다).
+    if grade_marker is not None:
+        summary["grade_stream"] = grade_marker.summary()
+    # 사람 결정 — --grade-overrides 를 준 실행에서만.
+    if ov_applier is not None:
+        summary["grade_overrides"] = ov_applier.summary()
     # doctype 축이 이번 실행에서 한 건이라도 돌았을 때만 요약에 싣는다(4-6).
     if doctype_total_docs:
         summary["doctype"] = {
@@ -3486,6 +3962,16 @@ def run_classify(files, args, out_fp):
             f"총시간={total_ms}ms",
             file=sys.stderr,
         )
+        # 사람 결정은 --grade-overrides 를 준 실행에서만 한 줄 더 낸다(Rust 판과 같은 문구).
+        if ov_applier is not None:
+            _o = ov_applier.counts
+            print(f"[summary][사람결정] 적용={_o['applied']} 확인={_o['confirmed']} "
+                  f"내용바뀜={_o['stale']} (목록 {_o['loaded']}건)", file=sys.stderr)
+        # 등급 스트림은 켠 실행에서만 한 줄 더 낸다(Rust 판과 같은 문구).
+        if grade_marker is not None:
+            _g = grade_marker.counts
+            print(f"[summary][등급스트림] written={_g['written']} unchanged={_g['unchanged']} "
+                  f"skipped={_g['skipped']} failed={_g['failed']}", file=sys.stderr)
         # 저장은 곁다리라 결과를 안 바꾸지만, 몇 건이 어디에 남았는지는 말해야 한다.
         # 중복이 합쳐진 건수를 함께 내는 이유: 폴더의 .txt 개수가 문서 수보다
         # 적은 것을 보고 "빠졌나" 의심하지 않게 하려는 것이다.
@@ -3638,6 +4124,13 @@ def _finish_seed_add(args, taxonomy):
             was[seedstore.norm_file(p["file"])] = {
                 a: seedstore.axis_value(cur, a) for a in seedstore.AXES} if cur else {}
         rows, added, failed = seedcli.build_rows(plan, args._seed_recs, base)
+        # BM25 2차가 비교할 제목(첫 줄)도 함께 남긴다 — 본문은 남기지 않는다(설계서 §09)
+        titles = getattr(args, "_seed_titles", {}) or {}
+        for p in plan:
+            t = titles.get(seedstore.norm_file(p["file"]))
+            row = seedstore.find_seed(rows, p["file"]) if t else None
+            if row is not None:
+                row["title"] = t
         return rows, added, failed, was
 
     try:
@@ -4830,9 +5323,36 @@ def _main(argv=None):
     _dc = check_decrypt_args(args)
     if _dc is not None:
         return _dc
+    # 사이냅을 명시해 골랐는데 없으면 문서를 읽기 전에 끝낸다(1016).
+    _sc = check_synap_args(args)
+    if _sc is not None:
+        return _sc
+    # 등급 스트림 옵션 조합이 틀렸거나 쓸 수 없는 플랫폼이면 읽기 전에 끝낸다.
+    _gc = check_grade_stream_args(args)
+    if _gc is not None:
+        return _gc
+    # 사람 등급 지정 인자(--set-grade · --grade-overrides)도 읽기 전에 본다.
+    _oc = check_override_args(args)
+    if _oc is not None:
+        return _oc
 
     # (0-1) 출력 형식 확정 — 아래 모든 모드가 args.fmt 를 그대로 읽으므로 여기서 한 번만 정한다.
     args.fmt = resolve_format(args.fmt, args.out, log)
+
+    # (0-1b) --set-grade 는 문서를 읽지 않는 별도 모드다 — 규칙 · 모델을 올리기 전에 끝낸다.
+    if getattr(args, "set_grade", None) is not None:
+        if args.out:
+            _ensure_out_parent(args.out)
+        try:
+            _sg_fp = open(args.out, "w", encoding="utf-8") if args.out else None
+        except OSError as e:
+            return fail_err("output_write_failed",
+                            f"[MpowerClassify] 출력 파일을 쓰지 못했습니다: {args.out}\n  {e}", args.out)
+        try:
+            return run_set_grade(args, _sg_fp)
+        finally:
+            if _sg_fp is not None:
+                _sg_fp.close()
 
     # (0-2) 크기 상한(Size Gate) CLI 덮어쓰기를 여기서 한 번만 반영한다.
     _apply_size_limit_overrides(args, log)
@@ -4862,6 +5382,11 @@ def _main(argv=None):
     if code is not None:
         return code
 
+    # (1.354) 기준 문서 제목 채우기 모드: 기준 문서 파일과 본문(또는 원본)만 본다.
+    if getattr(args, "seed_fill_title", False):
+        log.info("기준 문서 제목 채우기(--seed-fill-title)")
+        return run_seed_fill_title(args)
+
     # (1.355) 업무분류 규칙 자동 생성 모드: 체계 JSON 과 정책 폴더만 있으면 된다.
     # => doc_rule.yaml 을 통째로 새로 만든다(설계: 업무분류-규칙파일-자동생성-설계).
     if getattr(args, "build_doc_rule", False):
@@ -4885,6 +5410,7 @@ def _main(argv=None):
         # 분류 경로가 그대로 돌도록 대상 파일을 인자에 실어 준다.
         args._seed_plan = plan
         args._seed_recs = []
+        args._seed_titles = {}
         args.file = None
         # 지문과 벡터는 이 모드에서 선택이 아니다 — 둘 다 없으면 기준으로 못 쓴다.
         args.hash = True

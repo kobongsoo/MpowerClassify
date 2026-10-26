@@ -99,7 +99,8 @@ CLIENT_CONNECT_TIMEOUT = 0.3     # 데몬 접속/PING 타임아웃(초)
 DAEMON_START_WAIT = 20.0         # 데몬 자동기동 후 준비 대기 최대(초)
 
 # 사이냅 추출 관련
-SNF_TIMEOUT = 60                 # snf_exe 1파일 처리 타임아웃(초)
+# snf_exe 1파일 처리 타임아웃(초). Rust 판 synap::snf_timeout_secs 와 같은 값 · 같은 환경변수.
+SNF_TIMEOUT = int(os.environ.get("CSOCLASSIFY_SNF_TIMEOUT", 60))
 # 추출 본문이 이보다 짧으면(공백 제외 글자 수) '읽을 글자가 없었다'로 본다.
 # 스캔본(이미지) PDF · 빈 문서 · 깨진 파일이 여기 걸린다. 추출기는 이런 파일에
 # 예외를 던지지 않고 장식기호 몇 개를 돌려주므로, 길이로 가리지 않으면
