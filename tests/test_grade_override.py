@@ -196,3 +196,78 @@ def test_옵션을_안_주면_결과가_같다(tmp_path):
     recs, summ = _read(out)
     assert "grade_overrides" not in summ
     assert "override" not in (recs["s.txt"].get("why") or {}).get("security", {})
+
+
+#------------------------------------------------------------------
+# --set-grade 를 목록(--filelist)의 문서 전부에
+#=> 설계 §04 '여러 건'. 목록의 문서마다 같은 등급 · 결정 목록에 한 줄씩 · doc_id 는 sfile_id.
+#   없는 파일도 결과에 남기고(file_missing), 종료코드는 처음 난 실패(없는 파일 → 1)를 따른다.
+#   Rust 판 cli_grade_override.rs 의 set_grade_목록_여러건 과 같은 경우다.
+#
+# -in: tmp_path = pytest 임시폴더 픽스처
+# -out: 없음(assert)
+# -out: error = 실패 시 AssertionError
+#------------------------------------------------------------------
+def test_set_grade_목록_여러건(tmp_path):
+    d = tmp_path / "docs"
+    d.mkdir()
+    a, b = d / "a.txt", d / "b.txt"
+    a.write_text(BODY_NONE, encoding="utf-8")
+    b.write_text(BODY_S, encoding="utf-8")
+    gone = d / "c_없음.txt"
+    fl = tmp_path / "list.jsonl"
+    fl.write_text("".join(json.dumps({"path": str(p), "sfile_id": sid}, ensure_ascii=False) + "\n"
+                          for p, sid in ((b, "SF-2"), (gone, "SF-3"), (a, "SF-1"))), encoding="utf-8")
+    ov = tmp_path / "ov.jsonl"
+    ov.write_text("", encoding="utf-8")
+    r = _run(tmp_path, "--set-grade", "S", "--filelist", str(fl), "--grade-overrides", str(ov),
+             "--reviewer", "홍길동", "--reason", "일괄 지정", "--format", "jsonl")
+    # 없는 파일이 하나 있어 종료코드 1 — 그래도 나머지 두 건은 끝까지 처리한다
+    assert r.returncode == 1, r.stderr[-400:]
+    recs = [json.loads(x) for x in r.stdout.splitlines() if x.strip().startswith('{"file"')]
+    assert [os.path.basename(x["file"]) for x in recs] == ["a.txt", "b.txt", "c_없음.txt"]
+    assert [x.get("doc_id") for x in recs] == ["SF-1", "SF-2", "SF-3"]
+    assert recs[0]["grade"] == "S" and recs[1]["grade"] == "S"
+    assert recs[2]["grade"] is None and recs[2]["error"]["kind"] == "file_missing"
+    lines = [json.loads(x) for x in ov.read_text(encoding="utf-8").splitlines() if x.strip()]
+    assert sorted(os.path.basename(x["file"]) for x in lines) == ["a.txt", "b.txt"]
+    assert all(x["new_grade"] == "S" and x["reviewer"] == "홍길동" for x in lines)
+    assert '"kind": "file_missing"' in r.stdout or '"kind":"file_missing"' in r.stdout
+
+
+#------------------------------------------------------------------
+# --set-grade 대상 없음 · --filelist 도 없으면 1003
+#
+# -in: tmp_path = pytest 임시폴더 픽스처
+# -out: 없음(assert)
+# -out: error = 실패 시 AssertionError
+#------------------------------------------------------------------
+def test_set_grade_대상이_없으면_1003(tmp_path):
+    r = _run(tmp_path, "--set-grade", "C")
+    assert r.returncode == 3 and "bad_args" in r.stdout, r.stdout
+
+
+#------------------------------------------------------------------
+# 등급을 새로 쓰면 탐색기에 알린다 · 같은 값이면 알리지 않는다
+#=> SHChangeNotify 를 실제로 확인할 방법이 없어 notify_shell 을 바꿔 끼워 불린 횟수를 센다.
+#
+# -in: tmp_path    = pytest 임시폴더 픽스처
+# -in: monkeypatch = pytest 바꿔 끼우기 픽스처
+# -out: 없음(assert)
+# -out: error = 실패 시 AssertionError
+#------------------------------------------------------------------
+@win_only
+def test_등급을_쓰면_탐색기에_알린다(tmp_path, monkeypatch):
+    from csoclassify import gradestream
+    p = tmp_path / "doc.txt"
+    p.write_text(BODY_NONE, encoding="utf-8")
+    called = []
+    monkeypatch.setattr(gradestream, "notify_shell", lambda path: called.append(path))
+    assert gradestream.mark(str(p), "C")["state"] == "written"
+    assert called == [str(p)]
+    # 같은 값을 다시 쓰면 unchanged — 파일도 탐색기도 건드리지 않는다
+    assert gradestream.mark(str(p), "C")["state"] == "unchanged"
+    assert called == [str(p)]
+    # 진짜 함수도 예외 없이 끝나야 한다(탐색기가 없어도)
+    monkeypatch.undo()
+    gradestream.notify_shell(str(p))

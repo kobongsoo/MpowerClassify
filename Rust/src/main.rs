@@ -398,7 +398,7 @@ fn usage() {
     eprintln!("─── ⑩-0c 사람이 정한 등급 ─────────────────────────────────────");
     eprintln!("  --grade-overrides <파일>  사람 결정 목록(UI 의 cso_override.jsonl). 판정 뒤 사람 등급이 이깁니다");
     eprintln!("                            결정 뒤 내용이 바뀐 문서는 더 엄격한 결정만 따릅니다(stale)");
-    eprintln!("  --set-grade C|S|O|NONE    --file 문서에 판정 없이 바로 등급을 정합니다(--dir 불가)");
+    eprintln!("  --set-grade C|S|O|NONE    --file 문서(또는 --filelist 의 문서 전부)에 판정 없이 바로 등급을 정합니다(--dir 불가)");
     eprintln!("                            --write-grade-stream 이면 파일에도 씁니다");
     eprintln!("  --reviewer · --reason     --set-grade 결정을 --grade-overrides 에 덧붙일 때 필수");
     eprintln!("");
@@ -2455,7 +2455,7 @@ fn check_grade_stream_args(opts: &Opts) {
 // 사람 등급 지정 인자 검사 — 문서를 읽기 전에 끝낸다
 //=> 설계: plan/사람등급지정-수동오버라이드-설계-20261020.html §08. 파이썬 판 check_override_args 와 같다.
 //    1) --set-grade 값은 C · S · O · NONE 만 — 그 밖이면 1003
-//    2) --set-grade 는 --file 하나에만. --dir 이면 1006, 대상이 없으면 1003, 분류 결과가 없는 모드와 함께면 1006
+//    2) --set-grade 대상은 --file 한 건 또는 --filelist. --dir 이면 1006, 대상이 없으면 1003, 분류 결과가 없는 모드와 함께면 1006
 //    3) 결정을 목록에 덧붙이려면(--grade-overrides) --reviewer · --reason 필수(1003)
 //    4) --reviewer · --reason 만 따로 주면 1003
 //    5) 분류에 --grade-overrides 를 주면 그 파일이 있어야 한다 — 없으면 2009
@@ -2473,7 +2473,7 @@ fn check_override_args(opts: &Opts) {
         }
         if opts.dir.is_some() {
             errcodes::fail("mode_conflict",
-                "[MpowerClassify-rs] --set-grade 는 --dir 과 함께 쓸 수 없습니다 — 폴더 전체를 한 등급으로 정하는 실수를 막으려는 것입니다. 문서는 --file 로 하나씩 주세요.", None);
+                "[MpowerClassify-rs] --set-grade 는 --dir 과 함께 쓸 수 없습니다 — 폴더 전체를 한 등급으로 정하는 실수를 막으려는 것입니다. 문서는 --file 로 하나씩 주거나 --filelist 에 적어 주세요.", None);
         }
         let modes = [
             ("--text-only", opts.text_only), ("--embed", opts.embed_flag),
@@ -2485,8 +2485,8 @@ fn check_override_args(opts: &Opts) {
                 errcodes::fail("mode_conflict", &format!("[MpowerClassify-rs] --set-grade 는 {} 와 함께 쓸 수 없습니다.", name), None);
             }
         }
-        if opts.file.is_none() {
-            errcodes::fail("bad_args", "[MpowerClassify-rs] --set-grade 는 --file 로 대상 문서를 줘야 합니다.", None);
+        if opts.file.is_none() && opts.filelist.is_none() {
+            errcodes::fail("bad_args", "[MpowerClassify-rs] --set-grade 는 --file 또는 --filelist 로 대상 문서를 줘야 합니다.", None);
         }
         if opts.grade_overrides.is_some() && !(filled(&opts.reviewer) && filled(&opts.reason)) {
             errcodes::fail("bad_args",
@@ -2506,8 +2506,112 @@ fn check_override_args(opts: &Opts) {
 }
 
 //------------------------------------------------------------------
-// --set-grade — 문서 하나에 등급을 바로 정한다(파이썬 run_set_grade 와 같다)
-//=> 문서를 읽거나 판정하지 않는다. 지문 · 결과 레코드 · (선택) 파일 스트림 · (선택) 결정 목록.
+// --set-grade 대상 모으기(파이썬 _set_grade_targets 와 같다)
+//=> --file 이 있으면 그 한 건, 없으면 --filelist 에 적힌 문서 전부(설계 §04 '여러 건').
+//    1) --file 이 있으면 목록은 대상이 아니다(분류 실행과 같은 규칙 — 목록은 ID 사전)
+//    2) 목록이면 있는 파일 · 없는 파일을 모두 경로 순으로. 목록의 sfile_id 는 doc_id 로 싣는다
+//
+// -in: opts = 해석된 인자
+//
+// -out: Vec<(경로, sfile_id)> = 처리할 문서들(--file 이면 sfile_id 는 None)
+// -out: error = 목록을 못 읽으면 filelist_missing · filelist_invalid 로 종료
+//------------------------------------------------------------------
+fn set_grade_targets(opts: &Opts) -> Vec<(String, Option<String>)> {
+    if let Some(f) = &opts.file {
+        return vec![(f.clone(), None)];
+    }
+    let lp = opts.filelist.clone().unwrap_or_default();
+    let fl = match filelist::load(&lp) {
+        Ok(fl) => fl,
+        // '파일이 없다'와 '내용이 잘못됐다'는 부르는 쪽의 대응이 다르므로 코드를 나눈다
+        Err(e) => {
+            let kind = if Path::new(&lp).is_file() { "filelist_invalid" } else { "filelist_missing" };
+            errcodes::fail(kind, &format!("[MpowerClassify-rs] {}", e), None);
+            unreachable!()
+        }
+    };
+    for w in &fl.warnings {
+        note!("[MpowerClassify-rs] {}", w);
+    }
+    // 경로 순 — 파이썬 판(문자열 정렬)과 같은 차례로 낸다
+    let mut v: Vec<(String, Option<String>)> = fl.entries.values()
+        .map(|e| (e.path.clone(), Some(e.sfile_id.clone())))
+        .collect();
+    v.sort();
+    v
+}
+
+//------------------------------------------------------------------
+// --set-grade 한 건 처리(파이썬 _set_grade_one 과 같다)
+//=> 문서 하나에 등급을 정해 결과 레코드를 만든다. 문서를 읽거나 판정하지 않는다.
+//
+// -in: opts  = 해석된 인자
+// -in: path  = 문서 경로
+// -in: sid   = 목록의 sfile_id(목록에서 온 문서만)
+// -in: grade = 정할 등급(NONE 은 None)
+//
+// -out: (rec, 실패) = 결과 레코드와, 실패했으면 (오류 이름, 문장)
+// -out: error = 없음
+//------------------------------------------------------------------
+fn set_grade_one(opts: &Opts, path: &str, sid: Option<&str>, grade: &Option<String>)
+        -> (Value, Option<(&'static str, String)>) {
+    let label = grade.clone().unwrap_or_else(|| "NONE".to_string());
+    if !Path::new(path).is_file() {
+        let mut rec = json!({"file": path, "grade": Value::Null,
+                             "error": {"kind": "file_missing", "reason": "file_missing", "message": "파일이 없습니다"},
+                             "meta": {"ts": now_iso()}});
+        if let Some(s) = sid {
+            rec["doc_id"] = json!(s);
+            rec["doc_id_source"] = json!("sfile_id");
+        }
+        return (rec, Some(("file_missing", format!("[MpowerClassify-rs] 파일이 없습니다: {}", path))));
+    }
+    let mut fail: Option<(&'static str, String)> = None;
+    let doc_hash = file_hash(Path::new(path));
+    let info = json!({"reviewer": opts.reviewer, "reason": opts.reason, "ts": now_iso(),
+                      "matched_by": "set-grade", "kind": "change", "applied": true});
+    let mut rec = json!({"file": path, "hash": doc_hash, "grade": grade,
+                         "why": {"security": {"method": "manual_override", "decided_by": ["reviewer"], "override": info}},
+                         "meta": {"ts": now_iso()}});
+    // 목록에서 온 문서는 부른 쪽 문서 ID 를 함께 돌려준다 — 결과를 그 문서에 되붙일 수 있게
+    if let Some(s) = sid {
+        rec["doc_id"] = json!(s);
+        rec["doc_id_source"] = json!("sfile_id");
+    }
+    // 결정 목록에 남길 '이전 등급' — 지금 파일에 써 있는 값(모르면 None)
+    let mut old: Option<String> = None;
+    if gradestream::supported() {
+        let (st, cur, _) = gradestream::read_state(path);
+        if matches!(st, gradestream::State::Marked) {
+            old = cur.map(|c| gradestream::code_grade(c).to_string());
+        }
+    }
+    if opts.write_grade_stream {
+        let res = gradestream::mark(path, &label, !opts.grade_stream_update_time);
+        linfo!("등급스트림 state={} file={} value={}", res["state"].as_str().unwrap_or(""), path, label);
+        if res["state"] == "failed" {
+            fail = Some(("grade_stream_write_failed", format!(
+                "[MpowerClassify-rs] 등급 스트림을 쓰지 못했습니다: {}", res["reason"].as_str().unwrap_or(""))));
+        }
+        rec["grade_stream"] = res;
+    }
+    if let Some(ov) = &opts.grade_overrides {
+        if let Err(e) = gradeoverride::append_entry(ov, path, old.as_deref(), grade.as_deref(),
+                opts.reason.as_deref().unwrap_or(""), opts.reviewer.as_deref().unwrap_or(""), doc_hash.as_deref()) {
+            if fail.is_none() {
+                fail = Some(("grade_overrides_write_failed",
+                    format!("[MpowerClassify-rs] 사람 결정 목록에 쓰지 못했습니다: {} ({})", ov, e)));
+            }
+        }
+    }
+    linfo!("사람등급 지정 file={} grade={} 목록={}", path, label, opts.grade_overrides.as_deref().unwrap_or("-"));
+    (rec, fail)
+}
+
+//------------------------------------------------------------------
+// --set-grade — 문서에 등급을 바로 정한다, 한 건 또는 목록(파이썬 run_set_grade 와 같다)
+//=> 문서를 읽거나 판정하지 않는다. 문서마다 지문 · 결과 레코드 · (선택) 파일 스트림 · (선택) 결정 목록.
+//   종료코드는 처음 난 실패를 따르고, 한 건이 실패해도 나머지는 끝까지 처리한다.
 //
 // -in: opts = 해석된 인자
 //
@@ -2515,70 +2619,55 @@ fn check_override_args(opts: &Opts) {
 // -out: error = 대상 없음 3004 · 스트림 실패 4002 · 목록 쓰기 실패 2010 — 종료코드로 알린다
 //------------------------------------------------------------------
 fn run_set_grade(opts: &Opts) -> ! {
-    let path = opts.file.clone().unwrap_or_default();
+    let targets = set_grade_targets(opts);
     let grade = gradeoverride::norm_grade(Some(&json!(opts.set_grade.clone().unwrap_or_default())));
     let label = grade.clone().unwrap_or_else(|| "NONE".to_string());
+    // 상태 줄에 실을 경로 — 한 건이면 그 문서, 목록이면 목록 파일
+    let place = opts.file.clone().or(opts.filelist.clone()).unwrap_or_default();
     let mut code = 0;
-    let mut rec;
-    if !Path::new(&path).is_file() {
-        rec = json!({"file": path, "grade": Value::Null,
-                     "error": {"kind": "file_missing", "reason": "file_missing", "message": "파일이 없습니다"},
-                     "meta": {"ts": now_iso()}});
-        errcodes::set_status("file_missing", &format!("[MpowerClassify-rs] 파일이 없습니다: {}", path));
-        errcodes::set_counts(1, 1);
-        code = errcodes::exit_of("file_missing");
-    } else {
-        let doc_hash = file_hash(Path::new(&path));
-        let info = json!({"reviewer": opts.reviewer, "reason": opts.reason, "ts": now_iso(),
-                          "matched_by": "set-grade", "kind": "change", "applied": true});
-        rec = json!({"file": path, "hash": doc_hash, "grade": grade,
-                     "why": {"security": {"method": "manual_override", "decided_by": ["reviewer"], "override": info}},
-                     "meta": {"ts": now_iso()}});
-        // 결정 목록에 남길 '이전 등급' — 지금 파일에 써 있는 값(모르면 None)
-        let mut old: Option<String> = None;
-        if gradestream::supported() {
-            let (st, cur, _) = gradestream::read_state(&path);
-            if matches!(st, gradestream::State::Marked) {
-                old = cur.map(|c| gradestream::code_grade(c).to_string());
+    let mut failed = 0usize;
+    let mut out: Vec<Value> = Vec::new();
+    for (path, sid) in &targets {
+        let (rec, fail) = set_grade_one(opts, path, sid.as_deref(), &grade);
+        if let Some((kind, msg)) = &fail {
+            failed += 1;
+            // 처음 난 실패가 종료코드와 상태 줄을 정한다 — 뒤 실패가 덮으면 까닭이 엇갈린다
+            if code == 0 {
+                errcodes::set_status(kind, msg);
+                code = errcodes::exit_of(kind);
             }
         }
-        if opts.write_grade_stream {
-            let res = gradestream::mark(&path, &label, !opts.grade_stream_update_time);
-            linfo!("등급스트림 state={} file={} value={}", res["state"].as_str().unwrap_or(""), path, label);
-            if res["state"] == "failed" {
-                errcodes::set_status("grade_stream_write_failed", &format!(
-                    "[MpowerClassify-rs] 등급 스트림을 쓰지 못했습니다: {}", res["reason"].as_str().unwrap_or("")));
-                code = errcodes::exit_of("grade_stream_write_failed");
+        // 출력 — --simple 이면 문서명 · 해시 · doc_id · 등급(파이썬 _simple_record 와 같은 칸)
+        let out_rec = if opts.simple {
+            let mut m = serde_json::Map::new();
+            m.insert("file".into(), rec["file"].clone());
+            m.insert("hash".into(), rec.get("hash").cloned().unwrap_or(Value::Null));
+            if rec.get("doc_id_source").and_then(|v| v.as_str()) == Some("sfile_id") {
+                m.insert("doc_id".into(), rec["doc_id"].clone());
             }
-            rec["grade_stream"] = res;
-        }
-        if let Some(ov) = &opts.grade_overrides {
-            if let Err(e) = gradeoverride::append_entry(ov, &path, old.as_deref(), grade.as_deref(),
-                    opts.reason.as_deref().unwrap_or(""), opts.reviewer.as_deref().unwrap_or(""), doc_hash.as_deref()) {
-                errcodes::set_status("grade_overrides_write_failed",
-                    &format!("[MpowerClassify-rs] 사람 결정 목록에 쓰지 못했습니다: {} ({})", ov, e));
-                code = errcodes::exit_of("grade_overrides_write_failed");
+            m.insert("grade".into(), rec["grade"].clone());
+            if let Some(e) = rec.get("error") {
+                m.insert("error".into(), e.get("reason").cloned().unwrap_or(Value::Null));
             }
-        }
-        linfo!("사람등급 지정 file={} grade={} 목록={}", path, label, opts.grade_overrides.as_deref().unwrap_or("-"));
-        errcodes::set_counts(1, 0);
+            Value::Object(m)
+        } else { order_record(&rec) };
+        out.push(out_rec);
+        let missing = matches!(&fail, Some((k, _)) if *k == "file_missing");
+        let stream_note = rec.get("grade_stream").map(|g| format!(" (파일 스트림 {})", g["state"].as_str().unwrap_or(""))).unwrap_or_default();
+        let list_note = match (&opts.grade_overrides, rec.get("hash")) {
+            (Some(o), Some(_)) => format!(" · 결정 목록 {}", o),
+            _ => String::new(),
+        };
+        note!("[MpowerClassify-rs] 사람 등급 지정: {} → {}{}{}", path,
+              if missing { "실패(file_missing)".to_string() } else { label.clone() }, stream_note, list_note);
     }
-    // 출력 — --simple 이면 문서명 · 해시 · 등급(파이썬 _simple_record 와 같은 칸)
-    let out_rec = if opts.simple {
-        let mut m = serde_json::Map::new();
-        m.insert("file".into(), rec["file"].clone());
-        m.insert("hash".into(), rec.get("hash").cloned().unwrap_or(Value::Null));
-        m.insert("grade".into(), rec["grade"].clone());
-        if let Some(e) = rec.get("error") {
-            m.insert("error".into(), e.get("reason").cloned().unwrap_or(Value::Null));
-        }
-        Value::Object(m)
-    } else { order_record(&rec) };
-    let mut out: Vec<Value> = vec![out_rec];
+    // 없는 파일만 '못 읽은 문서'로 센다(분류 실행의 failed 와 같은 뜻)
+    let n_missing = targets.iter().filter(|(p, _)| !Path::new(p).is_file()).count();
+    errcodes::set_counts(targets.len() as i64, n_missing as i64);
     if errcodes::quiet() && opts.out.is_some() {
-        out.push(errcodes::status_object(code, Some(&path)));
+        out.push(errcodes::status_object(code, Some(&place)));
     }
-    // 상태 줄을 결과 파일에 함께 넣을 때만 json 이 배열이 된다(파이썬 판과 같다)
+    // 여러 건이거나 상태 줄을 결과 파일에 함께 넣을 때 json 이 배열이 된다(파이썬 판과 같다)
     let body = if opts.fmt == "jsonl" {
         out.iter().map(|r| serde_json::to_string(r).unwrap() + "\n").collect::<String>()
     } else if out.len() == 1 {
@@ -2597,10 +2686,10 @@ fn run_set_grade(opts: &Opts) -> ! {
         }
         None => print!("{}", body),
     }
-    let stream_note = rec.get("grade_stream").map(|g| format!(" (파일 스트림 {})", g["state"].as_str().unwrap_or(""))).unwrap_or_default();
-    let list_note = opts.grade_overrides.as_ref().map(|o| format!(" · 결정 목록 {}", o)).unwrap_or_default();
-    note!("[MpowerClassify-rs] 사람 등급 지정: {} → {}{}{}", path, label, stream_note, list_note);
-    std::process::exit(errcodes::finish(code, Some(&path)));
+    if targets.len() > 1 {
+        note!("[MpowerClassify-rs] 사람 등급 지정 {}건 → {} · 실패 {}건", targets.len(), label, failed);
+    }
+    std::process::exit(errcodes::finish(code, Some(&place)));
 }
 
 //------------------------------------------------------------------

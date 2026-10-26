@@ -292,6 +292,44 @@ impl Times {
 }
 
 //------------------------------------------------------------------
+// 탐색기에 '이 파일이 바뀌었다' 알리기(파이썬 gradestream.notify_shell 과 같다)
+//=> 대체 스트림만 바뀌면 탐색기는 아이콘 오버레이 · 툴팁을 다시 읽지 않아 F5 를 눌러야
+//   새 등급이 보인다. SHChangeNotify(SHCNE_UPDATEITEM) 로 그 파일 하나만 다시 그리게 한다.
+//    1) SHCNF_PATHW | SHCNF_FLUSHNOWAIT — 경로로 알리고, 탐색기 처리를 기다리지 않는다
+//    2) 긴 경로 접두(\\?\)는 셸이 알아보지 못해 보통 절대 경로로 준다
+//    3) 돌려주는 값이 없는 API 라 실패를 알 수 없다 — 등급은 이미 써졌다(F5 로 보인다)
+//   새 크레이트 없이 shell32 를 직접 부른다(정적 단일 바이너리 목표 유지).
+//
+// -in: path = 문서 경로
+//
+// -out: 없음
+// -out: error = 없음
+//------------------------------------------------------------------
+#[cfg(windows)]
+pub fn notify_shell(path: &str) {
+    use std::os::windows::ffi::OsStrExt;
+    #[link(name = "shell32")]
+    extern "system" {
+        fn SHChangeNotify(event: i32, flags: u32, item1: *const std::ffi::c_void, item2: *const std::ffi::c_void);
+    }
+    // SHCNE_UPDATEITEM=0x2000 · SHCNF_PATHW=0x0005 · SHCNF_FLUSHNOWAIT=0x3000
+    let abs = std::path::absolute(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
+    let wide: Vec<u16> = abs.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    unsafe { SHChangeNotify(0x2000, 0x0005 | 0x3000, wide.as_ptr() as *const _, std::ptr::null()); }
+}
+
+//------------------------------------------------------------------
+// (Windows 가 아닌 곳) 탐색기가 없다 — 아무것도 하지 않는다
+//
+// -in: path = 무시
+//
+// -out: 없음
+// -out: error = 없음
+//------------------------------------------------------------------
+#[cfg(not(windows))]
+pub fn notify_shell(_path: &str) {}
+
+//------------------------------------------------------------------
 // 한 파일에 등급 쓰기
 //=> 설계 §05 절차. 같은 값이면 안 쓰고, 새 버전 스트림은 지키고, 쓴 뒤 다시 읽어 확인한다.
 //    1) 지금 상태를 읽는다 — 같은 등급이면 unchanged(수정 시각도 그대로)
@@ -300,6 +338,7 @@ impl Times {
 //    4) 12바이트를 쓴다(CREATE_ALWAYS)
 //    5) 시각 · 읽기 전용을 되돌린다(실패는 경고만 — 등급은 이미 써졌다)
 //    6) 다시 읽어 기대한 값인지 본다(가로채고 성공을 돌려주는 필터 대비)
+//    7) 썼으면 탐색기에 알려 표식을 바로 다시 그리게 한다(notify_shell)
 //
 // -in: path      = 문서 경로
 // -in: grade     = "C" | "S" | "O" | "NONE"
@@ -374,6 +413,8 @@ pub fn mark(path: &str, grade: &str, keep_time: bool) -> Value {
     if !matches!(st2, State::Marked | State::Unclassified) || cur2 != Some(code) {
         return failed(grade, "verify_failed", None);
     }
+    // 탐색기가 등급 표식(오버레이 · 툴팁)을 F5 없이 바로 다시 그리게 알린다
+    notify_shell(path);
     let mut m = Map::new();
     m.insert("state".into(), json!("written"));
     m.insert("value".into(), json!(grade));

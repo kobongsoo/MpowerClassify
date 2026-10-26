@@ -1207,7 +1207,7 @@ export CSOCLASSIFY_SYNAP_MODE=fallback</code></pre>
   자세한 동작(결과의 <code>grade_stream</code> · 오류 <code>4002</code>)은 Windows 실행가이드의 '등급 스트림 기록' 절.</div>
 
   <h3 id="gradeoverride">사람이 정한 등급 <span class="pill">2026-10-20 추가</span></h3>
-  <p><code>--grade-overrides &lt;cso_override.jsonl&gt;</code> 로 담당자 결정이 판정을 이기게 하고, <code>--set-grade C|S|O|NONE --file &lt;문서&gt;</code> 로 문서 하나에 바로 등급을 정합니다(결정 목록에 덧붙이려면 <code>--reviewer</code> · <code>--reason</code>).
+  <p><code>--grade-overrides &lt;cso_override.jsonl&gt;</code> 로 담당자 결정이 판정을 이기게 하고, <code>--set-grade C|S|O|NONE --file &lt;문서&gt;</code>(또는 <code>--filelist &lt;목록&gt;</code>)로 문서에 바로 등급을 정합니다(결정 목록에 덧붙이려면 <code>--reviewer</code> · <code>--reason</code>).
   리눅스에서도 결과 레코드와 결정 목록은 그대로 동작하고, 파일 표식(<code>--write-grade-stream</code>)만 Windows 전용입니다.
   없는 목록 <code>2009</code>(종료 3) · 목록 쓰기 실패 <code>2010</code>(종료 4). 자세한 것은 Windows 실행가이드의 '사람이 정한 등급' 절.</p>
 

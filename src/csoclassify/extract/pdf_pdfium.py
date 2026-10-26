@@ -58,12 +58,30 @@ def _is_scan_page(page, text):
     return covered / (w * h) >= config.SCAN_PDF_IMAGE_COVER
 
 
+#------------------------------------------------------------------
+# pdfium 이 끼워 넣는 표식 글자 지우기
+#=> pypdfium2 의 get_text_range 는 낱말 사이 · 줄 끝에 U+FFFE(유니코드 비문자)를 끼워
+#   돌려준다(예: "Technology￾ Roadmap"). 본문 글자가 아니라 pdfium 내부 표식이다.
+#   Rust 판(pdfium-render)은 이 글자를 돌려주지 않으므로, 남겨 두면 두 판의 본문이
+#   달라지고 PII 패턴이 한쪽에서만 끊겨 판정 근거가 갈린다(2026-10-26 교차 검증).
+#    1) U+FFFE 만 지운다 — 공백 · 줄바꿈 등 다른 글자는 그대로 둔다
+#
+# -in: text = get_text_range() 가 돌려준 페이지 본문(None 이면 빈 문자열로 본다)
+#
+# -out: str = 표식을 뺀 본문
+# -out: error = 없음
+#------------------------------------------------------------------
+def _strip_pdfium_marks(text):
+    return (text or "").replace("￾", "")
+
+
 class PdfiumExtractor(TextExtractor):
     #------------------------------------------------------------------
     # 문서 → 원시 텍스트 (핵심)
     #=> PDF 를 열어 페이지마다 텍스트층을 뽑아 이어 붙인다.
     #    1) pypdfium2 없으면 실패(→ snf 폴백)
     #    2) 페이지마다 get_textpage().get_text_range() 로 본문 추출
+    #       (pdfium 표식 U+FFFE 는 지운다 — Rust 판과 같은 본문을 내기 위해)
     #       (G5: 페이지 수·시간 상한을 넘으면 거기서 멈추고 읽은 만큼만 쓴다)
     #    3) 페이지들을 개행으로 결합(빈 결과면 상위가 폴백 판단)
     #   ※ save_dir 저장은 상위(HybridExtractor)가 승자 텍스트만 한 번 처리한다.
@@ -105,7 +123,7 @@ class PdfiumExtractor(TextExtractor):
                     break
                 # 페이지 텍스트층에서 전체 범위 문자열을 얻는다.
                 tp = page.get_textpage()
-                page_text = tp.get_text_range()
+                page_text = _strip_pdfium_marks(tp.get_text_range())
                 parts.append(page_text)
                 if _is_scan_page(page, page_text):
                     scan_pages += 1

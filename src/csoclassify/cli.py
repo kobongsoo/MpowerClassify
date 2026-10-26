@@ -325,7 +325,8 @@ def build_parser():
                    help="사람 결정 목록(UI 의 cso_override.jsonl). 판정이 끝난 뒤 사람 등급이 판정을 이긴다. "
                         "--set-grade 와 함께면 그 결정을 이 파일에 덧붙인다")
     p.add_argument("--set-grade", dest="set_grade", default=None, metavar="C|S|O|NONE",
-                   help="문서를 읽지 않고 --file 문서에 이 등급을 바로 정한다(--write-grade-stream 이면 파일에도 쓴다)")
+                   help="문서를 읽지 않고 --file 문서(또는 --filelist 의 문서 전부)에 이 등급을 바로 정한다"
+                        "(--write-grade-stream 이면 파일에도 쓴다)")
     p.add_argument("--reviewer", dest="reviewer", default=None, metavar="이름",
                    help="--set-grade 결정을 --grade-overrides 에 덧붙일 때 검토자(필수)")
     p.add_argument("--reason", dest="reason", default=None, metavar="사유",
@@ -914,7 +915,7 @@ def check_grade_stream_args(args):
 # 사람 등급 지정 인자 검사 — 문서를 읽기 전에 끝낸다
 #=> 설계: plan/사람등급지정-수동오버라이드-설계-20261020.html §08. Rust 판 check_override_args 와 같다.
 #    1) --set-grade 값은 C · S · O · NONE 만 — 그 밖이면 1003
-#    2) --set-grade 는 --file 하나에만. --dir 이면 1006(폴더 전체를 한 등급으로 찍는 실수 방지),
+#    2) --set-grade 대상은 --file 한 건 또는 --filelist. --dir 이면 1006(폴더 전체를 한 등급으로 찍는 실수 방지),
 #       대상이 없으면 1003. 분류 결과를 내지 않는 모드와 함께면 1006
 #    3) --set-grade 결정을 목록에 덧붙이려면(--grade-overrides) --reviewer · --reason 필수(1003)
 #    4) --reviewer · --reason 만 따로 주면 1003(쓰이지 않은 채 도는 일 방지)
@@ -937,7 +938,7 @@ def check_override_args(args):
         if getattr(args, "dir", None):
             return fail_err("mode_conflict",
                             "[MpowerClassify] --set-grade 는 --dir 과 함께 쓸 수 없습니다 — 폴더 전체를 한 "
-                            "등급으로 정하는 실수를 막으려는 것입니다. 문서는 --file 로 하나씩 주세요.")
+                            "등급으로 정하는 실수를 막으려는 것입니다. 문서는 --file 로 하나씩 주거나 --filelist 에 적어 주세요.")
         modes = [("--text-only", getattr(args, "text_only", False)),
                  ("--embed", getattr(args, "embed", False)),
                  ("--seed-add", seedcli.is_seed_add(args)),
@@ -948,8 +949,8 @@ def check_override_args(args):
             if used:
                 return fail_err("mode_conflict",
                                 f"[MpowerClassify] --set-grade 는 {name} 와 함께 쓸 수 없습니다.")
-        if not getattr(args, "file", None):
-            return fail_err("bad_args", "[MpowerClassify] --set-grade 는 --file 로 대상 문서를 줘야 합니다.")
+        if not getattr(args, "file", None) and not getattr(args, "filelist", None):
+            return fail_err("bad_args", "[MpowerClassify] --set-grade 는 --file 또는 --filelist 로 대상 문서를 줘야 합니다.")
         if ov and not ((who or "").strip() and (why or "").strip()):
             return fail_err("bad_args",
                             "[MpowerClassify] --set-grade 결정을 --grade-overrides 에 덧붙이려면 "
@@ -966,44 +967,64 @@ def check_override_args(args):
 
 
 #------------------------------------------------------------------
-# --set-grade — 문서 하나에 등급을 바로 정한다
-#=> 설계 §04. 문서를 읽거나 판정하지 않는다(암호화 문서도 풀지 않는다).
-#    1) 대상이 없으면 file_missing 레코드 + 3004(종료 1)
+# --set-grade 대상 모으기
+#=> --file 이 있으면 그 한 건, 없으면 --filelist 에 적힌 문서 전부(설계 §04 '여러 건').
+#    1) --file 이 있으면 목록은 대상이 아니다(분류 실행과 같은 규칙 — 목록은 ID 사전)
+#    2) 목록이면 있는 파일 · 없는 파일을 모두 경로 순으로 — 없는 파일도 결과에 남겨야
+#       부른 쪽이 무엇이 빠졌는지 안다. 목록의 sfile_id 는 doc_id 로 싣는다
+#
+# -in: args = 파싱된 인자
+#
+# -out: list[(경로, sfile_id 또는 None)] = 처리할 문서들 / int = 목록을 못 읽어 낸 종료코드
+# -out: error = 예외 없음(목록 오류는 filelist_missing · filelist_invalid 로 알린다)
+#------------------------------------------------------------------
+def _set_grade_targets(args):
+    if getattr(args, "file", None):
+        return [(args.file, None)]
+    from . import filelist as filelist_mod
+    try:
+        fl = filelist_mod.load(args.filelist)
+    except filelist_mod.FileListError as e:
+        # '파일이 없다'와 '내용이 잘못됐다'는 부르는 쪽의 대응이 다르므로 코드를 나눈다
+        kind = "filelist_missing" if not os.path.isfile(args.filelist or "") else "filelist_invalid"
+        return fail_err(kind, f"[MpowerClassify] {e}")
+    for w in fl.warnings:
+        print(f"[MpowerClassify] {w}", file=sys.stderr)
+    # 경로 순 — Rust 판(문자열 정렬)과 같은 차례로 낸다
+    return sorted(((e.path, e.sfile_id) for e in fl.entries.values()), key=lambda t: t[0])
+
+
+#------------------------------------------------------------------
+# --set-grade 한 건 처리
+#=> 문서 하나에 등급을 정해 결과 레코드를 만든다. 문서를 읽거나 판정하지 않는다.
+#    1) 대상이 없으면 file_missing 레코드
 #    2) 내용 지문을 구하고, 결과 레코드(method:manual_override)를 만든다
 #    3) --write-grade-stream 이면 그 등급을 파일 스트림에 쓴다(NONE 은 '미분류' 로)
-#    4) --grade-overrides 면 결정을 한 줄 덧붙인다 — 못 쓰면 2010(종료 4)
+#    4) --grade-overrides 면 결정을 한 줄 덧붙인다
 #
-# -in: args   = 파싱된 인자
-# -in: out_fp = 결과를 쓸 파일(None 이면 표준출력)
+# -in: path  = 문서 경로
+# -in: sid   = 목록의 sfile_id(목록에서 온 문서만, 아니면 None)
+# -in: grade = 정할 등급(C · S · O, NONE 은 None)
+# -in: args  = 파싱된 인자
+# -in: log   = 로거
 #
-# -out: int = 종료코드
-# -out: error = 예외 없음(실패는 오류코드로 알린다)
+# -out: (rec, 실패) = 결과 레코드와, 실패했으면 (오류 이름, 문장) 아니면 None
+# -out: error = 예외 없음
 #------------------------------------------------------------------
-def run_set_grade(args, out_fp):
+def _set_grade_one(path, sid, grade, args, log):
     import datetime
     from . import gradeoverride, gradestream
     from .classify import now_iso
-    # 이 함수는 main 밖에서 불려 main 의 log 를 못 본다 — 같은 이름의 로거를 직접 얻는다
-    log = logsetup.get_logger("csoclassify")
-    path = args.file
-    grade = gradeoverride.norm_grade(args.set_grade)       # NONE → None
     label = grade or "NONE"
-    code = config.EXIT_OK
-    # 상태 줄을 결과 파일에 함께 넣을 때만(--out + --json-errors) json 이 배열이 된다 — Rust 판과 같다
-    writer = output.RecordWriter(out_fp or sys.stdout, args.fmt,
-                                 multi=bool(errcodes.is_json() and args.out))
     if not os.path.isfile(path):
         rec = {"file": path, "grade": None,
                "error": {"kind": "file_missing", "reason": "file_missing",
                          "message": "파일이 없습니다"},
                "meta": {"ts": now_iso()}}
-        errcodes.set_status("file_missing", f"[MpowerClassify] 파일이 없습니다: {path}")
-        errcodes.set_counts(1, 1)
-        writer.write_record(_simple_record(rec) if getattr(args, "simple", False) else _order_record(rec))
-        if errcodes.is_json() and args.out and args.fmt in ("json", "jsonl"):
-            writer.write_record(errcodes.status_object(errcodes.exit_of("file_missing"), path))
-        writer.close()
-        return errcodes.exit_of("file_missing")
+        if sid is not None:
+            rec.update(doc_id=sid, doc_id_source="sfile_id")
+        return rec, ("file_missing", f"[MpowerClassify] 파일이 없습니다: {path}")
+    fail = None
     doc_hash = _file_hash(path)
     info = {"reviewer": getattr(args, "reviewer", None), "reason": getattr(args, "reason", None),
             "ts": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -1012,6 +1033,9 @@ def run_set_grade(args, out_fp):
            "why": {"security": {"method": "manual_override", "decided_by": ["reviewer"],
                                 "override": info}},
            "meta": {"ts": now_iso()}}
+    # 목록에서 온 문서는 부른 쪽 문서 ID 를 함께 돌려준다 — 결과를 그 문서에 되붙일 수 있게
+    if sid is not None:
+        rec.update(doc_id=sid, doc_id_source="sfile_id")
     # 결정 목록에 남길 '이전 등급' — 지금 파일에 써 있는 값(모르면 None)
     old = None
     if gradestream.supported():
@@ -1025,26 +1049,71 @@ def run_set_grade(args, out_fp):
         rec["grade_stream"] = res
         log.info("등급스트림 state=%s file=%s value=%s", res.get("state"), path, label)
         if res.get("state") == "failed":
-            errcodes.set_status("grade_stream_write_failed",
-                                f"[MpowerClassify] 등급 스트림을 쓰지 못했습니다: {res.get('reason')}")
-            code = errcodes.exit_of("grade_stream_write_failed")
+            fail = ("grade_stream_write_failed",
+                    f"[MpowerClassify] 등급 스트림을 쓰지 못했습니다: {res.get('reason')}")
     ov = getattr(args, "grade_overrides", None)
     if ov:
         try:
             gradeoverride.append_entry(ov, path, old, grade, args.reason, args.reviewer, doc_hash)
         except OSError as e:
-            errcodes.set_status("grade_overrides_write_failed",
-                                f"[MpowerClassify] 사람 결정 목록에 쓰지 못했습니다: {ov} ({e})")
-            code = errcodes.exit_of("grade_overrides_write_failed")
+            fail = fail or ("grade_overrides_write_failed",
+                            f"[MpowerClassify] 사람 결정 목록에 쓰지 못했습니다: {ov} ({e})")
     log.info("사람등급 지정 file=%s grade=%s 목록=%s", path, label, ov or "-")
-    errcodes.set_counts(1, 0)
-    writer.write_record(_simple_record(rec) if getattr(args, "simple", False) else _order_record(rec))
+    return rec, fail
+
+
+#------------------------------------------------------------------
+# --set-grade — 문서에 등급을 바로 정한다(한 건 또는 목록)
+#=> 설계 §04. 문서를 읽거나 판정하지 않는다(암호화 문서도 풀지 않는다).
+#    1) 대상: --file 한 건, 또는 --filelist 의 문서 전부(_set_grade_targets)
+#    2) 문서마다 _set_grade_one — 결과 레코드 · (선택) 파일 스트림 · (선택) 결정 목록
+#    3) 종료코드는 처음 난 실패를 따른다 — 없는 파일 3004(종료 1) · 스트림 4002 · 목록 쓰기 2010(종료 4).
+#       한 건이 실패해도 나머지는 끝까지 처리한다
+#
+# -in: args   = 파싱된 인자
+# -in: out_fp = 결과를 쓸 파일(None 이면 표준출력)
+#
+# -out: int = 종료코드
+# -out: error = 예외 없음(실패는 오류코드로 알린다)
+#------------------------------------------------------------------
+def run_set_grade(args, out_fp):
+    from . import gradeoverride
+    # 이 함수는 main 밖에서 불려 main 의 log 를 못 본다 — 같은 이름의 로거를 직접 얻는다
+    log = logsetup.get_logger("csoclassify")
+    targets = _set_grade_targets(args)
+    if isinstance(targets, int):
+        return targets
+    grade = gradeoverride.norm_grade(args.set_grade)       # NONE → None
+    label = grade or "NONE"
+    # 상태 줄에 실을 경로 — 한 건이면 그 문서, 목록이면 목록 파일
+    where = args.file or args.filelist
+    code = config.EXIT_OK
+    failed = 0
+    # 여러 건이거나 상태 줄을 결과 파일에 함께 넣을 때(--out + --json-errors) json 이 배열이 된다 — Rust 판과 같다
+    writer = output.RecordWriter(out_fp or sys.stdout, args.fmt,
+                                 multi=len(targets) > 1 or bool(errcodes.is_json() and args.out))
+    for path, sid in targets:
+        rec, fail = _set_grade_one(path, sid, grade, args, log)
+        if fail is not None:
+            failed += 1
+            # 처음 난 실패가 종료코드와 상태 줄을 정한다 — 뒤 실패가 덮으면 까닭이 엇갈린다
+            if code == config.EXIT_OK:
+                errcodes.set_status(*fail)
+                code = errcodes.exit_of(fail[0])
+        writer.write_record(_simple_record(rec) if getattr(args, "simple", False) else _order_record(rec))
+        print(f"[MpowerClassify] 사람 등급 지정: {path} → "
+              + (f"실패({fail[0]})" if fail and fail[0] == "file_missing" else label)
+              + (f" (파일 스트림 {rec['grade_stream'].get('state')})" if "grade_stream" in rec else "")
+              + (f" · 결정 목록 {args.grade_overrides}" if args.grade_overrides and "hash" in rec else ""),
+              file=sys.stderr)
+    # 없는 파일만 '못 읽은 문서'로 센다(분류 실행의 failed 와 같은 뜻)
+    errcodes.set_counts(len(targets), sum(1 for p, _ in targets if not os.path.isfile(p)))
     if errcodes.is_json() and args.out and args.fmt in ("json", "jsonl"):
-        writer.write_record(errcodes.status_object(code, path))
+        writer.write_record(errcodes.status_object(code, where))
     writer.close()
-    print(f"[MpowerClassify] 사람 등급 지정: {path} → {label}"
-          + (f" (파일 스트림 {rec['grade_stream'].get('state')})" if "grade_stream" in rec else "")
-          + (f" · 결정 목록 {ov}" if ov else ""), file=sys.stderr)
+    if len(targets) > 1:
+        print(f"[MpowerClassify] 사람 등급 지정 {len(targets)}건 → {label} · 실패 {failed}건",
+              file=sys.stderr)
     return code
 
 

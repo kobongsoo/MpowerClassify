@@ -242,7 +242,8 @@ def _address_prefilter(text):
 #     · "원미구 중동 1153"  → 원미구✓(보충 사전) → 통과 (실측 미탐을 막은 자리)
 #
 #   [적용 범위] 지번(format="jibun") 에만 건다. 도로명은 '로/길 + 번호'라는 신호가
-#   훨씬 강해 같은 오탐이 관측되지 않았고, 괜히 건드리면 미탐 위험만 커진다.
+#   훨씬 강해 이 판정을 그대로 걸면 미탐 위험만 커진다. 도로명에서 관측된 오탐
+#   (낱말이 쪼개진 "실시간으로 3")은 더 좁은 _road_admin_ok 가 따로 막는다.
 #
 #   [Rust 와의 관계] Rust/src/pii.rs 의 jibun_admin_ok() 과 같은 판정이다. 그쪽이
 #   먼저 들어갔고 이건 그 이식본이라, 두 판이 같은 문서에 같은 등급을 낸다.
@@ -277,10 +278,54 @@ def _jibun_admin_ok(m):
 
 
 #------------------------------------------------------------------
+# 도로명 주소 — 낱말 속 가짜 시군구 거르기 [ko-pii 와 의도적으로 다름]
+#=> ko-pii 도로명 갈래는 "시군구로 끝나는 글자 + 로/길로 끝나는 글자 + 번호" 를 찾는데,
+#   둘 사이에 띄어쓰기를 요구하지 않는다. 그래서 낱말 하나가 쪼개져 주소가 된다.
+#       detect_all("실시간으로 3D 인물", include=["ADDRESS"])
+#         → ADDRESS extra={'city': None, 'districts': '실시', 'road': '간으로', 'building_number': '3'}
+#   '실시간으로'를 '실시(市)' + '간으로(路)' 로 읽은 것이다(2026-10-26 배포 교차 검증,
+#   D:\sample\4_디지털콘텐츠_통합보고서_업로드용.pdf).
+#
+#   [무엇을 다르게 하나] 아래 셋이 모두 맞을 때만 버린다 — 진짜 주소를 놓치지 않게 좁게 막는다.
+#     1) 광역(시·도)이 없다 — 있으면 ko-pii 가 이미 조합을 검증했다
+#     2) 마지막 시군구 토큰과 도로명이 띄어쓰기 없이 붙어 있다 — 진짜 주소는 대개
+#        "강남구 테헤란로" 처럼 띄어 쓴다
+#     3) 그 시군구 토큰이 진짜 행정구역 이름이 아니다(ko-pii 사전 + 보충 사전)
+#     · "실시간으로 3"        → 실시✗ · 붙음  → 거부 (오탐 제거)
+#     · "강남구 테헤란로 152" → 띄어 씀       → 통과
+#     · "강남구테헤란로 152"  → 붙었지만 강남구✓ → 통과
+#
+#   [Rust 와의 관계] Rust/src/pii.rs 의 road_admin_ok() 와 같은 판정이다. 버린 자리는
+#   ko-pii 안에서 이미 '본 자리'로 남아 지번 갈래가 다시 잡지 않는다 — Rust 도 같게 한다.
+#
+# -in: m    = ko-pii DetectionResult (extra 에 format·city·districts·road 가 들어 있다)
+#
+# -out: bool = 주소로 인정하면 True, 낱말이 쪼개진 가짜 주소라 버리면 False
+# -out: error = 없음 (사전 import 실패 시엔 항상 True → 종전 동작)
+#------------------------------------------------------------------
+def _road_admin_ok(m):
+    if _kopii_is_district is None:
+        return True
+    extra = m.extra or {}
+    if extra.get("format") != "road_name" or extra.get("city"):
+        return True
+    parts = (extra.get("districts") or "").split()
+    road = extra.get("road") or ""
+    if not parts or not road:
+        return True
+    last = parts[-1]
+    # 띄어 쓴 주소는 건드리지 않는다 — 붙어 있을 때만 의심한다
+    if (last + road) not in (m.text or ""):
+        return True
+    return bool(_kopii_is_district(last) or last in _EXTRA_DISTRICTS)
+
+
+#------------------------------------------------------------------
 # 주소 검출기 (프리필터 + 가짜 시군구 가드)
 #=> _LABEL_TO_DETECTOR 에서 ADDRESS 자리에 원본 address.detect 대신 이걸 넣는다.
 #    1) 프리필터가 '주소 없음'이라 판정하면 비싼 검출을 건너뛴다(비용 절감, 결과 동일)
 #    2) 검출된 지번 주소 중 가짜 행정구역을 _jibun_admin_ok 로 걸러낸다(오탐 제거)
+#    3) 도로명 중 낱말이 쪼개진 가짜 주소를 _road_admin_ok 로 걸러낸다(오탐 제거)
 #
 # -in: text = 스캔 대상 텍스트
 #
@@ -291,7 +336,7 @@ def _gated_address_detect(text):
     # 주소 신호가 전혀 없으면 address.detect 자체를 호출하지 않는다.
     if not _address_prefilter(text):
         return ()
-    return [m for m in _p_addr.detect(text) if _jibun_admin_ok(m)]
+    return [m for m in _p_addr.detect(text) if _jibun_admin_ok(m) and _road_admin_ok(m)]
 
 
 #------------------------------------------------------------------
