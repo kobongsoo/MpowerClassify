@@ -16,6 +16,7 @@ from dataclasses import dataclass
 import yaml
 
 from ..resources import resource_path, exe_dir
+from .bm25 import Bm25Spec, parse_spec as _parse_bm25_spec
 
 # doc_rule.yaml 도 cso_rule.yaml·doc_taxonomy.yaml 과 같은 "exe 옆 외장 파일"
 # 규약을 따른다(설계서 3-2 표 — 배포 원칙은 세 파일이 모두 같다).
@@ -185,6 +186,8 @@ class DocRuleSet:
     warnings: tuple = ()
     defaults: Defaults = Defaults()
     embed: EmbedSpec = EmbedSpec()
+    # 업무분류 2차 BM25 설정(bm25: 블록). 없으면 enabled=False — 예전과 같다.
+    bm25: Bm25Spec = Bm25Spec()
     # 신호별 신뢰도 표. None 이면 정책 파일이 안 건드린 것 —
     # 채점 쪽이 코드 기본값(doctype._SIG_CONF)을 그대로 쓴다.
     signals: dict = None
@@ -555,6 +558,7 @@ def validate_doc_rule_data(data):
     # 규칙의 판정이 함께 틀어지므로 규칙 오류보다 먼저 보여 주는 게 낫다.
     violations += _parse_defaults(data.get("defaults"))[1]
     violations += _parse_embed(data.get("embed"))[1]
+    violations += [_dv("T23", None, f, v, why) for f, v, why in _parse_bm25_spec(data.get("bm25"))[1]]
     violations += _parse_signals(data.get("signals"))[1]
 
     raw_rules = data.get("doctype_rules")
@@ -775,6 +779,7 @@ def load_doc_rules(path=None, taxonomy=None, validate=True):
     # 검증을 이미 통과했으므로 여기서 나오는 위반 목록은 버린다(값만 필요).
     defaults, _ = _parse_defaults(data.get("defaults"))
     embed, _ = _parse_embed(data.get("embed"))
+    bm25, _ = _parse_bm25_spec(data.get("bm25"))
     signals, _ = _parse_signals(data.get("signals"))
 
     warnings = []
@@ -859,6 +864,6 @@ def load_doc_rules(path=None, taxonomy=None, validate=True):
 
     return DocRuleSet(conflict=conflict, version=str(data.get("version", "unknown")),
                       rules=tuple(rules), warnings=tuple(warnings),
-                      defaults=defaults, embed=embed, signals=signals,
+                      defaults=defaults, embed=embed, bm25=bm25, signals=signals,
                       head_lexicon=head_lexicon, head_noise=head_noise,
                       taxonomy=taxonomy if generated else None)

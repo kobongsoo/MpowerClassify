@@ -109,6 +109,8 @@ pub struct DocRuleSet {
     pub conflict: ConflictSpec,
     pub defaults: Defaults,
     pub embed: EmbedSpec,
+    /// 업무분류 2차 BM25 설정(doc_rule.yaml 의 bm25:). 없으면 enabled=false — 예전과 같다.
+    pub bm25: crate::bm25::Bm25Spec,
     /// 신호별 신뢰도 표(doc_rule.yaml 의 signals:). 정책 파일이 안 건드리면
     /// None — 채점 쪽이 코드 기본값(doctype::sig_conf)을 그대로 쓴다.
     pub signals: Option<crate::doctype::SignalTable>,
@@ -137,6 +139,7 @@ impl DocRuleSet {
             conflict: ConflictSpec::default(),
             defaults: Defaults::default(),
             embed: EmbedSpec::default(),
+            bm25: crate::bm25::Bm25Spec::default(),
             signals: None,
             version: "none".into(),
             rules: Vec::new(),
@@ -480,6 +483,8 @@ fn validate_doc_rule_data(data: &Value) -> Vec<DVio> {
     // 판정이 함께 틀어지므로 규칙 오류보다 먼저 보여 주는 게 낫다.
     out.extend(parse_defaults(data.get("defaults").unwrap_or(&Value::Null)).1);
     out.extend(parse_embed(data.get("embed").unwrap_or(&Value::Null)).1);
+    out.extend(crate::bm25::parse_spec(data.get("bm25").unwrap_or(&Value::Null)).1.into_iter()
+        .map(|(field, value, detail)| DVio { code: "T23", rule_id: None, field, value, detail }));
     out.extend(parse_signals(data.get("signals").unwrap_or(&Value::Null)).1);
 
     let raw_rules = match data.get("doctype_rules") {
@@ -656,6 +661,7 @@ pub fn load_doc_rules(path: &std::path::Path, taxonomy: Option<&Taxonomy>) -> Re
     // 검증을 이미 통과했으므로 여기서 나오는 위반 목록은 버린다(값만 필요).
     let defaults = parse_defaults(data.get("defaults").unwrap_or(&Value::Null)).0;
     let embed = parse_embed(data.get("embed").unwrap_or(&Value::Null)).0;
+    let bm25 = crate::bm25::parse_spec(data.get("bm25").unwrap_or(&Value::Null)).0;
     let signals = parse_signals(data.get("signals").unwrap_or(&Value::Null)).0;
 
     let mut warnings = vec![];
@@ -748,7 +754,7 @@ pub fn load_doc_rules(path: &std::path::Path, taxonomy: Option<&Taxonomy>) -> Re
         warnings.extend(head_warnings);
     }
 
-    Ok(DocRuleSet { conflict, defaults, embed, signals,
+    Ok(DocRuleSet { conflict, defaults, embed, bm25, signals,
                     version: s(&data, "version", "unknown"), rules, warnings,
                     head_lexicon, head_noise, taxonomy: gen_tax })
 }

@@ -580,7 +580,7 @@ MpowerClassify-rs.exe --stop</code></pre>
     <tr><td><b>Rust 판</b></td><td><code>MpowerClassify-rs.exe</code><br><span class="def">리눅스 <code>MpowerClassify-rs</code></span></td>
         <td>실행 파일 하나 · 기동이 빠름 · 임베딩 상주 서버는 선택(<code>--daemon</code>)</td><td><b>서버 · 배치 · 엠파워 연동</b>(권장)</td></tr>
     <tr><td><b>Python 판</b></td><td><code>MpowerClassify.exe</code><br><span class="def">리눅스 <code>MpowerClassify</code></span></td>
-        <td>사이냅 폴백 · 씨앗 자동 생성(<code>--make-doctype-seeds</code>) · 벡터만 뽑기(<code>--embed</code>) · 상주 서버가 기본</td><td>위 기능이 필요할 때</td></tr>
+        <td>사이냅 자동 폴백(Rust 판은 <code>--synap-fallback</code> 으로 고를 때만) · 씨앗 자동 생성(<code>--make-doctype-seeds</code>) · 벡터만 뽑기(<code>--embed</code>) · 상주 서버가 기본</td><td>위 기능이 필요할 때</td></tr>
   </table></div>
   <p class="def">같은 정책 파일 · 같은 모델이면 두 판이 <b>같은 등급 · 같은 오류 코드</b>를 냅니다(시험으로 묶여 있습니다). 한 판에만 있는 인자는 <a href="#args">인자 표</a>에 표시했습니다.</p>
 
@@ -653,6 +653,7 @@ MpowerClassify-rs.exe --stop</code></pre>
     <tr><td><code>1xxx</code></td><td>부른 쪽 잘못 — 대상 없음 · 인자 오타</td><td>3</td><td class="bad">없음</td><td>명령을 고쳐 다시 부른다</td></tr>
     <tr><td><code>2xxx</code></td><td>정책 파일이 없거나 내용이 틀림</td><td>3 · 4</td><td class="bad">없음</td><td>관리자가 정책 파일을 고친다</td></tr>
     <tr><td><code>4001</code></td><td>결과 파일을 못 씀</td><td>1</td><td class="bad">없음</td><td>경로 · 권한 · 디스크를 확인한다</td></tr>
+    <tr><td><code>4002</code></td><td>등급 스트림을 못 쓴 문서가 있음</td><td>1</td><td>있음</td><td>레코드의 <code>grade_stream.reason</code> 을 본다(권한 · 잠김 · ADS 미지원 볼륨) → <a href="#gradestream">등급 스트림</a></td></tr>
   </table></div>
   <p class="def">모르는 <code>code</code> 는 천의 자리로 뭉뚱그리면 됩니다 — 나중에 오류가 늘어도 옳은 갈래에 들어갑니다. 전체 목록은 <a href="#exit">종료코드 · 오류 계약</a>.</p>
 
@@ -677,7 +678,7 @@ MpowerClassify-rs.exe --stop</code></pre>
     <tr><td><b>Python 판</b><br><code>MpowerClassify</code></td>
         <td><code>dist-onedir\windows\</code><br><span class="def">묶음: <code>MpowerClassify-windows.zip</code> 130MB</span></td>
         <td><code>dist-onedir/linux/</code><br><span class="def"><code>MpowerClassify-onedir-linux.tgz</code> 154MB + 정책 파일</span></td>
-        <td>상주 데몬 · 사이냅 폴백 · 씨앗 자동 생성(<code>--make-doctype-seeds</code>)</td></tr>
+        <td>상주 데몬 · 사이냅 자동 폴백(Rust 판은 <code>--synap-fallback</code> 으로 고를 때만) · 씨앗 자동 생성(<code>--make-doctype-seeds</code>)</td></tr>
     <tr><td><b>Rust 판</b><br><code>MpowerClassify-rs</code></td>
         <td><code>Rust\dist-onedir\windows\</code><br><span class="def">묶음: <code>MpowerClassify-rs-windows.zip</code> 92MB</span></td>
         <td><code>Rust/dist-onedir/linux/</code><br><span class="def"><code>MpowerClassify-rs-linux.tgz</code> 96MB — 전부 들어 있음</span></td>
@@ -961,9 +962,10 @@ cd MpowerClassify &amp;&amp; ./MpowerClassify --dir /data/문서함 --format jso
     <tr><th>칸</th><th>뜻</th></tr>
     <tr><td><code>values[].dc_id</code> · <code>path</code> · <code>path_ids</code></td><td>분류 ID · 사람이 읽는 경로 · 최상위부터의 ID 들</td></tr>
     <tr><td><code>values[].confidence</code></td><td>그 후보의 확신(0~1). <b>보안등급의 확신과는 다른 값</b>입니다(축이 다름)</td></tr>
-    <tr><td><code>values[].from</code></td><td>근거가 나온 곳 — <code>title</code> 제목 · <code>head</code> 문서 머리 400자 · <code>body</code> 본문 · <code>name</code> 파일 이름 · <code>embed</code> 기준 문서</td></tr>
-    <tr><td><code>values[].stage</code></td><td><code>rule</code> 규칙으로 · <code>embed</code> 기준 문서와 닮아서 · <code>both</code> 둘 다</td></tr>
-    <tr><td><code>values[].signals</code></td><td>곳마다 — <code>c</code>(그곳이 낸 점수) · <code>terms</code>(걸린 규칙 낱말과 건수). 여러 곳에서 나오면 합쳐져 확신이 올라갑니다</td></tr>
+    <tr><td><code>values[].from</code></td><td>근거가 나온 곳 — <code>title</code> 제목 · <code>head</code> 문서 머리 400자 · <code>body</code> 본문 · <code>name</code> 파일 이름 · <code>embed</code> 기준 문서(벡터) · <code>bm25</code> 기준 문서와 제목 · 파일명 말이 겹침</td></tr>
+    <tr><td><code>values[].stage</code></td><td><code>rule</code> 규칙으로 · <code>embed</code> 기준 문서와 닮아서(벡터) · <code>bm25</code> 기준 문서와 제목 · 파일명 말이 겹쳐서 · <code>embed+bm25</code> 2차 두 근거가 같은 분류 · <code>both</code> 규칙과 2차 둘 다</td></tr>
+    <tr><td><code>values[].review</code> · <code>basis</code></td><td><b>확인이 필요한 약한 라벨</b>일 때만 붙습니다(<code>review: true</code>). <code>basis</code> 는 그 이유 — <code>name_head</code> 파일명 핵어로만 · <code>bm25</code> BM25 만 · <code>bm25_name_only</code> BM25 가 <b>파일명에서만</b> 겹침 <span class="pill">2026-10-22 추가</span></td></tr>
+    <tr><td><code>values[].signals</code></td><td>곳마다 — <code>c</code>(그곳이 낸 점수) · <code>terms</code>(걸린 규칙 낱말과 건수). 여러 곳에서 나오면 합쳐져 확신이 올라갑니다. <code>bm25</code> 근거는 <code>score</code>(BM25 점수) · <code>threshold</code>(이번 실행의 최소 점수) · <code>field</code>(<code>title</code> · <code>name</code> · <code>title+name</code> — 어디서 겹쳤나) · <code>words</code>(파일명에서 겹친 말, 최대 5개)</td></tr>
     <tr><td><code>conflicts[]</code></td><td>서로 다른 큰 갈래의 후보가 함께 나왔다는 표시 — 검토할 때 먼저 볼 문서입니다</td></tr>
     <tr><td><code>embed</code></td><td>기준 문서 비교의 결과(<code>method</code> · <code>top_sim</code> · <code>neighbors</code>) — 위 보안등급의 것과 같은 뜻</td></tr>
   </table></div>
@@ -1074,15 +1076,73 @@ cd MpowerClassify &amp;&amp; ./MpowerClassify --dir /data/문서함 --format jso
   <h3>추출 방식</h3>
   <div class="scroll"><table>
     <tr><th>인자</th><th>값</th><th>설명</th></tr>
-    <tr><td><code>--hybridparse</code></td><td>—</td><td><b>내용 감지 → 포맷별 전용 파서</b>로 추출(사이냅 없이): pdf→pypdfium2, hwp→HWP5, hwpx→zip/OWPML, 구형 doc/ppt→자체 olefile 파서, xls→xlrd, 현대 docx/xlsx/pptx→zip/OOXML 직접파싱(stdlib), html→태그제거(stdlib), text→직접읽기. 전용 파서 실패 시 <b>snf 폴백</b>(snf 없으면 그 파일만 미분류). <b>기본값</b>이라 줄 필요가 없습니다(줘도 같습니다). Rust 판은 사이냅 없이 늘 자체 파서로 추출하므로 그대로 받아들입니다. 모든 모드와 병용. 설계·측정: <a href="../plan/CSO_HybridParse.html">CSO_HybridParse.html</a></td></tr>
+    <tr><td><code>--hybridparse</code></td><td>—</td><td><b>내용 감지 → 포맷별 전용 파서</b>로 추출(사이냅 없이): pdf→pypdfium2, hwp→HWP5, hwpx→zip/OWPML, 구형 doc/ppt→자체 olefile 파서, xls→xlrd, 현대 docx/xlsx/pptx→zip/OOXML 직접파싱(stdlib), html→태그제거(stdlib), text→직접읽기. 전용 파서 실패 시 <b>snf 폴백</b>(snf 없으면 그 파일만 미분류). <b>기본값</b>이라 줄 필요가 없습니다(줘도 같습니다). Rust 판은 기본이 자체 파서이고, 사이냅은 <code>--synap-fallback</code> · <code>--synap-only</code> 로 고를 때만 씁니다(2026-10-19). 모든 모드와 병용. 설계·측정: <a href="../plan/CSO_HybridParse.html">CSO_HybridParse.html</a></td></tr>
   </table></div>
   <p class="muted"><b>확장자가 아니라 파일 내용(매직바이트+컨테이너 내부)</b>으로 판별하므로, 확장자가 위장돼도(.txt인데 실제 doc 등) 올바른 파서로 갑니다. 파서들은 전부 <b>순수 파이썬/소형 wheel</b>이라 Windows·Linux(CentOS 7)에 동일 번들됩니다. 구형 HWP 3.x·암호화·스캔(이미지)은 전용 파서가 못 하면 snf 로 폴백(스캔 OCR 은 snf 도 불가). 기본이 이 방식이며, 환경변수 <code>CSOCLASSIFY_HYBRID=0</code> 이나 <code>--synap-only</code> 로 사이냅 단독 추출로 바꿀 수 있습니다(CLI 우선).</p>
 
   <div class="scroll"><table>
     <tr><th>인자</th><th>값</th><th>설명</th></tr>
-    <tr><td><code>--synap-only</code> <span class="def">Python 판만</span></td><td>—</td><td>모든 포맷을 사이냅(<code>snf_exe</code>) 하나로만 추출합니다. 자체 파서가 특정 문서에서 이상할 때 <b>비교용</b>으로 씁니다.
-        사이냅이 없으면 시작하지 못합니다. Rust 판은 사이냅이 없어 <code>1012</code>(종료 3)로 거절합니다 — 본문이 달라지면 등급까지 갈리므로 조용히 넘기지 않습니다</td></tr>
+    <tr><td><code>--synap-only</code></td><td>—</td><td>모든 포맷을 사이냅(<code>snf_exe</code>) 하나로만 추출합니다. 자체 파서가 특정 문서에서 이상할 때 <b>비교용</b>으로 씁니다.
+        사이냅이 없으면 문서를 읽기 전에 <code>1016 synap_missing</code>(종료 3)으로 멈춥니다. <b>두 판 모두</b> 같은 동작입니다(Rust 판은 2026-10-19 부터)</td></tr>
+    <tr><td><code>--synap-fallback</code></td><td>—</td><td>자체 파서가 못 읽은 문서(실패 · 빈 결과 · 공백 빼고 20자 미만)만 사이냅으로. 자체 파서가 없는 포맷(rtf 등)은 바로 사이냅.
+        <b>Rust 판은 이 옵션을 줄 때만 폴백</b>합니다(사이냅이 옆에 있어도 기본은 자체 파서만). Python 판은 기본이 이미 이 동작이라, 주면 "사이냅이 꼭 있어야 한다"는 확인만 더해집니다(없으면 <code>1016</code>)</td></tr>
+    <tr><td><code>--synap-path</code></td><td>경로</td><td>사이냅 실행파일을 직접 가리킵니다(찾기 순서를 건너뜀). 찾기 순서: <code>CSOCLASSIFY_SYNAP_DIR</code> → exe 옆 <code>synap</code> → <code>resources/synap</code>(각 폴더의 <code>windows</code> · <code>linux</code> 하위폴더 먼저).
+        Rust 판은 환경변수 <code>CSOCLASSIFY_SYNAP_MODE=off|fallback|only</code> 로도 모드를 고를 수 있습니다(인자가 이김). 사이냅 한 건의 제한 시간은 60초(<code>CSOCLASSIFY_SNF_TIMEOUT</code>)</td></tr>
   </table></div>
+
+  <h3 id="gradestream">등급 스트림 기록 — 문서 파일에 등급을 남김 <span class="pill">2026-10-19 추가</span></h3>
+  <p>분류한 문서의 NTFS 대체 데이터 스트림 <code>:mgrade</code> 에 최종 등급을 씁니다. PC 보안 에이전트가 문서를 열 때 이 값을 읽어 등급별로 허용·차단합니다.
+  형식은 <code>NEOGradeToolApp -s</code> 와 바이트까지 같습니다(12바이트: <code>"MGRD"</code> · 버전 1 · 등급 NONE 0 · C 1 · S 2 · O 3). <b>Windows(NTFS)에서만</b> 됩니다. 두 판이 같은 이름 · 같은 결과를 냅니다.
+  설계: <a href="../plan/등급스트림-기록-옵션-설계-20261019.html">등급스트림-기록-옵션-설계</a></p>
+  <div class="scroll"><table>
+    <tr><th>인자</th><th>값</th><th>설명</th></tr>
+    <tr><td><code>--write-grade-stream</code></td><td>—</td><td>켜기. 등급이 정해진 문서에 최종 등급(전파까지 끝난 값 = 결과의 <code>grade</code>)을 씁니다. <b>이미 같은 값이면 쓰지 않습니다</b>(수정 시각도 그대로)</td></tr>
+    <tr><td><code>--grade-stream-unclassified</code></td><td><code>skip</code> | <code>none</code></td><td>등급을 못 정한 문서: <code>skip</code>=건드리지 않음(기본, 에이전트에는 '마킹 없음'), <code>none</code>=NONE(0) 기록(에이전트에는 '미분류')</td></tr>
+    <tr><td><code>--grade-stream-update-time</code></td><td>—</td><td>쓸 때 문서의 <b>수정 시각이 바뀌게</b> 둡니다(툴 <code>-s</code> 의 기본과 같음). <b>주지 않으면(기본) 생성·접근·수정 시각을 그대로 둡니다</b> — "수정한 날짜"가 분류 시각으로 바뀌거나 백업·동기화 도구가 바뀐 파일로 보는 일이 없습니다. 대신 에이전트가 <b>이미 판별해 캐시에 넣은 문서</b>는 그 프로세스(탐색기 등)가 재시작하거나 캐시에서 밀려날 때까지 옛 등급을 봅니다. 그런 문서의 등급을 바꿔 써서 <b>바로</b> 통제에 걸려야 할 때만 줍니다(시각이 바뀌면 캐시가 즉시 무효)</td></tr>
+  </table></div>
+  <ul>
+    <li><b>쓰지 않는 문서</b>: 압축 <b>안</b>의 문서(압축 파일 <b>자체</b>에 내부 최고 위험 등급을 씀) · 못 읽은 문서(추출 실패 · 복호화 실패 · 처리제외 · 없는 파일) · 우리보다 새 버전의 스트림. 복호화해서 읽은 암호화 문서는 <b>원본 파일</b>에 씁니다.</li>
+    <li>결과 레코드에 <code>grade_stream</code> 이 붙습니다 — <code>{"state":"written","value":"C","prev":"O"}</code> · <code>unchanged</code> · <code>skipped</code>(<code>reason</code>: unclassified · archive_member · not_read · newer_version) · <code>failed</code>(<code>reason</code>: unsupported_volume · access_denied · sharing_violation · verify_failed · not_found · os_error, <code>winerr</code>). <code>--simple</code> 축약본에는 넣지 않습니다(감사용 전체본에는 있음).</li>
+    <li>요약에 <code>grade_stream</code> 건수, stderr 에 <code>[summary][등급스트림] written=… unchanged=… skipped=… failed=…</code>, 로그에 파일마다 <code>등급스트림 state=…</code> 한 줄.</li>
+    <li>못 쓴 문서가 있으면 결과는 그대로 내고 <code>4002 grade_stream_write_failed</code>(종료 1). 다른 실패(<code>3001</code> 등)가 함께 있으면 그쪽 번호가 나갑니다.</li>
+    <li>조합 오류는 문서를 읽기 전에 멈춥니다: 보조 옵션만 줌 · 값 오류 <code>1003</code>, <code>--text-only</code> · <code>--embed</code> · <code>--seed-add</code> · 데몬 명령 등과 함께 <code>1006</code>, 리눅스 <code>1012</code>.</li>
+    <li>확인은 <code>NEOGradeToolApp64.exe -g &lt;폴더&gt; -r</code>. FAT32 · exFAT(USB) 로 복사 · 압축 · 메일 첨부하면 스트림이 사라집니다.</li>
+  </ul>
+<pre>MpowerClassify.exe --dir D:\share\docs --write-grade-stream --out result.jsonl
+MpowerClassify-rs.exe --filelist list.jsonl --write-grade-stream --grade-stream-unclassified none --out result.jsonl
+MpowerClassify.exe --dir D:\share\docs --write-grade-stream --grade-stream-update-time --out result.jsonl   (등급을 바꿔 쓰고 바로 반영)</pre>
+  <p><b>예시 — 미분류 문서에 기본 등급 O 주기</b>: 규칙 · 기준 문서로 등급을 못 정한 문서도 <code>--failsafe O</code> 로 O 를 받으므로, 미분류가 0 이 되고 그 등급이 스트림에도 써집니다.
+  <code>--grade-stream-unclassified skip</code> 은 그래도 등급이 없는 문서(본문을 못 읽은 문서 등)를 건드리지 않는다는 뜻입니다.</p>
+<pre>D:\Project\MpowerClassify\Rust\dist-onedir\windows&gt; MpowerClassify-rs.exe --dir "d:\sample" --write-grade-stream --grade-stream-unclassified skip --simple --json-errors --failsafe O</pre>
+  <ul>
+    <li><code>--failsafe</code> 를 빼면 신호 없는 문서는 <code>"grade": null</code>(미분류)로 남고, <code>skip</code> 이라 스트림을 쓰지 않습니다 — 에이전트에는 "마킹 없음".</li>
+    <li><code>--failsafe</code> 만 주면 S, 값을 주면 그 등급(C · S · O). 본문을 못 읽은 문서(추출 실패 · 처리제외)에는 붙이지 않습니다.</li>
+    <li><code>skip</code> 은 <b>지우지 않습니다</b> — 예전에 써 둔 값은 그대로 남습니다. 깨끗한 상태에서 보려면 먼저 <code>NEOGradeToolApp64.exe -d -r -q "d:\sample"</code>.</li>
+    <li>결과는 <code>--simple</code> 축약본(문서명 · 등급 · 해시)으로 stdout 에, 실행 상태는 <code>--json-errors</code> 로 마지막 줄 JSON 에 나옵니다.</li>
+  </ul>
+
+  <h3 id="gradeoverride">사람이 정한 등급 — 결정 목록 따르기 · 파일 하나 바로 지정 <span class="pill">2026-10-20 추가</span></h3>
+  <p>담당자가 정한 보안등급이 자동 판정을 이기게 합니다. 결정은 UI 검토함이 쌓는 <code>cso_override.jsonl</code>(한 줄에 문서 · 지문 · 이전→새 등급 · 검토자 · 사유)에 그대로 남고, 엔진이 그 파일을 읽습니다.
+  설계: <a href="../plan/사람등급지정-수동오버라이드-설계-20261020.html">사람등급지정-수동오버라이드-설계</a></p>
+  <div class="scroll"><table>
+    <tr><th>인자</th><th>값</th><th>설명</th></tr>
+    <tr><td><code>--grade-overrides</code></td><td>파일</td><td>분류할 때 사람 결정 목록을 읽어, 판정 · 전파가 끝난 뒤 <b>사람 등급이 판정을 이깁니다</b>. 다시 분류해도 사람 결정이 유지되고 <code>--write-grade-stream</code> 이면 파일에도 사람 등급이 써집니다.
+        찾는 순서는 문서 ID → 내용 지문 → 경로(정규화 · 대소문자 무시) — UI 화면과 같습니다. 이 옵션을 주면 지문을 구합니다(결과에 <code>hash</code> 가 붙습니다)</td></tr>
+    <tr><td><code>--set-grade</code></td><td><code>C</code> · <code>S</code> · <code>O</code> · <code>NONE</code></td><td>문서를 읽거나 판정하지 않고 <code>--file</code> 문서에 이 등급을 바로 정합니다. <code>--write-grade-stream</code> 이면 파일에 쓰고, <code>--grade-overrides</code> 를 함께 주면 결정을 목록에 한 줄 덧붙여 <b>다음 분류에도 유지</b>됩니다. <code>--dir</code> 과는 함께 쓸 수 없습니다</td></tr>
+    <tr><td><code>--reviewer</code> · <code>--reason</code></td><td>문자열</td><td><code>--set-grade</code> 결정을 목록에 덧붙일 때 <b>필수</b>(감사 기록)</td></tr>
+  </table></div>
+<pre>:: 파일 하나만 O → C 로(파일에도 쓰고, 다음 분류에도 유지)
+MpowerClassify-rs.exe --set-grade C --file "D:\sample\28.학자금 지원 제도_20.01.01.docx" --write-grade-stream --grade-overrides D:\policy\cso_override.jsonl --reviewer 홍길동 --reason "계약 단가 포함"
+
+:: 폴더 재분류 — 사람 결정이 있는 문서는 그 등급으로
+MpowerClassify-rs.exe --dir "d:\sample" --grade-overrides D:\policy\cso_override.jsonl --write-grade-stream --out result.jsonl</pre>
+  <ul>
+    <li><b>내용이 바뀐 문서</b>: 결정 뒤 문서가 고쳐져 지문이 달라졌으면, 사람 등급이 판정보다 <b>엄격할 때만</b> 따릅니다(예: 판정 O · 사람 C → C). 더 느슨한 결정(판정 C · 사람 O)은 따르지 않고 <code>why.security.override.stale = true</code> 로 남겨 다시 검토하게 합니다.</li>
+    <li><b>확인만 한 결정</b>(<code>kind:"confirm"</code>)은 등급을 바꾸지 않습니다. <code>"보류"</code> 결정은 미분류로 둡니다. 업무분류 결정 줄은 읽지 않습니다.</li>
+    <li>결과 레코드: <code>why.security.method = "manual_override"</code>, 원래 판정은 <code>why.security.computed</code> 에 그대로 남습니다. 요약 <code>grade_overrides: {loaded, applied, confirmed, stale}</code>, stderr <code>[summary][사람결정] 적용=… 확인=… 내용바뀜=…</code>.</li>
+    <li>본문을 못 읽은 문서(스캔 PDF 등)도 사람이 정했으면 그 등급을 따르고 파일에도 씁니다.</li>
+    <li>UI: 분류 실행의 "사람이 정한 등급 따르기"(기본 켬)가 이 옵션을 붙이고, 검토함에서 등급을 바꾸면 그 파일에 <code>--set-grade</code> 로 표식을 바로 맞춥니다.</li>
+  </ul>
 
   <h3 id="limits">문서 크기 상한 · 압축 확장</h3>
   <p>초대형 문서 하나가 시간·메모리를 무제한으로 먹는 것을 막습니다. 두 판이 같은 값·같은 이름을 씁니다.
@@ -1144,6 +1204,7 @@ cd MpowerClassify &amp;&amp; ./MpowerClassify --dir /data/문서함 --format jso
             <b>seed 가 없으면 결과 0건</b> <span class="def">7장 참조</span></td></tr>
     <tr><td><code>--conflict</code></td><td><code>doctype=all</code><br><code>doctype=top_n:N</code></td><td>업무분류 축의 <b>충돌 전략을 실행 시 덮어쓰기</b>(규칙파일 수정 없이). <b><code>security</code> 축은 불가</b> — 주면 종료코드 4</td></tr>
     <tr><td><code>--build-doc-rule</code></td><td>—</td><td>체계 JSON(<code>--export-input</code>)·유의어 사전·본보기·<code>doc_rule.local.yaml</code> 로 <code>--doc-rules</code> 파일을 <b>통째로 새로 만들고</b> 종료(<b>문서를 읽지 않음</b>). 옛 파일은 <code>.bak</code>. 원본 JSON 을 못 찾으면 <code>3</code>, 원본·조정 파일·만든 규칙이 검증에 걸리면 <code>4</code></td></tr>
+    <tr><td><code>--seed-fill-title</code></td><td>—</td><td>기준 문서(<code>--seeds</code>)에 <b>제목(첫 줄)</b>을 채우고 종료 — 업무분류 2차 BM25(제목 · 파일명 말 비교)의 재료. 본문은 <code>--text-dir/&lt;지문&gt;.txt</code> 에서 먼저 찾고, 없으면 원본을 다시 읽습니다. BM25 는 <code>doc_rule.yaml</code> 의 <code>bm25:</code> 블록이 켜고 최소 점수는 실행마다 기준 문서로 자동 계산합니다(요약 <code>[전파][업무분류][bm25]</code>). 기준 문서 파일이 없으면 <code>1003</code> <span class="def">→ <a href="#bm25">7장 BM25</a></span></td></tr>
     <tr><td><code>--export-input</code></td><td>경로</td><td><code>--build-doc-rule</code> 의 원본 체계 JSON <span class="def">기본: 규칙 파일 옆 doc_classification_export.json</span></td></tr>
     <tr><td><code>--make-doctype-seeds</code> <span class="def">Python 판만</span></td><td>경로</td><td>규칙이 고신뢰로 분류한 문서에서 <b>업무분류 seed 를 골라</b> 지정한 <code>class_seed.jsonl</code> 에 씁니다(전량 임베딩 자동 활성화).
         기존 보안등급 seed 와 사람이 넣은 seed 는 보존 → <a href="#seedrule">11장</a>. Rust 판은 <code>1012</code>(종료 3)로 거절하고 무엇을 대신 쓸지 알려 줍니다</td></tr>
@@ -1432,7 +1493,7 @@ MpowerClassify.exe --seed-add-from list.jsonl --seed-reviewer "고봉수" --seed
     <tr><td><code>1009</code></td><td><code>bad_conflict_axis</code></td><td>4</td><td><code>--conflict</code> 로 <code>security</code> 축을 덮어쓰려 함(T11)</td></tr>
     <tr><td><code>1010</code></td><td><code>filelist_missing</code></td><td>3</td><td><code>--filelist</code> 목록 파일이 없음</td></tr>
     <tr><td><code>1011</code></td><td><code>filelist_invalid</code></td><td>3</td><td><code>--filelist</code> 목록 내용이 틀림(부른 쪽이 준 입력이라 4 가 아니라 3)</td></tr>
-    <tr><td><code>1012</code></td><td><code>unsupported_option</code></td><td>3</td><td>이 판에 없는 기능을 요구함 — Rust 판의 <code>--synap-only</code>·<code>--make-doctype-seeds</code>,
+    <tr><td><code>1012</code></td><td><code>unsupported_option</code></td><td>3</td><td>이 판에 없는 기능을 요구함 — Rust 판의 <code>--make-doctype-seeds</code>,
       없앤 옵션 <code>--export-taxonomy</code> 등. <b>Rust 판에서 벡터를 바꾸는 값</b>도 여기다:
       <code>--max-tokens</code>≠512 · <code>--overlap</code>≠32 · <code>--precision f16</code></td></tr>
     <tr><td><code>1013</code></td><td><code>seeds_model_mismatch</code></td><td>3</td><td>seed 벡터의 <b>차원이 이번 벡터와 다름</b> —
@@ -1441,6 +1502,7 @@ MpowerClassify.exe --seed-add-from list.jsonl --seed-reviewer "고봉수" --seed
     <tr><td><code>1014</code></td><td><code>decrypt_args_invalid</code></td><td>3</td><td><code>--decrypt</code> 인자 조합이 틀림 — 열쇠 없이 <code>--decrypt</code> ·
       <code>--decrypt</code> 없이 <code>--mrk</code> · <code>--dir</code>/목록 실행에 <code>--decrypt</code> 등 <span class="def"><a href="#mpower">★ 엠파워 장</a></span></td></tr>
     <tr><td><code>1015</code></td><td><code>decrypt_cmd_missing</code></td><td>3</td><td>풀어야 할 문서가 있는데 복호화 도구가 없거나 실행할 수 없음(한 건도 읽지 않는다)</td></tr>
+    <tr><td><code>1016</code></td><td><code>synap_missing</code></td><td>3</td><td><code>--synap-fallback</code> · <code>--synap-only</code> 로 사이냅을 골랐는데 <code>snf_exe</code> 가 없거나 실행할 수 없음(한 건도 읽지 않는다). 문장에 찾아본 경로가 모두 나온다</td></tr>
     <tr><td colspan="4" class="def"><b>2000 — 정책 파일</b> (규칙셋 · 분류체계)</td></tr>
     <tr><td><code>2001</code></td><td><code>rules_missing</code></td><td>3</td><td><code>cso_rule.yaml</code> 을 못 찾음</td></tr>
     <tr><td><code>2002</code></td><td><code>rules_invalid</code></td><td>4</td><td>규칙셋 내용 오류 — V0 · V5 · V6 · V12. <b>YAML 문법 오류</b>·최상위가 매핑이 아닌 것도 V0</td></tr>
@@ -1450,6 +1512,8 @@ MpowerClassify.exe --seed-add-from list.jsonl --seed-reviewer "고봉수" --seed
     <tr><td><code>2006</code></td><td><code>doc_rules_write_failed</code></td><td>4</td><td><code>--build-doc-rule</code> 이 규칙 파일을 쓰지 못함</td></tr>
     <tr><td><code>2007</code></td><td><code>export_input_missing</code></td><td>3</td><td><code>--build-doc-rule</code> 의 원본 JSON 을 못 찾음</td></tr>
     <tr><td><code>2008</code></td><td><code>export_input_invalid</code></td><td>4</td><td>원본 JSON 구조가 아니거나 왕복 검증 실패</td></tr>
+    <tr><td><code>2009</code></td><td><code>grade_overrides_missing</code></td><td>3</td><td><code>--grade-overrides</code> 파일이 없음(분류할 때). <code>--set-grade</code> 로 덧붙일 때는 새로 만듭니다 → <a href="#gradeoverride">사람이 정한 등급</a></td></tr>
+    <tr><td><code>2010</code></td><td><code>grade_overrides_write_failed</code></td><td>4</td><td><code>--set-grade</code> 결정을 목록에 덧붙이지 못함(권한 · 잠김)</td></tr>
     <tr><td colspan="4" class="def"><b>3000 — 처리</b> (추출 · 임베딩)</td></tr>
     <tr><td><code>3001</code></td><td><code>extract_failed</code></td><td>1</td><td>못 읽은 문서가 있음(결과 파일은 정상 · <code>failed</code> 건수)</td></tr>
     <tr><td><code>3004</code></td><td><code>file_missing</code></td><td>1</td><td><code>--filelist</code> 에 있는데 디스크에 없는 문서가 있음(결과에 <code>error.kind=file_missing</code> 레코드)</td></tr>
@@ -1463,6 +1527,7 @@ MpowerClassify.exe --seed-add-from list.jsonl --seed-reviewer "고봉수" --seed
       <code>--seed-add</code> 로 준 문서를 <b>한 건도</b> 등록하지 못함(문서를 못 읽음·벡터 없음)</td></tr>
     <tr><td colspan="4" class="def"><b>4000 — 출력 / 9000 — 그 밖</b></td></tr>
     <tr><td><code>4001</code></td><td><code>output_write_failed</code></td><td>1</td><td><code>--out</code> 파일을 쓰지 못함(권한·디스크·잠김)</td></tr>
+    <tr><td><code>4002</code></td><td><code>grade_stream_write_failed</code></td><td>1</td><td><code>--write-grade-stream</code> 인데 <code>:mgrade</code> 를 못 쓴 문서가 있음(결과는 온전). 까닭은 레코드의 <code>grade_stream.reason</code></td></tr>
     <tr><td><code>9001</code></td><td><code>internal_error</code></td><td>1</td><td>예상 못 한 내부 오류. 자세한 것은 오류 로그 파일에</td></tr>
   </table></div>
 
@@ -1644,7 +1709,7 @@ doctype_rules:
   <div class="scroll"><table>
     <tr><th>신호</th><th>규칙 필드</th><th>어디를 보나</th><th><code>high</code></th><th><code>medium</code></th><th><code>low</code></th></tr>
     <tr><td><b>title</b></td><td><code>title_terms</code></td><td>첫 비어있지 않은 줄 <span class="def">사람이 일부러 적은 이름이라 가장 셈</span></td><td>0.80</td><td>0.65</td><td>0.50</td></tr>
-    <tr><td><b>head</b></td><td><code>head_terms</code></td><td>앞 <code>head_chars</code>(기본 400)자</td><td>0.70</td><td>0.55</td><td>0.40</td></tr>
+    <tr><td><b>head</b></td><td><code>head_terms</code></td><td>앞 <code>head_chars</code>(기본 400)자 <span class="def">공백 묶음(빈 줄 · 줄 앞 공백 · 탭)은 한 칸으로 셉니다(2026-10-19) — 파서마다 다른 공백이 경계를 밀지 않게</span></td><td>0.70</td><td>0.55</td><td>0.40</td></tr>
     <tr><td><b>name</b></td><td><code>filename</code></td><td>폴더를 뺀 파일 이름 <span class="def">weight 를 보지 않아 세 칸이 같음</span></td><td>0.30</td><td>0.30</td><td>0.30</td></tr>
     <tr><td><b>body</b></td><td><code>terms</code></td><td>문서 전체 <span class="def">단독으로는 후보가 못 됨</span></td><td>0.25</td><td>0.15</td><td>0.10</td></tr>
   </table></div>
@@ -1790,6 +1855,40 @@ MpowerClassify.exe --dir "D:/문서" --doctype-vector-only --axis doctype --seed
   <br>· <b>업무분류 라벨이 하나도 안 붙은</b> 문서
   <br><code>--rule-only</code> 는 임베딩을 아예 안 하므로 <b>전파도 하지 않습니다</b>.</div>
 
+  <h3 id="bm25">제목 · 파일명 말 비교(BM25) — 2차의 두 번째 근거 <span class="pill">2026-10-22 추가</span></h3>
+  <p>벡터 비교(위 절)는 <b>내용이 닮았나</b>를 봅니다. 그런데 사내 양식명 · 프로젝트명처럼 <b>제목과 파일명에 그대로 쓰이는 말</b>은
+  벡터에서 흐려져, 1차 규칙도 벡터도 놓치는 문서가 생깁니다. BM25 는 지금 문서의 <b>제목(첫 줄)과 파일명</b>을
+  <b>분류별로 묶은 기준 문서</b>의 제목 · 파일명과 말 단위로 견줘, 가장 많이 겹친 분류 <b>하나</b>를 후보로 냅니다.
+  벡터와 나란히 도는 <b>2차 근거</b>이고, 본문은 보지 않습니다.</p>
+  <div class="scroll"><table>
+    <tr><th>무엇</th><th>어떻게</th></tr>
+    <tr><td>켜는 곳</td><td><code>doc_rule.yaml</code> 의 <code>bm25:</code> 블록(<code>enabled: true</code>). <code>--build-doc-rule</code> 로 만들면 템플릿 값(켜짐)이 들어갑니다.
+        <b>이 블록이 없는 옛 규칙 파일은 BM25 가 꺼진 채</b>로 돕니다 — 다시 만드세요. 값을 바꾸려면 <code>doc_rule.local.yaml</code> 의 <code>settings: {bm25: …}</code> 에 적고 다시 만듭니다</td></tr>
+    <tr><td>도는 조건</td><td>벡터 전파와 같습니다 — <b>기준 문서(<code>class_seed.jsonl</code>)가 있고</b>, 2차 대상 문서(업무분류 라벨이 없어 벡터를 만든 문서)일 때. <code>--rule-only</code> 에서는 돌지 않습니다.
+        <code>embed.enabled: false</code> 여도 BM25 만 켜져 있으면 BM25 만 돕니다</td></tr>
+    <tr><td>재료</td><td>기준 문서 한 줄의 <code>title</code>(첫 줄)과 <code>file</code>(파일명). 파일명은 끝 잡음 말 · 괄호 안 · 숫자가 섞인 말을 뺀 뒤 견줍니다.
+        <code>ppt</code> · <code>xls</code> · <code>xlsx</code> 는 첫 줄이 제목이 아닌 경우가 많아 <b>파일명만</b> 씁니다</td></tr>
+    <tr><td>최소 점수(문턱)</td><td><code>threshold.mode: auto</code>(기본) — <b>실행마다</b> 기준 문서끼리 자기 제외 모의시험을 돌려 "맞힌 비율이 <code>target_precision</code>(0.95) 이상인 가장 낮은 점수"를 문턱으로 씁니다.
+        통과가 <code>min_pass</code>(10)건 미만이면 문턱을 못 정한 것이라 <b>그 실행은 BM25 를 건너뜁니다</b>(기준 문서 50건 이상 · 분류마다 3건 이상 권장). <code>mode: fixed</code> 는 <code>min_score</code> 를 그대로 씁니다(시험용)</td></tr>
+    <tr><td>확신</td><td>1차 규칙이 이미 붙인 분류면 <b>근거만 더하고</b> 확신은 그대로 · 벡터와 같은 분류면 <b>합의</b>로 0.75 까지 · BM25 만 냈으면 0.60 ·
+        <b>파일명에서만</b> 겹쳤으면 0.55(<code>name_only.cap</code>). BM25 만 낸 후보는 늘 <code>review: true</code>(확인 필요)</td></tr>
+  </table></div>
+<pre><code><span class="cmt">:: 실행하면 화면(stderr)에 두 줄이 더 나온다</span>
+[전파][업무분류][bm25] 문턱 18.412 — 기준 문서 100건 자기 제외 모의시험(통과 41 · 정답 39 · 95.1%)
+[전파][업무분류][bm25] 후보=37 합의=12 단독=19 파일명단독=6
+
+<span class="cmt">:: 기준 문서가 모자라 문턱을 못 정했을 때 — 이번 실행만 BM25 를 건너뛴다(오류 아님)</span>
+[전파][업무분류][bm25] 기준 문서가 부족해 문턱을 정하지 못해 이번 실행은 BM25 를 건너뜁니다(기준 문서 12건 · 모의시험 12건) — 기준 문서 50건 이상(분류마다 3건 이상)을 권합니다</code></pre>
+  <p class="muted"><code>후보</code> BM25 가 1위를 낸 문서 · <code>합의</code> 벡터와 같은 분류 · <code>단독</code> BM25 만 낸 분류 · <code>파일명단독</code> 그중 파일명에서만 겹친 것.
+  결과 레코드에서는 <code>from</code> 에 <code>"bm25"</code>, <code>signals.bm25</code> 에 점수 · 문턱 · 겹친 곳이 남습니다(<a href="#result">4장</a>).</p>
+  <div class="note"><b>예전에 등록한 기준 문서에는 제목 칸이 없습니다.</b> 한 번 <code>--seed-fill-title</code> 로 채우세요 — 제목이 비면 파일명만으로 견줘 성적이 떨어집니다.
+  2026-10-22 이후 <code>--seed-add</code> 로 등록한 줄에는 제목이 자동으로 들어갑니다.
+<pre style="margin:8px 0 0"><code>MpowerClassify.exe --seed-fill-title --seeds class_seed.jsonl --text-dir "D:\파싱"
+[seed-fill-title] 채움 83 · 제목 없음 15(ppt·xls·빈 첫 줄) · 원문 못 찾음 2 · 이미 있음 0</code></pre>
+  본문은 <code>--text-dir/&lt;지문&gt;.txt</code>(<code>--textsave</code> 로 남긴 것)에서 먼저 찾고, 없으면 원본을 다시 읽습니다. 두 판(Python · Rust)이 같은 규칙 · 같은 안내로 채웁니다.</div>
+  <p class="muted">평가셋 실측(2026-10-22, 기준 정답지의 사람 판정 256건 · 자기 제외): BM25 끔 정밀도 71.3% · 재현율 54.8% · F1 62.0% →
+  켬 <b>73.8% · 61.9% · 67.3%</b>. 평가셋은 <a href="#golden">아래 절</a>, 설계 · 실험은 <a href="../plan/업무분류-2차-BM25-설계-20261022.html">업무분류-2차-BM25-설계-20261022.html</a></p>
+
   <h3>seed 만들기 — 확정된 문서를 기준 문서로 등록</h3>
   <p>기준 문서(seed)는 "이 문서는 이 등급·이 분류가 맞다"고 <b>사람이 확정한 문서</b>의 벡터와 라벨입니다.
   저장소(<code>class_seed.jsonl</code>)는 문서 한 건이 한 줄인 JSONL 이고, 엔진이 읽는 칸은 셋입니다.</p>
@@ -1835,6 +1934,41 @@ MpowerClassify.exe --dir "D:\collected" --seeds "class_seed.jsonl" --format json
   <div class="note"><b>분류체계가 바뀌었는지는 규칙이 알려 줍니다.</b> 체계 JSON 이 규칙을 만든 뒤 바뀌었으면
   분류할 때마다 “규칙을 만든 뒤 입력이 바뀌었습니다”를 냅니다(멈추지 않음). JSON 을 다시 받아 <code>--build-doc-rule</code> 로 다시 만드세요.</div>
 
+  <h3 id="golden">평가셋(골든데이터셋) — 규칙을 고친 뒤 성적 재기 <span class="pill">2026-10-22 위치 변경</span></h3>
+  <p>규칙 · BM25 설정을 고친 뒤 "좋아졌나 나빠졌나"는 사람이 정답을 단 <b>평가셋</b>으로 숫자를 내서 판단합니다.
+  평가셋은 고객사 실문서 목록이라 저장소에 올리지 않고(<code>.gitignore</code> 의 <code>/resources/golden_dataset/</code>), 아래 한 폴더에 모아 둡니다.</p>
+<pre><code>D:\Project\MpowerClassify\resources\golden_dataset\</code></pre>
+  <div class="scroll"><table>
+    <tr><th>파일</th><th>무엇</th><th>쓰는 곳</th></tr>
+    <tr><td><code>업무분류-평가셋-500-20260918-사람재검-01.xlsx</code></td><td><b>업무분류 기준 정답지</b> — 500건을 사람이 다시 본 판. 성적은 <b>사람 판정 문서만</b>으로 잽니다</td><td><code>score_evalsets.py --doctype-xlsx</code>(지정) · <code>bm25_experiment.py</code>(기본값)</td></tr>
+    <tr><td><code>업무분류-평가셋-500-20260914.xlsx</code></td><td>업무분류 평가셋 원본(사람 132 + AI 라벨 368). AI 라벨이 너그러워 성적이 실제보다 좋게 나옵니다</td><td><code>score_evalsets.py</code> 기본값 · 옛 성적과 견줄 때</td></tr>
+    <tr><td><code>보안등급-C재현율-평가셋-500-20260914.xlsx</code></td><td>보안등급 평가셋 — 진짜 기밀(C)을 놓치지 않았나(C 재현율) 중심</td><td><code>score_evalsets.py</code> 기본값</td></tr>
+    <tr><td><code>업무분류-정밀도검증셋-라벨링시트.xlsx</code></td><td>업무분류 1단계 정밀도 검증셋(150건)</td><td>참고(초기 규칙 검증)</td></tr>
+    <tr><td><code>기준문서-보안등급-라벨링시트-20260921.xlsx</code></td><td>기준 문서(<code>class_seed.jsonl</code>) 중 보안등급이 없던 41건의 라벨링 시트</td><td>기준 문서 보강</td></tr>
+  </table></div>
+<pre><code><span class="cmt">:: 1) 고친 규칙으로 평가셋 문서를 다시 분류(파일 목록은 build_evalsets.py 가 남긴 것)</span>
+set CSOCLASSIFY_POLICY_DIR=D:\Project\MpowerClassify\ui\policy
+Rust\target\release\MpowerClassify-rs.exe --filelist work\filelist.jsonl --rule-only --format jsonl --out work\run_new.jsonl
+
+<span class="cmt">:: 2) 채점 — 평가셋 경로는 golden_dataset 폴더로 준다</span>
+python tests\evalset\score_evalsets.py --run work\run_new.jsonl --prev work\run_old.jsonl ^
+    --doctype-xlsx resources\golden_dataset\업무분류-평가셋-500-20260918-사람재검-01.xlsx ^
+    --security-xlsx resources\golden_dataset\보안등급-C재현율-평가셋-500-20260914.xlsx
+
+<span class="cmt">:: 3) BM25 설정을 견줄 때 — 1차 결과(+벡터 · 추출 본문)로 2차만 다시 계산해 자기 제외로 채점</span>
+python tests\evalset\bm25_experiment.py ^
+    --xlsx resources\golden_dataset\업무분류-평가셋-500-20260918-사람재검-01.xlsx ^
+    --run-a work\run_a.jsonl --run-b work\run_b.jsonl --text work\text_b</code></pre>
+  <div class="scroll"><table>
+    <tr><th>번호</th><th>알아 둘 점</th></tr>
+    <tr><td>1</td><td>exe 는 <b>제자리(<code>target\release</code>)에서</b> 돌립니다 — 밖으로 복사하면 옆의 <code>pdfium.dll</code> 을 못 찾아 PDF 추출이 통째로 실패합니다</td></tr>
+    <tr><td>2</td><td><code>--prev</code> 를 주면 문서마다 판정이 어떻게 바뀌었는지(<code>놓침→적중</code> · <code>적중→오라벨</code> …)까지 찍습니다. <b>채택 · 반려는 이 출력으로</b> 정합니다.
+        평가셋을 안 주면 <code>resources\golden_dataset\</code> 의 20260914 판(사람 + AI 라벨)으로 채점합니다 — <b>기준 정답지로 재려면 위처럼 <code>--doctype-xlsx</code> 를 줍니다</b>. <code>bm25_experiment.py</code> 의 기본값은 기준 정답지입니다</td></tr>
+    <tr><td>3</td><td><code>--run-a</code> 는 엔진 정상 실행 결과(재현 검증용), <code>--run-b</code> 는 <code>--rule-only --with-vector --hash --textsave</code> 결과, <code>--text</code> 는 그 <code>--textsave</code> 폴더입니다.
+        필드(앞 1~2문장 · 키워드)를 더해 볼 때는 같은 인자로 <code>bm25_fields_experiment.py</code></td></tr>
+  </table></div>
+  <p class="def">채점기 옵션 · 읽는 법(적중 · 오라벨 · 놓침 · 헛라벨, 표본 vs 모집단)은 <code>tests/evalset/README.md</code>.</p>
+
   <h3>Rust 판(<code>MpowerClassify-rs</code>)과의 차이</h3>
   <p>Rust 판도 <code>--doc-rules</code>·<code>--axis</code>·<code>--conflict</code>·<code>--build-doc-rule</code> 을 <b>같은 의미·같은 종료코드</b>로
   지원하며, 같은 정책 파일에 대해 두 축(<code>security</code>·<code>doctype</code>) 출력이 파이썬 판과 <b>동일</b>합니다.
@@ -1846,12 +1980,13 @@ MpowerClassify.exe --dir "D:\collected" --seeds "class_seed.jsonl" --format json
   <div class="scroll"><table>
     <tr><th>무엇</th><th>Rust 판 동작</th><th>종료코드</th></tr>
     <tr><td>추출기 · <code>--hybridparse</code></td>
-        <td>사이냅(snf)이 없고 <b>언제나 자체 파서</b>로 추출합니다. <code>--hybridparse</code> 는 늘 하는 일이라 그대로 받아들입니다</td>
+        <td>기본은 <b>자체 파서만</b> 씁니다 — 사이냅이 옆에 있어도 쓰지 않습니다(Python 판은 있으면 알아서 폴백).
+            사이냅은 <code>--synap-fallback</code> · <code>--synap-only</code> 로 고를 때만 씁니다(2026-10-19). <code>--hybridparse</code> 는 기본과 같습니다</td>
         <td class="ok">0</td></tr>
-    <tr><td><code>--synap-only</code></td>
-        <td>지원하지 않음 — 오류(<code>unsupported_option</code> <code>1012</code>).
-            <span class="def">본문이 달라져 등급까지 갈리므로 조용히 넘기지 않습니다</span></td>
-        <td class="bad">3</td></tr>
+    <tr><td><code>--synap-only</code> · <code>--synap-fallback</code></td>
+        <td>Python 판과 같은 호출 계약(<code>-U8 -NO_WITHPAGE</code> · 출력파일로 성공 판별 · 60초)과 같은 폴백 규칙.
+            사이냅이 없으면 <code>1016 synap_missing</code>. 두 판을 맞춰 보려면 <b>둘 다 <code>--synap-only</code></b>, 또는 Rust <code>--synap-fallback</code> ↔ Python 기본</td>
+        <td class="ok">0</td></tr>
     <tr><td><code>--make-doctype-seeds</code></td>
         <td>지원하지 않음 — 오류(<code>unsupported_option</code> <code>1012</code>). <b>무엇을 대신 쓸지까지 알려 줍니다</b>
             <span class="def">(파이썬 판으로 만들거나, 문서 하나씩이면 <code>--seed-add</code>)</span>.
@@ -1987,12 +2122,16 @@ MpowerClassify.exe --seed-add-from seedlist.jsonl --seed-reviewer "홍길동" --
 
 <span class="cmt">:: 14) 전파만 다시 — 벡터를 실은 1차 결과에, 모델도 원본 문서도 없이</span>
 MpowerClassify.exe --dir "D:\collected" --embed-needed --format jsonl --out r1.jsonl
-MpowerClassify.exe --propagate r1.jsonl --seeds class_seed.jsonl --format jsonl --out r2.jsonl</code></pre>
+MpowerClassify.exe --propagate r1.jsonl --seeds class_seed.jsonl --format jsonl --out r2.jsonl
+
+<span class="cmt">:: 14-1) 예전 기준 문서에 제목(첫 줄)을 채운다 — 업무분류 2차 BM25 재료(한 번만)</span>
+MpowerClassify.exe --seed-fill-title --seeds class_seed.jsonl --text-dir "D:\파싱"</code></pre>
   <div class="scroll"><table>
     <tr><th>번호</th><th>알아 둘 점</th></tr>
     <tr><td>12</td><td><code>--seeds</code> 를 주면 그 파일에 합치고, 변경 기록이 옆의 <code>class_seed_audit.jsonl</code> 에 남습니다. <code>--seeds</code> 를 빼면 파일을 건드리지 않고 등록될 줄만 화면에 냅니다</td></tr>
     <tr><td>13</td><td>목록 한 줄은 <code>{"file":"…","grade":"C","doctype":["DC_006"],"doc_id":"…","note":"…"}</code> — <code>file</code> 만 필수이고 등급 · 업무분류 중 있는 것만 적습니다</td></tr>
     <tr><td>14</td><td>seed 를 보강한 뒤 문서를 다시 읽지 않고 못 정한 문서만 구제할 때 씁니다. 화면에 <code>[propagate] seeds=… embed_decided=… still_unclassified=…</code> 가 나옵니다</td></tr>
+    <tr><td>14-1</td><td>이미 제목이 있는 줄은 건너뜁니다. 화면에 <code>[seed-fill-title] 채움 … · 제목 없음 … · 원문 못 찾음 … · 이미 있음 …</code> 이 나옵니다 → <a href="#bm25">7장 BM25</a></td></tr>
   </table></div>
 
   <h3>규칙 관리 · 점검</h3>
@@ -2116,7 +2255,7 @@ seed: {계약서.pdf → C (규칙 고신뢰)}
   <h3>확인 방법 — 파일 한 줄이 어떻게 생겼나 <span class="pill">스키마 v3</span></h3>
   <p><code>class_seed.jsonl</code> 파일의 각 줄을 텍스트 에디터로 열어 보면(벡터는 줄였습니다):</p>
 <pre><code>{"v":3,"file":"D:/문서/계약서.hwp","doc_id":"SF-100231",
- "hash":"2438eafe…","grade":"C","doctype":["DC_006_001"],
+ "hash":"2438eafe…","grade":"C","doctype":["DC_006_001"],"title":"표준 계약서",
  "source":"cli","approved_by":"고봉수","note":"표준 계약서 본보기",
  "ts":"2026-09-08 15:16:24","dim":384,"engine":"python","vector":[…]}</code></pre>
   <div class="scroll"><table>
@@ -2132,6 +2271,8 @@ seed: {계약서.pdf → C (규칙 고신뢰)}
         <b>엔진이 읽는 칸</b></td></tr>
     <tr><td><code>doctype</code></td><td>업무분류 <code>dc_id</code> <b>배열</b>.
         <b>엔진이 읽는 칸</b> — 배열이 아닌 것으로 바꾸면 그 줄이 통째로 무시됩니다</td></tr>
+    <tr><td><code>title</code></td><td>문서 첫 줄(제목) — 업무분류 2차 <a href="#bm25">BM25</a> 가 견주는 재료. <code>--seed-add</code> 가 채우고,
+        옛 줄은 <code>--seed-fill-title</code> 로 채웁니다. 없거나 비면(ppt · xls · xlsx) 파일명만으로 견줍니다 <span class="pill">2026-10-22 추가</span></td></tr>
     <tr><td><code>source</code></td><td>어디서 들어왔나 —
         <code>cli</code>·<code>upload</code>·<code>phase4</code>·<code>phase6</code>·<code>make-doctype-seeds</code>.
         축마다 다르면 <code>phase4+phase6</code> 처럼 이어 붙습니다</td></tr>
@@ -2181,7 +2322,7 @@ seed: {계약서.pdf → C (규칙 고신뢰)}
 </section>
 
 
-<footer>MpowerClassify — 수집문서 보안등급(C/S/O) · 업무분류 2축 자동분류 도구 · CLI 실행 가이드 <span class="def">2026-10-14 · 앱 0.1.0 · ko-pii 1.15.2 · 규칙셋 cso-2026.09.2 기준</span><br>
+<footer>MpowerClassify — 수집문서 보안등급(C/S/O) · 업무분류 2축 자동분류 도구 · CLI 실행 가이드 <span class="def">2026-10-22 · 앱 0.1.0 · ko-pii 1.15.2 · 규칙셋 cso-2026.09.2 기준</span><br>
 <span class="def">리눅스 서버에서 돌린다면 <a href="MpowerClassify-실행가이드-linux.html">리눅스용 실행 가이드</a> · 지난 변경 내역은 <a href="부록.html">부록.html</a> · 자주 나온 질문은 <a href="Q&amp;A.html">Q&amp;A.html</a></span></footer>
 
 </div>

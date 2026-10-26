@@ -102,6 +102,28 @@ _TITLE_UNSAFE_EXTS = frozenset({".ppt", ".xls", ".xlsx"})
 
 
 #------------------------------------------------------------------
+# 표제부(head) 범위 뽑기 — 공백 묶음을 한 칸으로 본 앞 n 자
+#=> 설계: plan/업무분류-표제부-공백정합-설계-20261019.html
+#   예전에는 원문 앞 n 자를 잘랐다. 그러면 빈 줄 · 줄 앞 공백 · 탭을 다르게 남기는
+#   파서끼리(자체 파서 ↔ 사이냅) 같은 문서에서 낱말이 경계 안팎으로 밀려 업무분류가
+#   갈렸다(실측: '취업규칙'이 405번째 ↔ 390번째).
+#    1) 공백 문자의 연속(공백 · 탭 · 줄바꿈 · 빈 줄)을 공백 한 칸으로 바꾼다
+#    2) 맨 앞 공백은 버린다
+#    3) 앞 n 자를 자른다(평가셋 500건에서 판정 변화 0건 — 창 크기 보정 불필요)
+#   [Rust 판과의 관계] Rust/src/doctype.rs 의 head_scope 와 같은 결과여야 한다.
+#   제목 · 본문 · 파일명 신호와 보안등급 · PII 는 이 함수를 쓰지 않는다(원문 그대로).
+#
+# -in: text = 정제된 문서 텍스트(None 이어도 된다)
+# -in: n    = 표제부 글자 수(head_chars)
+#
+# -out: str = 표제부로 볼 글
+# -out: error = 없음
+#------------------------------------------------------------------
+def head_scope(text, n):
+    return re.sub(r"\s+", " ", text or "").lstrip()[:n]
+
+
+#------------------------------------------------------------------
 # 첫 비어있지 않은 줄 뽑기
 #=> 재설계 6-3 의 "첫 줄 = 제목" 가설에 쓰는 값. 실측(354건)에서 개행이 없는
 #   문서는 0건이었고 첫 줄 길이 중앙값은 13자, 60자 이하가 91% 였다.
@@ -321,10 +343,11 @@ def _scan_rule(text, file, rule, defaults, allow_title=True, sig=None):
             add("title", sig["title"].get(rule.weight, 0.65),
                 {"terms": [{"term": t, "count": c} for t, c in hits]})
 
-    # ── head: 앞 head_chars 자 ─────────────────────────────────
+    # ── head: 앞 head_chars 자(공백 묶음은 한 칸으로 센다) ───────────
     if rule.head_terms:
         n = _thr(rule, defaults, "head_chars")
-        hits = _find_terms((text or "")[:n], rule.head_terms, rule.exclude, compact=True)
+        # 파서마다 다른 빈 줄·줄 앞 공백이 경계를 밀지 않게 head_scope 로 범위를 정한다.
+        hits = _find_terms(head_scope(text, n), rule.head_terms, rule.exclude, compact=True)
         if hits:
             add("head", sig["head"].get(rule.weight, 0.55),
                 {"terms": [{"term": t, "count": c} for t, c in hits], "window": n})
@@ -684,6 +707,49 @@ def _check_hierarchy(dc_ids, taxonomy):
 
 
 #------------------------------------------------------------------
+# BM25 1위를 병합 중간 상태에 얹기
+#=> 설계서 §08 · §14-4.
+#    1) 근거 블록: 점수 · 문턱 · 어느 필드에서 맞았나(field) · 파일명에서 겹친 말(words)
+#    2) 1차 규칙 근거가 있는 노드 → 근거만 더한다
+#    3) 벡터만 낸 노드 → 합의, 확신을 cap_agree 까지
+#    4) 새 노드 → 파일명에서만 맞았으면 name_only_cap, 아니면 cap_alone. review 표시
+#
+# -in: merged = 노드별 중간 상태 dict(고쳐 쓴다)
+# -in: pick   = BM25 고른 결과 dict
+# -in: spec   = doc_rules.Bm25Spec
+#
+# -out: 없음(merged 를 고침)
+# -out: error = 없음
+#------------------------------------------------------------------
+def _add_bm25(merged, pick, spec):
+    dc_id = pick["dc_id"]
+    in_title, in_name = pick.get("title", 0.0) > 0, pick.get("name", 0.0) > 0
+    ev = {"score": round(float(pick["score"]), 3), "threshold": round(float(pick["threshold"]), 3),
+          "field": "title+name" if in_title and in_name else ("title" if in_title else "name")}
+    if pick.get("words"):
+        ev["words"] = list(pick["words"])[:5]
+    entry = merged.get(dc_id)
+    if entry is not None and entry["from"] - {"embed", "bm25"}:
+        # 1차 규칙이 이미 붙인 분류 — 근거만 늘 뿐 확신은 그대로
+        entry["from"].add("bm25")
+        entry["evidence"]["bm25"] = ev
+        return
+    if entry is not None:
+        # 벡터와 같은 분류를 냈다 — 두 근거가 합의하면 벡터 단독보다 높게
+        conf = max(entry["confidence"], spec.cap_agree)
+        entry["confidence"] = conf
+        entry["from"].add("bm25")
+        entry["evidence"]["bm25"] = ev
+        entry["parts"].append({"signal": "bm25", "c": conf})
+        return
+    name_only = not in_title
+    conf = spec.name_only_cap if name_only else spec.cap_alone
+    merged[dc_id] = {"confidence": conf, "from": {"bm25"}, "evidence": {"bm25": ev},
+                     "parts": [{"signal": "bm25", "c": conf}], "review": True,
+                     "basis": "bm25_name_only" if name_only else "bm25"}
+
+
+#------------------------------------------------------------------
 # 노드별 병합 상태 → 최종 DoctypeSignal (scan_doctype·merge_embed_candidates 공유)
 #=> "노드별 (점수, from, 근거)" 중간 상태에서 조상 흡수(5-2)와 축 전략(6장)을
 #   적용해 최종 결과를 만드는 뒷단 절반이다. 규칙 스캔이든 임베딩 전파와의
@@ -703,11 +769,14 @@ def _finalize(merged, taxonomy, conflict):
     for dc_id in survivors:
         m = merged[dc_id]
         srcs = set(m["from"])
-        # stage: 이 후보가 규칙에서 왔는지, 벡터에서 왔는지, 둘 다인지.
+        # stage: 이 후보가 규칙에서 왔는지, 2차(벡터 · BM25)에서 왔는지, 둘 다인지.
         # 검토 화면이 "근거를 제시할 수 있는 후보"를 구분하는 데 쓴다.
-        if srcs == {"embed"}:
-            stage = "embed"
-        elif "embed" in srcs:
+        second = srcs & {"embed", "bm25"}
+        if srcs and not (srcs - second):
+            # 2차만으로 붙은 후보 — 무엇이 냈는지까지 남긴다
+            stage = {frozenset({"embed"}): "embed", frozenset({"bm25"}): "bm25"}.get(
+                frozenset(second), "embed+bm25")
+        elif second:
             stage = "both"
         else:
             stage = "rule"
@@ -757,6 +826,34 @@ def _finalize(merged, taxonomy, conflict):
 # -out: error = 없음
 #------------------------------------------------------------------
 def merge_embed_candidates(values, embed_signal, taxonomy, conflict, embed_cap=None):
+    return merge_second_stage(values, embed_signal, taxonomy, conflict, embed_cap=embed_cap)
+
+
+#------------------------------------------------------------------
+# 2차 후보(벡터 · BM25)를 1차 후보와 한 번에 병합
+#=> 벡터 후보와 BM25 후보를 같은 중간 상태에 함께 얹은 뒤 한 번만 마무리(조상 흡수 ·
+#   top_n)한다. 둘을 따로 마무리하면 top_n 이 먼저 잘라 BM25 가 벡터와 합의했는지
+#   볼 후보가 사라질 수 있다.
+#    1) 1차 후보를 노드별 상태로 되돌린다(review · basis 도 그대로 — Rust 와 같게)
+#    2) 벡터 후보: 같은 노드면 점수는 큰 쪽 · from 에 "embed", 없으면 embed_cap 으로 추가
+#    3) BM25 1위(bm25_pick):
+#       · 1차 규칙이 이미 낸 노드 → 근거만 더한다(점수 그대로)
+#       · 벡터만 낸 노드 → 합의: 확신을 cap_agree 까지 올린다
+#       · 새 노드 → cap_alone(파일명에서만 맞았으면 name_only_cap)으로 추가, review 표시
+#
+# -in: values       = 병합 전 최종 후보(labels.doctype.values, 없으면 빈 튜플)
+# -in: embed_signal = propagate.DoctypeEmbedSignal(벡터를 못 만들었으면 None)
+# -in: taxonomy     = axes.Taxonomy
+# -in: conflict     = doc_rules.ConflictSpec
+# -in: embed_cap    = 벡터 단독 후보 신뢰도 상한(None 이면 상한 없음)
+# -in: bm25_pick    = BM25 고른 결과 dict(dc_id · score · threshold · title · name · words) 또는 None
+# -in: bm25_spec    = doc_rules.Bm25Spec(bm25_pick 이 있을 때 필요)
+#
+# -out: DoctypeSignal = 2차 후보까지 반영된 최종 결과
+# -out: error = 없음
+#------------------------------------------------------------------
+def merge_second_stage(values, embed_signal, taxonomy, conflict, embed_cap=None,
+                       bm25_pick=None, bm25_spec=None):
     merged = {}
     for v in values or ():
         # 레코드에는 근거가 signals 한 칸으로 합쳐져 있다(2026-09-10).
@@ -768,8 +865,12 @@ def merge_embed_candidates(values, embed_signal, taxonomy, conflict, embed_cap=N
             "evidence": evidence,
             "parts": parts,
         }
+        if v.get("review"):
+            # 약한 라벨 표시는 병합을 지나도 따라가야 한다(Rust 판도 지킨다)
+            merged[v["dc_id"]]["review"] = True
+            merged[v["dc_id"]]["basis"] = v.get("basis") or "name_head"
 
-    for ev in embed_signal.values:
+    for ev in (embed_signal.values if embed_signal is not None else ()):
         dc_id = ev["dc_id"]
         if taxonomy.get(dc_id) is None:
             continue   # 삭제된 노드를 가리키는 낡은 seed — 조용히 무시
@@ -792,6 +893,9 @@ def merge_embed_candidates(values, embed_signal, taxonomy, conflict, embed_cap=N
             entry["evidence"]["embed"] = ev_block
             if ev["confidence"] > entry["confidence"]:
                 entry["confidence"] = float(ev["confidence"])
+
+    if bm25_pick and taxonomy.get(bm25_pick["dc_id"]) is not None:
+        _add_bm25(merged, bm25_pick, bm25_spec)
 
     if not merged:
         return DoctypeSignal(values=(), strategy=conflict.strategy,

@@ -25,7 +25,7 @@ from .rules import scan_text, scan_stamp, scan_sensitive, collect_pii
 from .context import scan_filename
 from .fuse import fuse_signals
 from .propagate import SeedIndex, propagate, propagate_doctype
-from .doctype import scan_doctype, merge_embed_candidates
+from .doctype import scan_doctype, merge_embed_candidates, merge_second_stage
 
 
 #------------------------------------------------------------------
@@ -421,15 +421,24 @@ def propagate_records(records, seed_index=None, failsafe=None,
 # -in: on_progress = 레코드 하나를 볼 때마다 부를 함수 f(본수, 전체, 파일경로).
 #                    None 이면 알리지 않는다(propagate_records 와 같은 약속)
 # -in: kw        = propagate_doctype() 임계값 override(k/dup_threshold/min_sim/min_share)
+# -in: use_embed = False 면 벡터 비교를 하지 않는다(embed.enabled=false · BM25 만 켤 때)
+# -in: bm25      = BM25 묶음 dict 또는 None —
+#                  {index: bm25.Bm25Index, spec: Bm25Spec, threshold: 문턱(None 이면 안 함),
+#                   noise: noise_tails, fields: {레코드 번호: (제목, 파일명에 쓸 경로)}}
+#                  fields 에 든 레코드(= 2차 대상)만 BM25 를 본다
 #
 # -out: (records, stats) = 갱신된 레코드들, 통계 dict
-#       stats = {seeds, embed_contributed, no_vector, axis_off}
+#       stats = {seeds, embed_contributed, no_vector, axis_off,
+#                bm25_picked, bm25_agree, bm25_alone, bm25_name_only}
 # -out: error = 없음
 #------------------------------------------------------------------
 def propagate_doctype_records(records, dt_seeds, taxonomy, conflict,
-                              embed_cap=None, on_progress=None, **kw):
+                              embed_cap=None, on_progress=None, use_embed=True, bm25=None, **kw):
+    from . import bm25 as B
     stats = {"seeds": dt_seeds.size if dt_seeds else 0,
-             "embed_contributed": 0, "no_vector": 0, "axis_off": 0}
+             "embed_contributed": 0, "no_vector": 0, "axis_off": 0,
+             "bm25_picked": 0, "bm25_agree": 0, "bm25_alone": 0, "bm25_name_only": 0}
+    bm_on = bool(bm25) and bm25.get("threshold") is not None
 
     total = len(records)
     for done, rec in enumerate(records, 1):
@@ -439,26 +448,59 @@ def propagate_doctype_records(records, dt_seeds, taxonomy, conflict,
             stats["axis_off"] += 1
             continue
 
-        vec = rec.get("vector")
-        if vec is None:
+        vec = rec.get("vector") if use_embed else None
+        flds = bm25["fields"].get(done - 1) if bm_on else None
+        if vec is None and flds is None:
             stats["no_vector"] += 1
             continue
 
-        esig = propagate_doctype(vec, dt_seeds, **kw)
+        esig = propagate_doctype(vec, dt_seeds, **kw) if vec is not None else None
+        pick = None
+        if flds is not None:
+            # 제목 · 파일명으로 BM25 1위를 고른다 — 파일명에서만 맞은 후보는 설정에 따라 버린다
+            sp = bm25["spec"]
+            q = B.field_tokens(flds[0], flds[1], sp, bm25["noise"])
+            rk = bm25["index"].rank(q)
+            top = B.pick(rk, bm25["threshold"], sp.min_margin)
+            if top:
+                part = rk.parts.get(top, {})
+                agree = esig is not None and any(v["dc_id"] == top for v in esig.values)
+                if part.get("title", 0.0) > 0 or agree or sp.name_only_allow:
+                    pick = {"dc_id": top, "score": rk.ranked[0][1], "threshold": bm25["threshold"],
+                            "title": part.get("title", 0.0), "name": part.get("name", 0.0),
+                            "words": rk.words.get(top, [])}
+
+        if esig is None and pick is None:
+            # 벡터도 BM25 1위도 없으면 1차 결과를 그대로 둔다 — 다시 마무리하면 truncated 표시를
+            # 잃는다(Rust 판도 이 경우 손대지 않는다)
+            if vec is None:
+                stats["no_vector"] += 1
+            continue
 
         existing = dt.get("values") or []
-        merged_signal = merge_embed_candidates(existing, esig, taxonomy, conflict,
-                                               embed_cap=embed_cap)
+        merged_signal = merge_second_stage(existing, esig, taxonomy, conflict, embed_cap=embed_cap,
+                                           bm25_pick=pick, bm25_spec=bm25["spec"] if bm25 else None)
         merged = merged_signal.as_dict()
         # 전파 신호는 그 축 안에 둔다 — 예전에는 등급 신호들과 같은 signals
         # 상자에 doctype_embed 라는 이름으로 섞여 있어, 축이 둘이라는 사실이
         # 레코드 모양에서 드러나지 않았다(2026-09-10).
-        merged["embed"] = esig.as_dict()
+        if esig is not None:
+            merged["embed"] = esig.as_dict()
         rec.setdefault("why", {})["doctype"] = merged
         rec.pop("doctype", None)      # 옛 세대가 여기에 두던 자리
         _drop_legacy(rec)
 
         if any("embed" in v["from"] for v in merged_signal.values):
             stats["embed_contributed"] += 1
+        if pick:
+            stats["bm25_picked"] += 1
+            got = next((v for v in merged_signal.values if v["dc_id"] == pick["dc_id"]), None)
+            if got is not None and "bm25" in got["from"]:
+                if got.get("basis") == "bm25_name_only":
+                    stats["bm25_name_only"] += 1
+                elif "embed" in got["from"]:
+                    stats["bm25_agree"] += 1
+                elif got.get("basis") == "bm25":
+                    stats["bm25_alone"] += 1
 
     return records, stats

@@ -120,6 +120,9 @@ csoclassify.exe --embed --file "D:\docs\보고서.hwp"
 | `--embed` | 분류 대신 **임베딩 벡터만** 출력 | — |
 | `--text-only` | 벡터 없이 **추출 텍스트만** | — |
 | `--hybridparse` | **내용 감지 → 포맷별 파서**(사이냅 없이): pdf→pypdfium2, hwp→HWP5, hwpx→zip/OWPML, doc/ppt→자체 olefile 파서, xls→xlrd, docx/xlsx/pptx→zip/OOXML 직접파싱(stdlib), html→태그제거(stdlib), text→직접읽기. 실패 시 snf 폴백(snf 없으면 미분류). 전부 순수py/소형 wheel로 **Win·Linux(CentOS7) 동일 번들**. snf 대비 동급~수십배 빠름 | off(전부 snf) |
+| `--grade-overrides <파일>` / `--set-grade C\|S\|O\|NONE` (+ `--reviewer` · `--reason`) | 사람이 정한 보안등급. `--grade-overrides` 는 UI 검토함 결정(`cso_override.jsonl`)을 읽어 판정 뒤 사람 등급이 이기게 함(문서 ID → 지문 → 경로 순, 결정 뒤 내용이 바뀌면 더 엄격한 결정만). `--set-grade` 는 `--file` 문서에 판정 없이 바로 등급을 정하고 `--grade-overrides` 면 목록에 한 줄 덧붙임. 없는 목록 `2009` · 목록 쓰기 실패 `2010` | 끔 |
+| `--write-grade-stream` / `--grade-stream-unclassified skip\|none` / `--grade-stream-update-time` | 분류한 문서의 NTFS 대체 스트림 `:mgrade` 에 최종 등급을 씀(NEOGradeToolApp 과 같은 12바이트). 같은 값이면 안 씀 · 압축 안 문서는 건너뛰고 압축 자체에 집계 등급 · 미분류는 기본 건너뜀(`none` 이면 NONE) · 수정 시각은 기본으로 보존(`update-time` 을 주면 바뀜). 못 쓴 문서가 있으면 `4002`(종료 1). **Windows(NTFS)만** — 리눅스는 `1012` | 끔 |
+| `--synap-fallback` / `--synap-only` / `--synap-path` | 사이냅 문서필터(`snf_exe`) 사용 — 폴백(자체 파서가 못 읽은 문서만) / 전부 사이냅 / 실행파일 직접 지정. **Rust 판은 줄 때만 사이냅을 씀**(Python 판 기본은 '있으면 폴백'). 사이냅이 없으면 읽기 전에 `1016 synap_missing`. Rust 판은 `CSOCLASSIFY_SYNAP_MODE=off|fallback|only` 로도 고름 | Rust: 자체 파서만 |
 | `--filelist` | 문서 저장소가 뽑아 준 `{path, sfile_id}` 목록(jsonl·csv). 결과 레코드의 `doc_id` 를 채우고, 복호화 열쇠 칸이 있으면 그 줄을 풀어서 분류. `--file`/`--dir` 이 있으면 'ID 사전' 역할만 함 | — |
 | `--decrypt` / `--no-decrypt` | 암호화 문서 풀기 / 풀지 않기 ([위 장](#암호화-문서-분류)) | 목록에 열쇠가 있을 때만 풂 |
 | `--cso-rules` | 보안등급 규칙셋 경로 | exe 옆 `cso_rule.yaml` |
@@ -131,6 +134,7 @@ csoclassify.exe --embed --file "D:\docs\보고서.hwp"
 | `--seeds <경로>` | 전파 비교 기준 seed(`class_seed.jsonl`) | 내부 seed |
 | `--doctype-vector-only` | **업무분류**를 규칙 없이 기준 문서 비교로만 분류(보안등급 축은 그대로) | 규칙 + 전파 |
 | `--build-doc-rule` | 체계 JSON(`--export-input`)·유의어 사전·본보기·`doc_rule.local.yaml`(회사 조정)로 `doc_rule.yaml` 을 **통째로 새로 만든다**(분류체계 내장, 두 판 글자까지 같음). 자세히는 `doc/DOC_Rule.html` | — |
+| `--seed-fill-title` (+ `--seeds` · `--text-dir`) | 기준 문서에 **제목(첫 줄)** 을 채운다 — 업무분류 2차 BM25(제목 · 파일명 말 비교)의 재료. 본문은 `--text-dir/<지문>.txt` 에서 먼저 찾고 없으면 원본을 다시 읽는다. BM25 는 `doc_rule.yaml` 의 `bm25:` 블록이 켜고, 최소 점수는 실행마다 기준 문서로 자동 계산한다(`plan/업무분류-2차-BM25-설계-20261022.html` §16) | — |
 | `--with-text` | 결과에 추출 텍스트(`text`) 포함 | off(프라이버시) |
 | `--with-pii` | **[주의]** 검출 원문 PII 값을 `pii` 필드로 저장 | off |
 | `--hash` | 각 문서의 **해시(SHA-256)** 를 `hash` 필드로 포함 | off |

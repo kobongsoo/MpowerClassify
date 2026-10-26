@@ -13,7 +13,7 @@ Rust 판에도 임베딩 모델을 물고 있는 상주 서버가 생겼다
 Rust 쪽 통합 시험(Rust/tests/cli_daemon.rs)이 맡는다. 여기서 --serve 를 부르면 안 된다 —
 서버는 끝나지 않는 프로세스라 시험이 멈춘다.
 
-지원 못 하는 인자(--synap-only)는 여전히 오류로 멈춰야 한다 — 아래 뒤쪽 시험들.
+--synap-only 는 사이냅을 못 찾으면 문서를 읽기 전에 멈춰야 한다(1016) — 아래 뒤쪽 시험들.
 """
 import json
 import os
@@ -156,24 +156,34 @@ def test_no_daemon은_조용하다(tmp_path):
 
 
 #------------------------------------------------------------------
-# --synap-only 는 오류로 멈춘다 (결과가 갈리는 요청이라 더 엄격하다)
-#=> 이 판에는 사이냅(snf)이 없다. 조용히 무시하면 다른 추출기로 돌면서 본문이
-#   달라지고, 본문이 달라지면 PII 검출과 등급까지 갈린다. --daemon 처럼 "결과는
-#   같고 속도만 다른" 요청이 아니므로 경고가 아니라 멈춤이 맞다.
-#   두 판을 비교하는 자리에서 "Rust 는 snf 에서도 결과가 같더라"는 잘못된 결론이
-#   남는 것을 막는 것이기도 하다.
+# --synap-only 인데 사이냅이 없으면 문서를 읽기 전에 멈춘다 (1016 synap_missing)
+#=> 2026-10-19 부터 Rust 판도 사이냅(snf_exe)을 옵션으로 쓴다
+#   (설계: plan/Rust-사이냅추출기-옵션-설계-20261019.html). 예전에는 '지원하지 않음'(1012)
+#   으로 멈췄다. 이제는 사이냅을 찾아 쓰되, 못 찾으면 조용히 자체 파서로 돌지 않고
+#   멈춘다 — 다른 추출기로 돌면 본문이 달라져 등급까지 갈리기 때문이다(원칙은 그대로).
+#   찾는 곳을 빈 폴더로 막아, 이 PC 에 사이냅이 있어도 '없음'을 재현한다.
 #
-# -in: tmp_path = pytest 임시 폴더(상태 폴더로 쓴다)
+# -in: tmp_path = pytest 임시 폴더(상태 폴더 · 빈 사이냅 폴더로 쓴다)
 # -out: 없음(단언)
 # -out: error = 조용히 넘어가면 AssertionError
 #------------------------------------------------------------------
-def test_synap_only는_지원안함으로_멈춘다(tmp_path):
-    r = _run("--synap-only", state_dir=tmp_path)
-    assert r.returncode == errcodes.exit_of("unsupported_option") == 3, \
+def test_synap_only는_사이냅이_없으면_멈춘다(tmp_path):
+    empty = tmp_path / "no_synap"
+    empty.mkdir()
+    env_dir = os.environ.get("CSOCLASSIFY_SYNAP_DIR")
+    os.environ["CSOCLASSIFY_SYNAP_DIR"] = str(empty)
+    try:
+        r = _run("--synap-only", "--synap-path", str(empty / "snf_exe.exe"), "--json-errors",
+                 state_dir=tmp_path)
+    finally:
+        if env_dir is None:
+            os.environ.pop("CSOCLASSIFY_SYNAP_DIR", None)
+        else:
+            os.environ["CSOCLASSIFY_SYNAP_DIR"] = env_dir
+    assert r.returncode == errcodes.exit_of("synap_missing") == 3, \
         f"exit={r.returncode} :: {r.stderr[-300:]}"
-    assert "--synap-only" in r.stderr and "지원하지 않습니다" in r.stderr
-    # 대신 무엇을 쓰면 되는지까지 알려 준다.
-    assert "파이썬" in r.stderr
+    # 기계가 읽는 오류 줄에 이유 이름 · 번호가 있고, 문장에 무엇이 없는지(경로)가 있다.
+    assert "synap_missing" in r.stdout and "1016" in r.stdout and "snf_exe" in r.stdout, r.stdout[-300:]
 
 
 #------------------------------------------------------------------

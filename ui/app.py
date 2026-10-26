@@ -22,6 +22,7 @@
 #------------------------------------------------------------------
 
 import json
+import re
 import os
 import shutil
 import sys
@@ -458,6 +459,11 @@ def append_override(path, file, old_grade, new_grade, reason, reviewer,
 #------------------------------------------------------------------
 def effective_grade(rec, latest):
     auto = norm_grade(csorecord.grade_of(rec))
+    # 엔진이 '결정 뒤 내용이 바뀌어 따르지 않음'(stale)으로 판단했으면 엔진 판정을 쓰고
+    # 사람이 다시 보게 한다(설계: 사람등급지정 §05 · §07)
+    _eov = ((rec.get("why") or {}).get("security") or {}).get("override") or {}
+    if _eov.get("stale") and _eov.get("applied") is False:
+        return auto, False
     ov, _how = docidkey.lookup(latest, rec)
     if ov:
         return norm_grade(ov.get("new_grade")), True
@@ -480,7 +486,11 @@ def grade_changed(rec, latest):
     ov, _how = docidkey.lookup(latest, rec)
     if not ov:
         return False
-    return norm_grade(ov.get("new_grade")) != norm_grade(csorecord.grade_of(rec))
+    # 엔진이 사람 결정을 이미 적용한 결과면 grade 가 사람 등급이다 — 원래 판정(computed)과 비교한다
+    sec = (rec.get("why") or {}).get("security") or {}
+    auto = (sec.get("computed") or {}).get("grade") if sec.get("method") == "manual_override" \
+        else csorecord.grade_of(rec)
+    return norm_grade(ov.get("new_grade")) != norm_grade(auto)
 
 
 #------------------------------------------------------------------
@@ -847,7 +857,24 @@ def render_override_panel(rec, latest, history, ov_path, reviewer, scope="list")
                             doc_id=rec.get("doc_id"), doc_hash=rec.get("hash"))
             st.success(f"바뀌었습니다: {GRADE_LABEL[cur]} → {GRADE_LABEL[new_grade]}"
                        if changed else f"확정됨: {GRADE_LABEL[new_grade]}")
+            # 등급을 바꿨고 '문서 파일에 등급 쓰기'가 켜져 있으면 그 파일의 표식도 바로 맞춘다
+            # (설계: 사람등급지정 §07). 확인만 한 것은 파일 등급이 이미 같으므로 부르지 않는다.
+            if changed and grade_stream_args(st.session_state.get("run_grade_stream", True)):
+                _cfg = st.session_state.get("seedcfg", {})
+                _state, _why = gerunner.run_set_grade(
+                    gerunner.parse_base_cmd(_cfg.get("csoclassify_cmd")) or ["MpowerClassify"],
+                    file, new_grade, update_time=bool(st.session_state.get("run_gs_time")),
+                    pythonpath=_cfg.get("pythonpath"))
+                st.session_state[f"ov_stream_{file}"] = (_state, _why)
             st.rerun()
+    # 방금 저장한 결정의 파일 표식 결과(다시 그린 뒤에도 보이게 세션에 둔다)
+    _gs = st.session_state.get(f"ov_stream_{file}")
+    if _gs:
+        if _gs[0] in ("written", "unchanged"):
+            st.caption(f"↳ 파일 표식(등급 스트림): **{_gs[0]}** — 탐색기에서 F5 를 누르면 보입니다")
+        else:
+            st.warning(f"파일 표식을 쓰지 못했습니다({_gs[0]}: {_gs[1]}) — 결정은 기록됐고, "
+                       "다음 분류 때 '사람이 정한 등급 따르기'로 다시 씁니다.")
     st.caption("✔ 자동 판정이 맞으면 등급을 그대로 두고 눌러 확정하세요 — "
                "확정해야 검토함에서 내려갑니다. 원래 값은 지워지지 않고 남습니다.")
 
@@ -1351,6 +1378,11 @@ def render_bulk_seed_promote(files, rec_by_file, latest, latest_dt, tax=None):
         except OSError as e:
             uierrlog.show_error(f"기준 문서 저장 실패: {e}", exc=e, where="기준 문서 저장")
             return
+        # BM25 재료인 제목(첫 줄)을 저장 직후 채운다 — 화면은 본문을 갖고 있지 않다
+        with st.spinner("기준 문서 제목(첫 줄)을 채우는 중…"):
+            tmsg = fill_titles_after_save(cfg)
+        if tmsg:
+            parts.append(tmsg)
         st.session_state["bulkseed_flash"] = (
             " · ".join(parts) + f" · 저장 위치: {cfg['seed_path']}")
         st.rerun()
@@ -1691,6 +1723,33 @@ def render_doctype_panel(rec, latest_dt, history_dt, ov_path, reviewer, tax, sco
 #------------------------------------------------------------------
 def paths_of_screen():
     return st.session_state.get("paths") or {}
+
+
+#------------------------------------------------------------------
+# 기준 문서 저장 직후 제목 채우기
+#=> 화면은 본문을 갖고 있지 않아 등록할 때 제목(첫 줄)을 넣을 수 없다. 업무분류 BM25
+#   2차가 쓰는 재료이므로, 저장한 바로 뒤 엔진(--seed-fill-title)에 채우게 한다
+#   (설계서 업무분류-2차-BM25 §17-4 남은 일).
+#    1) 제목이 빈 줄만 채운다 — 추출 본문 폴더가 있으면 거기서, 없으면 원본을 다시 읽는다
+#    2) 실패해도 등록은 이미 끝났다 — 까닭만 돌려줘 화면이 경고로 알린다
+#
+# -in: cfg = st.session_state["seedcfg"](seed_path · csoclassify_cmd · pythonpath)
+#
+# -out: str = 안내에 덧붙일 한 마디(성공: "제목 채움 N" · 실패: 경고 문장 · 할 일 없음: "")
+# -out: error = 없음
+#------------------------------------------------------------------
+def fill_titles_after_save(cfg):
+    base = gerunner.parse_base_cmd(cfg.get("csoclassify_cmd"))
+    if not base or not cfg.get("seed_path"):
+        return ""
+    ok, msg = gerunner.fill_seed_titles(base, cfg["seed_path"],
+                                        text_dir=paths_of_screen().get("text_dir") or None,
+                                        pythonpath=cfg.get("pythonpath"))
+    if not ok:
+        return f"제목(첫 줄)을 채우지 못했습니다 — {msg}"
+    # "[seed-fill-title] 채움 3 · …" 에서 채운 건수만 뽑아 짧게 알린다
+    m = re.search(r"채움 (\d+)", msg or "")
+    return f"제목 채움 {m.group(1)}건" if m and m.group(1) != "0" else ""
 
 
 #------------------------------------------------------------------
@@ -2108,8 +2167,11 @@ def render_seed_promote(rec, final_grade, confirmed_dc_ids, tax=None, scope="lis
         except OSError as e:
             uierrlog.show_error(f"기준 문서 저장 실패: {e}", exc=e, where="기준 문서 저장")
             return
+        # BM25 재료인 제목(첫 줄)을 저장 직후 채운다 — 화면은 본문을 갖고 있지 않다
+        with st.spinner("기준 문서 제목(첫 줄)을 채우는 중…"):
+            tmsg = fill_titles_after_save(cfg)
         st.success(f"기준 문서로 등록됐습니다 — {' / '.join(parts)} · "
-                   f"저장 위치: {cfg['seed_path']}")
+                   f"저장 위치: {cfg['seed_path']}" + (f" · {tmsg}" if tmsg else ""))
         st.rerun()
 
 
@@ -2313,6 +2375,59 @@ def pick_folder(initial=""):
 
 
 #------------------------------------------------------------------
+# 등급 스트림 체크 상자 → 분류 명령 인자
+#=> "문서 파일에 등급 쓰기" 와 그 하위 선택 두 개를 엔진 인자로 바꾼다.
+#   설계: plan/등급스트림-기록-옵션-설계-20261019.html
+#    1) 쓸 수 없는 조건(보안등급 축이 꺼짐 · Windows 가 아님)이면 [] — 엔진이
+#       1012 로 멈추거나 쓸 등급이 없다
+#    2) 켰으면 --write-grade-stream, 하위 선택에 따라
+#       --grade-stream-unclassified none · --grade-stream-update-time 을 덧붙인다
+#    3) 끈 상태에서는 하위 선택이 켜져 있어도 넘기지 않는다(엔진이 1003 으로 멈춘다)
+#
+# -in: want       = 등급 쓰기 체크(기본 켬)
+# -in: none       = 미분류(NONE) 쓰기 체크
+# -in: update     = 수정한 날짜 바뀌게 두기 체크
+# -in: do_sec     = 보안등급 축을 돌리는가
+# -in: is_windows = Windows 인가(기본: 지금 실행 중인 OS)
+#
+# -out: list = 덧붙일 인자(쓸 수 없거나 껐으면 빈 리스트)
+# -out: error = 없음
+#------------------------------------------------------------------
+def grade_stream_args(want, none=False, update=False, do_sec=True, is_windows=None):
+    # ADS 는 NTFS 에만 있다 — 리눅스에서 넘기면 엔진이 문서를 읽기 전에 멈춘다
+    if is_windows is None:
+        is_windows = os.name == "nt"
+    if not (want and do_sec and is_windows):
+        return []
+    args = ["--write-grade-stream"]
+    if none:
+        args += ["--grade-stream-unclassified", "none"]
+    if update:
+        args += ["--grade-stream-update-time"]
+    return args
+
+
+#------------------------------------------------------------------
+# 사람 결정 목록 → 분류 명령 인자
+#=> 검토함 결정 파일(cso_override.jsonl)을 엔진이 따르게 --grade-overrides 로 넘긴다.
+#    1) 끔 · 경로 없음 · 파일이 아직 없음(결정이 한 건도 없음) → [] — 없는 파일을 주면
+#       엔진이 2009 로 멈추므로 넘기지 않는다
+#    2) 그 밖 → ["--grade-overrides", 경로]
+#
+# -in: on   = 체크 상자(보안등급 축이 꺼졌으면 False 로 넘긴다)
+# -in: path = 결정 목록 경로(설정의 override)
+#
+# -out: list = 덧붙일 인자
+# -out: error = 없음
+#------------------------------------------------------------------
+def grade_overrides_args(on, path):
+    # 결정이 아직 없으면 따를 것도 없다 — 없는 파일을 넘기면 엔진이 멈춘다
+    if not on or not path or not os.path.isfile(path):
+        return []
+    return ["--grade-overrides", path]
+
+
+#------------------------------------------------------------------
 # 보안등급 기준 파일 → 분류 명령 인자
 #=> 화면이 고치는 cso_rule.yaml 을 엔진도 읽게 --cso-rules 로 넘긴다. 넘기지 않으면
 #   엔진은 exe 옆 cso_rule.yaml 을 읽어, 화면에서 고친 기준이 분류에 반영되지 않는다.
@@ -2493,6 +2608,46 @@ def render_run_panel(grades_path, paths=None, tax=None, records=None):
                               help="문서명·등급·해시(+업무분류 dc_id)만 담은 파일을 "
                                    "분류 결과 옆에 나란히 만듭니다. 다른 시스템에 넘길 때 씁니다")
 
+    # 등급 스트림 기록(설계: plan/등급스트림-기록-옵션-설계-20261019.html).
+    # 분류한 문서의 NTFS 대체 스트림(:mgrade)에 최종 등급을 써 두면 PC 보안
+    # 에이전트가 그 값으로 열기·첨부를 통제하고 탐색기가 표식을 단다. 기본으로 켠다.
+    # 보안등급 축이 돌아야 쓸 등급이 있고, ADS 는 Windows(NTFS)에만 있다.
+    gs_ok = bool(do_sec) and os.name == "nt"
+    want_gs = st.checkbox(
+        "문서 파일에 **등급 쓰기**(--write-grade-stream)",
+        value=True, key="run_grade_stream", disabled=not gs_ok,
+        help="분류한 문서마다 숨은 등급 표식(:mgrade, 12바이트)을 씁니다. 문서 내용은 "
+             "바뀌지 않고, 이미 같은 등급이면 다시 쓰지 않습니다. 압축 안 문서는 건너뛰고 "
+             "압축 파일 자체에 집계 등급을 씁니다")
+    gs_none = gs_time = False
+    if not gs_ok:
+        st.caption("　↳ " + ("보안등급을 켜야 고를 수 있습니다" if os.name == "nt"
+                             else "Windows(NTFS)에서만 쓸 수 있습니다"))
+    elif want_gs:
+        # 하위 선택 두 개는 '등급 쓰기'에 딸린 것이라 바로 밑에 들여 쓴다.
+        g1, g2 = st.columns(2)
+        gs_none = g1.checkbox(
+            "└ 등급을 못 정한 문서에 **미분류(NONE)** 쓰기",
+            value=False, key="run_gs_none",
+            help="끄면(기본) 등급을 못 정한 문서는 건드리지 않습니다(에이전트에는 '마킹 없음'). "
+                 "켜면 '미분류'로 써서 에이전트의 미분류 정책을 따르게 합니다")
+        gs_time = g2.checkbox(
+            "└ 수정한 날짜 **바뀌게** 두기",
+            value=False, key="run_gs_time",
+            help="끄면(기본) 등급을 써도 문서의 생성·수정 시각을 그대로 둡니다. 켜면 "
+                 "수정한 날짜가 바뀌는 대신, 에이전트가 이미 판별해 둔 문서도 새 등급을 바로 봅니다")
+    extra += grade_stream_args(want_gs, gs_none, gs_time, do_sec=do_sec)
+
+    # 사람이 정한 등급(설계: plan/사람등급지정-수동오버라이드-설계-20261020.html §07).
+    # 검토함 결정(cso_override.jsonl)을 엔진이 따르게 해, 다시 분류해도 사람 결정이
+    # 판정에 덮어써지지 않고 파일 등급 스트림에도 사람 등급이 써진다. 기본으로 켠다.
+    want_ov = st.checkbox(
+        "**사람이 정한 등급** 따르기(--grade-overrides)",
+        value=True, key="run_grade_overrides", disabled=not do_sec,
+        help="검토함에서 담당자가 정한 보안등급이 자동 판정을 이깁니다. 결정 뒤 문서 내용이 "
+             "바뀌었으면 더 엄격한 결정만 따르고, 나머지는 검토함에 다시 올립니다")
+    extra += grade_overrides_args(want_ov and do_sec, paths.get("override"))
+
     # ── 실행할 명령 ────────────────────────────────────────────────────
     # 체크박스 바로 아래에 둔다 — 체크를 켜고 끌 때 명령이 그 자리에서 같이
     # 바뀌는 것이 보여야, 어느 체크가 어느 인자인지 눈으로 배울 수 있다.
@@ -2519,7 +2674,9 @@ def render_run_panel(grades_path, paths=None, tax=None, records=None):
             extra_args=extra)), language="text")
         st.caption("↳ 위 체크 상자들이 그대로 인자가 됩니다 — `--axis`(한 축만 켤 때) · "
                    "`--cso-rules`(보안등급 기준) · `--doc-rules`(업무분류) · `--doctype-vector-only` · "
-                   "`--rule-only`(비슷한 문서 참고 끔) · `--seeds`(기준 문서). "
+                   "`--rule-only`(비슷한 문서 참고 끔) · `--seeds`(기준 문서) · "
+                   "`--write-grade-stream`(문서 파일에 등급 쓰기) · "
+                   "`--grade-overrides`(사람이 정한 등급 따르기). "
                    "`--embed-needed` 는 판단 못 한 문서만 임베딩해 빠르게 도는 기본값입니다.")
         if want_simple:
             st.caption(f"↳ 축약본은 분류가 끝난 뒤 `{simple_path(grades_path)}` 에 "
@@ -2887,8 +3044,13 @@ def default_paths():
 
 
     # 실행 명령 기본값 = 배포 exe. 아직 없으면 소스 모듈로 폴백한다.
-    exe = os.path.abspath(os.path.join(here, "..", "dist-pkg", "MpowerClassify.exe"))
-    if os.path.isfile(exe):
+    # UI 배포 묶음(scripts/build/ui-package.sh)은 엔진을 ..\engine 에 두므로 그것을 먼저 찾는다 —
+    # 다른 PC 에서 처음 띄웠을 때 따로 설정하지 않아도 분류가 돌게 하려는 것이다.
+    exe = next((p for p in (
+        os.path.abspath(os.path.join(here, "..", "engine", "MpowerClassify-rs.exe")),
+        os.path.abspath(os.path.join(here, "..", "dist-pkg", "MpowerClassify.exe")))
+        if os.path.isfile(p)), "")
+    if exe:
         cmd = f'"{exe}"' if " " in exe else exe
         pythonpath = ""
     else:
@@ -3759,6 +3921,16 @@ def render_seed_add(seeds, tax, cfg, seed_path, audit_path, reviewer):
                                             reason="기준문서 화면에서 직접 등록")
             added += 1
         prog.progress(1.0, text="완료")
+        # 제목(첫 줄)은 임시 사본을 지우기 '전에' 떠 둔다 — 기준 문서에는 파일 이름만 남아
+        # 나중에는 원본을 다시 읽을 수 없다(BM25 2차 재료, 설계서 §17-4)
+        if added:
+            titles = gerunner.titles_for_files(base, [tp for _, tp in staged],
+                                               pythonpath=cfg.get("pythonpath"))
+            for name, tp in staged:
+                row = seedstore.find_seed(cur, name)
+                if row is not None and titles.get(tp):
+                    row["title"] = titles[tp]
+
         # 올린 파일 사본은 등록이 끝나면 지운다(예전에는 파일마다 임시 폴더를 만들고
         # 아무도 치우지 않아, 등록할 때마다 temp 에 사본이 쌓였다).
         shutil.rmtree(tmpd, ignore_errors=True)

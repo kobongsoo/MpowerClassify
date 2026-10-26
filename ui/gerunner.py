@@ -194,6 +194,138 @@ def run_csoclassify_file(base_cmd, file_path, pythonpath=None, timeout=180):
 
 
 #------------------------------------------------------------------
+# 문서 하나에 사람 등급을 바로 쓰기(--set-grade)
+#=> 검토함에서 등급을 바꾸면 그 파일의 등급 스트림(:mgrade)도 곧바로 맞춘다.
+#   설계: plan/사람등급지정-수동오버라이드-설계-20261020.html §07.
+#   결정 기록은 화면이 이미 cso_override.jsonl 에 남겼으므로 --grade-overrides 는 주지 않는다.
+#    1) 엔진을 --set-grade <등급> --file <문서> --write-grade-stream 으로 부른다
+#    2) 결과 레코드의 grade_stream 상태(written/unchanged/failed)와 실패 까닭을 돌려준다
+#
+# -in: base_cmd    = 실행 인자 리스트(parse_base_cmd 결과)
+# -in: file_path   = 대상 문서
+# -in: grade       = "C" | "S" | "O"
+# -in: update_time = True 면 수정 시각이 바뀌게 둔다(--grade-stream-update-time)
+# -in: pythonpath  = 'python -m csoclassify' 일 때 PYTHONPATH
+# -in: timeout     = 최대 대기(초)
+#
+# -out: (state, reason) = 예) ("written", None), ("failed", "access_denied"), ("error", 메시지)
+# -out: error = 예외 없음(실패는 ("error", 까닭)으로 돌려준다)
+#------------------------------------------------------------------
+def run_set_grade(base_cmd, file_path, grade, update_time=False, pythonpath=None, timeout=60):
+    args = list(base_cmd) + ["--set-grade", grade, "--file", file_path,
+                             "--write-grade-stream", "--format", "jsonl", "--json-errors"]
+    if update_time:
+        args.append("--grade-stream-update-time")
+    env = dict(os.environ)
+    env["PYTHONUTF8"] = "1"
+    if pythonpath:
+        env["PYTHONPATH"] = pythonpath
+    try:
+        p = subprocess.run(args, capture_output=True, timeout=timeout, env=env)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return "error", str(e)
+    out = p.stdout.decode("utf-8", errors="replace")
+    for line in out.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        gs = rec.get("grade_stream")
+        if isinstance(gs, dict):
+            return gs.get("state"), gs.get("reason")
+        # 레코드 대신 오류 JSON 이 왔으면 그 까닭을 그대로 보여 준다
+        err = rec.get("error")
+        if isinstance(err, dict) and err.get("kind") not in (None, "success"):
+            return "error", err.get("message") or err.get("kind")
+    return "error", p.stderr.decode("utf-8", errors="replace")[-300:] or f"code={p.returncode}"
+
+
+#------------------------------------------------------------------
+# 기준 문서에 제목 채우기(--seed-fill-title)
+#=> 업무분류 BM25 2차는 기준 문서의 제목(첫 줄) · 파일명을 비교한다. 화면은 본문을
+#   갖고 있지 않아 등록할 때 제목을 넣을 수 없으므로, 저장한 직후 엔진에 채우게 한다.
+#    1) 제목이 빈 줄만 채운다(이미 있는 줄은 건드리지 않는다)
+#    2) 본문은 추출 본문 폴더(text_dir)에서 먼저 찾고, 없으면 원본을 다시 읽는다
+#    3) 엔진이 stderr 에 남기는 "[seed-fill-title] 채움 …" 한 줄을 그대로 돌려준다
+#
+# -in: base_cmd   = 실행 인자 리스트(parse_base_cmd 결과)
+# -in: seed_path  = class_seed.jsonl 경로
+# -in: text_dir   = --textsave 로 저장해 둔 추출 본문 폴더(없으면 None)
+# -in: pythonpath = 모듈 실행 시 PYTHONPATH
+# -in: timeout    = 최대 대기(초)
+#
+# -out: (ok, msg) = 성공 여부, 엔진의 요약 한 줄 또는 실패 까닭
+# -out: error = 없음(실행 실패도 (False, 까닭) 으로 돌려준다 — 등록 자체는 이미 끝났다)
+#------------------------------------------------------------------
+def fill_seed_titles(base_cmd, seed_path, text_dir=None, pythonpath=None, timeout=300):
+    args = list(base_cmd) + ["--seed-fill-title", "--seeds", seed_path, "--json-errors"]
+    if text_dir and os.path.isdir(text_dir):
+        args += ["--text-dir", text_dir]
+    env = dict(os.environ)
+    env["PYTHONUTF8"] = "1"
+    if pythonpath:
+        env["PYTHONPATH"] = pythonpath
+    try:
+        p = subprocess.run(args, capture_output=True, timeout=timeout, env=env)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, str(e)
+    err = p.stderr.decode("utf-8", errors="replace")
+    line = next((l.strip() for l in err.splitlines() if l.strip().startswith("[seed-fill-title]")), "")
+    if p.returncode == 0:
+        return True, line
+    why = error_line(parse_error_json(p.stdout.decode("utf-8", errors="replace")))
+    return False, why or err[-300:] or f"code={p.returncode}"
+
+
+#------------------------------------------------------------------
+# 파일들의 제목(첫 줄) 뽑기 — 곧 지울 임시 파일용
+#=> 기준문서 화면에서 올린 파일은 임시 폴더에 잠깐 있다가 지워지고, 기준 문서에는
+#   파일 이름만 남는다. 지운 뒤에는 --seed-fill-title 이 원본을 찾을 수 없으므로
+#   지우기 전에 제목을 떠 둔다. 제목 규칙을 화면이 따로 두지 않도록 엔진의
+#   --seed-fill-title 을 임시 기준 문서 파일에 돌려 그대로 쓴다.
+#    1) 임시 폴더에 {file: 파일경로, grade: "O"} 줄들로 된 기준 문서 파일을 만든다
+#       (등급은 저장이 줄을 버리지 않게 하는 자리표시일 뿐이다)
+#    2) 엔진이 채운 title 을 읽어 {파일경로: 제목} 으로 돌려준다
+#
+# -in: base_cmd   = 실행 인자 리스트
+# -in: files      = 제목을 뽑을 파일 경로 리스트
+# -in: pythonpath = 모듈 실행 시 PYTHONPATH
+# -in: timeout    = 최대 대기(초)
+#
+# -out: dict = {파일경로: 제목}(제목이 없거나 못 읽은 파일은 키가 없다)
+# -out: error = 없음(실패하면 빈 dict — 제목 없이도 파일명으로는 비교된다)
+#------------------------------------------------------------------
+def titles_for_files(base_cmd, files, pythonpath=None, timeout=300):
+    files = [f for f in files if f and os.path.isfile(f)]
+    if not files:
+        return {}
+    tmpd = tempfile.mkdtemp(prefix="csotitle_")
+    try:
+        sp = os.path.join(tmpd, "titles_seed.jsonl")
+        with open(sp, "w", encoding="utf-8") as fp:
+            for f in files:
+                fp.write(json.dumps({"v": 3, "file": f, "grade": "O"}, ensure_ascii=False) + "\n")
+        ok, _ = fill_seed_titles(base_cmd, sp, pythonpath=pythonpath, timeout=timeout)
+        if not ok:
+            return {}
+        out = {}
+        with open(sp, encoding="utf-8") as fp:
+            for line in fp:
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if row.get("title"):
+                    out[row.get("file")] = row["title"]
+        return out
+    finally:
+        shutil.rmtree(tmpd, ignore_errors=True)
+
+
+#------------------------------------------------------------------
 # 엔진이 낸 오류 JSON 한 줄 읽기
 #=> --json-errors 를 주면 엔진이 실패할 때 stdout 에
 #   {"error":{"code":…,"kind":…,"message":…,"path":…}} 를 한 줄 낸다.

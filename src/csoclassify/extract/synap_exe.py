@@ -65,7 +65,13 @@ class SynapExeExtractor(TextExtractor):
                 n += 1
             return candidate, True
         # 임시: 충돌 없는 uuid 이름으로 만들고 처리 후 삭제 대상으로 표시.
-        out_path = os.path.join(self.work_dir, f"csoclassify_{uuid.uuid4().hex}.txt")
+        # 복호화로 풀린 문서(경로 위쪽에 cso_dec_<pid> 폴더)면 그 문서 폴더 안에 둔다 — 풀린
+        # 문서의 본문이 복호화 임시 폴더 밖에 놓이지 않게(Rust 판 synap::out_dir_for 와 같다).
+        work = self.work_dir
+        parts = os.path.normpath(os.path.dirname(os.path.abspath(input_path))).split(os.sep)
+        if any(p.startswith("cso_dec_") for p in parts):
+            work = os.path.dirname(os.path.abspath(input_path))
+        out_path = os.path.join(work, f"csoclassify_{uuid.uuid4().hex}.txt")
         return out_path, False
 
     #------------------------------------------------------------------

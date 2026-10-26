@@ -431,7 +431,9 @@ pub fn make_doc(file: &str, labels: BTreeSet<String>, rejected: BTreeSet<String>
     let body = text.unwrap_or("").to_string();
     let title = body.lines().map(|l| l.trim()).find(|l| !l.is_empty())
         .unwrap_or("").to_string();
-    let head: String = body.chars().take(HEAD_CHARS).collect();
+    // 앞부분은 엔진의 표제부와 같은 규칙(공백 묶음을 한 칸으로 본 앞 n 자)으로 자른다 —
+    // 다르면 제안한 낱말이 실제 판정의 표제부에서는 안 걸린다.
+    let head: String = crate::doctype::head_scope(&body, HEAD_CHARS);
     Doc {
         key: norm_key(file), file: file.to_string(), name, folder,
         cluster: cluster_of(file), title, head, body,

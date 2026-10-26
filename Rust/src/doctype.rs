@@ -117,7 +117,7 @@ const TITLE_UNSAFE_EXTS: [&str; 3] = ["ppt", "xls", "xlsx"];
 
 /// 첫 비어있지 않은 줄. 실측(354건)에서 개행이 없는 문서는 0건이었고 첫 줄
 /// 길이 중앙값은 13자, 60자 이하가 91% 였다.
-fn first_line(text: &str) -> &str {
+pub(crate) fn first_line(text: &str) -> &str {
     text.lines().find(|l| !l.trim().is_empty()).unwrap_or("")
 }
 
@@ -242,7 +242,7 @@ fn thr_min_count(rule: &DoctypeRule, d: &Defaults) -> u32 {
 }
 
 /// title 신호를 쓸 수 있는 포맷인지(재설계 6-3, 실측 3-B-3).
-fn title_allowed(file: &str) -> bool {
+pub(crate) fn title_allowed(file: &str) -> bool {
     let ext = std::path::Path::new(file).extension()
         .and_then(|x| x.to_str()).unwrap_or("").to_lowercase();
     !TITLE_UNSAFE_EXTS.contains(&ext.as_str())
@@ -251,6 +251,49 @@ fn title_allowed(file: &str) -> bool {
 /// 앞에서부터 n '글자'(char)만 잘라낸다. 바이트로 자르면 한글이 깨진다.
 fn take_chars(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
+}
+
+//------------------------------------------------------------------
+// 표제부(head) 범위 뽑기 — 공백 묶음을 한 칸으로 본 앞 n 자
+//=> 설계: plan/업무분류-표제부-공백정합-설계-20261019.html
+//   예전에는 원문 앞 n 자를 잘랐다. 그러면 빈 줄 · 줄 앞 공백 · 탭을 다르게 남기는
+//   파서끼리(자체 파서 ↔ 사이냅) 같은 문서에서 낱말이 경계 안팎으로 밀려 업무분류가
+//   갈렸다(실측: '취업규칙'이 405번째 ↔ 390번째).
+//    1) 공백 문자의 연속(공백 · 탭 · 줄바꿈 · 빈 줄)을 공백 한 칸으로 바꾼다
+//    2) 맨 앞 공백은 버린다
+//    3) 앞 n 자를 자른다(평가셋 500건에서 판정 변화 0건 — 창 크기 보정 불필요)
+//   [파이썬 판과의 관계] classify/doctype.py 의 head_scope 와 같은 결과여야 한다.
+//   제목 · 본문 · 파일명 신호와 보안등급 · PII 는 이 함수를 쓰지 않는다(원문 그대로).
+//
+// -in: text = 정제된 문서 텍스트
+// -in: n    = 표제부 글자 수(head_chars)
+//
+// -out: String = 표제부로 볼 글
+// -out: error = 없음
+//------------------------------------------------------------------
+pub fn head_scope(text: &str, n: usize) -> String {
+    let mut out = String::new();
+    let mut cnt = 0usize;
+    let mut in_ws = false;
+    for c in text.chars() {
+        // 필요한 만큼 모이면 멈춘다 — 긴 문서 전체를 훑을 이유가 없다.
+        if cnt >= n {
+            break;
+        }
+        if c.is_whitespace() {
+            // 맨 앞 공백은 버리고, 공백이 이어지면 한 칸만 남긴다.
+            if !in_ws && cnt > 0 {
+                out.push(' ');
+                cnt += 1;
+            }
+            in_ws = true;
+        } else {
+            out.push(c);
+            cnt += 1;
+            in_ws = false;
+        }
+    }
+    out
 }
 
 /// 규칙 1개 스캔 결과.
@@ -284,10 +327,11 @@ fn scan_rule(text: &str, file: &str, rule: &DoctypeRule,
         }
     }
 
-    // head: 앞 head_chars 자
+    // head: 앞 head_chars 자(공백 묶음은 한 칸으로 센다)
     if !rule.head_terms.is_empty() {
         let n = thr_head_chars(rule, defaults);
-        let scope = take_chars(text, n);
+        // 파서마다 다른 빈 줄·줄 앞 공백이 경계를 밀지 않게 head_scope 로 범위를 정한다.
+        let scope = head_scope(text, n);
         let hits = find_terms(&scope, &rule.head_terms, &rule.exclude, true);
         if !hits.is_empty() {
             evidence.insert("head".into(),
@@ -529,12 +573,14 @@ struct Merged {
     parts: Vec<(String, f64)>,
     /// 파일명 핵어로만 붙은 약한 라벨 표시(13장 D1 ②).
     review: bool,
+    /// review 의 근거 이름("name_head" · "bm25" · "bm25_name_only"). 비어 있으면 name_head.
+    basis: String,
 }
 
 impl Merged {
     fn empty() -> Self {
         Merged { confidence: 0.0, from: HashSet::new(), evidence: Map::new(), parts: vec![],
-                 review: false }
+                 review: false, basis: String::new() }
     }
 }
 
@@ -582,17 +628,21 @@ fn finalize(merged: HashMap<String, Merged>, taxonomy: &Taxonomy, conflict: &Con
         let m = merged.get(&dc_id)?;
         let mut from: Vec<String> = m.from.iter().cloned().collect();
         from.sort();
-        // stage: 규칙에서 왔는지, 벡터에서 왔는지, 둘 다인지.
+        // stage: 규칙에서 왔는지, 2차(벡터 · BM25)에서 왔는지, 둘 다인지(파이썬 _finalize 와 같은 규칙).
         let has_embed = m.from.contains("embed");
-        let stage = if has_embed && m.from.len() == 1 { "embed" }
-                    else if has_embed { "both" } else { "rule" };
+        let has_bm25 = m.from.contains("bm25");
+        let rule_src = m.from.iter().any(|f| f != "embed" && f != "bm25");
+        let stage = if !m.from.is_empty() && !rule_src {
+            match (has_embed, has_bm25) { (true, false) => "embed", (false, true) => "bm25", _ => "embed+bm25" }
+        } else if has_embed || has_bm25 { "both" } else { "rule" };
         Some(Candidate {
             dc_id, path, path_ids, confidence: m.confidence, from,
             stage: stage.into(), evidence: m.evidence.clone(), score_parts: m.parts.clone(),
             // 약한 라벨 표시는 노드 단위로 따라다닌다 — 받는 쪽이 자동 확정하지
             // 않게 하는 것이 유일한 목적이다.
             review: m.review,
-            basis: if m.review { "name_head".to_string() } else { String::new() },
+            basis: if !m.review { String::new() }
+                   else if m.basis.is_empty() { "name_head".to_string() } else { m.basis.clone() },
         })
     }).collect();
 
@@ -674,6 +724,7 @@ fn add_name_head(merged: &mut HashMap<String, Merged>, file: &str,
         evidence,
         parts: vec![("name_head".into(), conf)],
         review: true,
+        basis: "name_head".into(),
     });
 }
 
@@ -696,6 +747,32 @@ pub fn merge_embed_candidates(existing: &[Candidate], embed_values: &[(String, f
                               taxonomy: &Taxonomy, conflict: &ConflictSpec,
                               embed_cap: Option<f64>,
                               embed_meta: (&str, f64)) -> DoctypeSignal {
+    merge_second_stage(existing, Some((embed_values, embed_meta)), taxonomy, conflict, embed_cap, None)
+}
+
+/// BM25 가 고른 1위(합치기 재료). 파이썬 merge_second_stage 의 bm25_pick dict 와 같은 칸.
+#[derive(Debug, Clone)]
+pub struct Bm25Pick {
+    pub dc_id: String,
+    pub score: f64,
+    pub threshold: f64,
+    /// 제목 · 파일명 필드에서 얻은 점수
+    pub title: f64,
+    pub name: f64,
+    /// 파일명에서 겹친 단어(근거 표시용)
+    pub words: Vec<String>,
+}
+
+/// 2차 후보(벡터 · BM25)를 1차 후보와 한 번에 병합(파이썬 merge_second_stage 와 같은 규칙).
+/// 둘을 따로 마무리하면 top_n 이 먼저 잘라 BM25 가 벡터와 합의했는지 볼 후보가 사라질 수 있어
+/// 같은 중간 상태에 함께 얹고 한 번만 finalize 한다.
+///
+/// -in: existing = 1차 최종 후보
+/// -in: embed    = (벡터 후보, (판정 방법, 1등 유사도)) — 벡터를 못 만들었으면 None
+/// -in: bm25     = (BM25 1위, 설정) — 안 골랐으면 None
+pub fn merge_second_stage(existing: &[Candidate], embed: Option<(&[(String, f64)], (&str, f64))>,
+                          taxonomy: &Taxonomy, conflict: &ConflictSpec, embed_cap: Option<f64>,
+                          bm25: Option<(&Bm25Pick, &crate::bm25::Bm25Spec)>) -> DoctypeSignal {
     let mut merged: HashMap<String, Merged> = HashMap::new();
     for v in existing {
         merged.insert(v.dc_id.clone(), Merged {
@@ -704,43 +781,94 @@ pub fn merge_embed_candidates(existing: &[Candidate], embed_values: &[(String, f
             evidence: v.evidence.clone(),
             parts: v.score_parts.clone(),
             review: v.review,
+            basis: v.basis.clone(),
         });
     }
-    // 근거 칸의 모양은 파이썬 merge_embed_candidates 의 ev_block 과 키 순서까지 같다.
-    let (embed_method, embed_top_sim) = embed_meta;
-    let ev_block = |conf: f64| json!({
-        "method": embed_method,
-        "top_sim": round3(embed_top_sim),
-        "share": round3(conf),
-    });
-    for (dc_id, conf) in embed_values {
-        if taxonomy.get(dc_id).is_none() {
-            continue; // 삭제된 노드를 가리키는 낡은 seed — 조용히 무시
-        }
-        match merged.get_mut(dc_id) {
-            Some(entry) => {
-                entry.from.insert("embed".into());
-                entry.evidence.insert("embed".into(), ev_block(*conf));
-                if *conf > entry.confidence {
-                    entry.confidence = *conf;
+    if let Some((embed_values, (embed_method, embed_top_sim))) = embed {
+        // 근거 칸의 모양은 파이썬 merge_embed_candidates 의 ev_block 과 키 순서까지 같다.
+        let ev_block = |conf: f64| json!({
+            "method": embed_method,
+            "top_sim": round3(embed_top_sim),
+            "share": round3(conf),
+        });
+        for (dc_id, conf) in embed_values {
+            if taxonomy.get(dc_id).is_none() {
+                continue; // 삭제된 노드를 가리키는 낡은 seed — 조용히 무시
+            }
+            match merged.get_mut(dc_id) {
+                Some(entry) => {
+                    entry.from.insert("embed".into());
+                    entry.evidence.insert("embed".into(), ev_block(*conf));
+                    if *conf > entry.confidence {
+                        entry.confidence = *conf;
+                    }
+                }
+                None => {
+                    // 벡터 단독 후보 — 상한을 건다.
+                    let capped = match embed_cap { Some(c) => conf.min(c), None => *conf };
+                    let mut ev = Map::new();
+                    ev.insert("embed".into(), ev_block(*conf));
+                    merged.insert(dc_id.clone(), Merged {
+                        confidence: capped,
+                        from: HashSet::from(["embed".to_string()]),
+                        evidence: ev,
+                        parts: vec![("embed".into(), capped)],
+                        review: false,
+                        basis: String::new(),
+                    });
                 }
             }
-            None => {
-                // 벡터 단독 후보 — 상한을 건다.
-                let capped = match embed_cap { Some(c) => conf.min(c), None => *conf };
-                let mut ev = Map::new();
-                ev.insert("embed".into(), ev_block(*conf));
-                merged.insert(dc_id.clone(), Merged {
-                    confidence: capped,
-                    from: HashSet::from(["embed".to_string()]),
-                    evidence: ev,
-                    parts: vec![("embed".into(), capped)],
-                    review: false,
-                });
-            }
+        }
+    }
+    if let Some((pick, spec)) = bm25 {
+        if taxonomy.get(&pick.dc_id).is_some() {
+            add_bm25(&mut merged, pick, spec);
         }
     }
     finalize(merged, taxonomy, conflict)
+}
+
+/// BM25 1위를 병합 중간 상태에 얹기(설계서 §08 · §14-4, 파이썬 _add_bm25 와 같은 규칙).
+///  · 1차 규칙 근거가 있는 노드 → 근거만 더한다
+///  · 벡터만 낸 노드 → 합의, 확신을 cap_agree 까지
+///  · 새 노드 → 파일명에서만 맞았으면 name_only_cap, 아니면 cap_alone. review 표시
+fn add_bm25(merged: &mut HashMap<String, Merged>, pick: &Bm25Pick, spec: &crate::bm25::Bm25Spec) {
+    let (in_title, in_name) = (pick.title > 0.0, pick.name > 0.0);
+    let mut ev = Map::new();
+    ev.insert("score".into(), json!(round3(pick.score)));
+    ev.insert("threshold".into(), json!(round3(pick.threshold)));
+    ev.insert("field".into(), json!(if in_title && in_name { "title+name" }
+                                     else if in_title { "title" } else { "name" }));
+    if !pick.words.is_empty() {
+        ev.insert("words".into(), json!(pick.words.iter().take(5).collect::<Vec<_>>()));
+    }
+    if let Some(entry) = merged.get_mut(&pick.dc_id) {
+        if entry.from.iter().any(|f| f != "embed" && f != "bm25") {
+            // 1차 규칙이 이미 붙인 분류 — 근거만 늘 뿐 확신은 그대로
+            entry.from.insert("bm25".into());
+            entry.evidence.insert("bm25".into(), Value::Object(ev));
+            return;
+        }
+        // 벡터와 같은 분류를 냈다 — 두 근거가 합의하면 벡터 단독보다 높게
+        let conf = entry.confidence.max(spec.cap_agree);
+        entry.confidence = conf;
+        entry.from.insert("bm25".into());
+        entry.evidence.insert("bm25".into(), Value::Object(ev));
+        entry.parts.push(("bm25".into(), conf));
+        return;
+    }
+    let name_only = !in_title;
+    let conf = if name_only { spec.name_only_cap } else { spec.cap_alone };
+    let mut evm = Map::new();
+    evm.insert("bm25".into(), Value::Object(ev));
+    merged.insert(pick.dc_id.clone(), Merged {
+        confidence: conf,
+        from: HashSet::from(["bm25".to_string()]),
+        evidence: evm,
+        parts: vec![("bm25".into(), conf)],
+        review: true,
+        basis: if name_only { "bm25_name_only".into() } else { "bm25".into() },
+    });
 }
 
 #[cfg(test)]
@@ -792,6 +920,7 @@ mod tests {
             conflict: ConflictSpec { strategy: "all".into(), n: None, min_confidence: None },
             defaults,
             embed: crate::doc_rules::EmbedSpec::default(),
+            bm25: crate::bm25::Bm25Spec::default(),
             // 이 시험들은 코드 기본값으로 도는 것을 확인한다(정책 파일 미개입).
             signals: None,
             version: "t".into(),
@@ -909,6 +1038,35 @@ mod tests {
         let text = format!("제목 없는 공문입니다.\n{}\n첨부: 계약서를 참조하십시오.", "가".repeat(200));
         let sig = scan_doctype(&text, "D:/x/공문.hwp", &mk_set(vec![r], staged()), &mk_taxonomy());
         assert!(sig.values.is_empty());
+    }
+
+    // 표제부 범위는 공백 묶음을 한 칸으로 센다(2026-10-19).
+    // 파이썬 판 test_표제부_범위는_공백_묶음을_한_칸으로_센다 와 같은 표다 — 두 판이 같아야 한다.
+    #[test]
+    fn 표제부_범위_공백_묶음() {
+        let cases: &[(&str, usize, &str)] = &[
+            ("  가\n\n 나\t다  ", 10, "가 나 다 "),
+            ("", 5, ""),
+            ("가나다", 2, "가나"),
+            ("\u{a0}가   나", 5, "가 나"),
+            ("a\r\n\r\nb", 5, "a b"),
+            ("가\n\n\n\n나다라", 3, "가 나"),
+        ];
+        for (text, n, want) in cases {
+            assert_eq!(head_scope(text, *n), *want, "{:?}", text);
+        }
+    }
+
+    // 원문으로는 경계 밖이어도 공백을 줄이면 안이면 head 신호가 잡힌다(실측 사례를 작게 줄인 것).
+    #[test]
+    fn 빈_줄과_줄앞_공백은_표제부_경계를_밀지_않는다() {
+        let mut r = blank("r", "CONTRACT", "medium");
+        r.head_terms = sv(&["계약서"]);
+        r.head_chars = Some(20);
+        let text = format!("가{}{}계약서 첨부", "\n".repeat(10), " ".repeat(15));
+        let sig = scan_doctype(&text, "D:/x/a.hwp", &mk_set(vec![r], staged()), &mk_taxonomy());
+        assert_eq!(sig.values.len(), 1);
+        assert!(sig.values[0].from.contains(&"head".to_string()));
     }
 
     #[test]

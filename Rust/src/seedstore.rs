@@ -40,7 +40,7 @@ pub const LOCK_WAIT_SEC: f64 = 10.0;
 /// 벡터(384개 숫자)가 앞에 오면 사람이 파일을 열었을 때 아무것도 못 읽는다.
 /// 파이썬 판 `_ordered()` 의 head 와 **글자까지 같아야** 한다.
 const SEED_ORDER: &[&str] = &[
-    "v", "file", "doc_id", "hash", "grade", "doctype", "hold",
+    "v", "file", "doc_id", "hash", "grade", "doctype", "title", "hold",
     "source", "approved_by", "note", "ts", "dim", "engine",
 ];
 
@@ -115,7 +115,7 @@ pub fn ensure_v3(e: &Value) -> Value {
 
     let already_v3 = e.get("v").and_then(|v| v.as_u64()) == Some(SCHEMA_VERSION);
     if already_v3 {
-        for k in ["grade", "doctype", "hold", "source", "approved_by", "note",
+        for k in ["grade", "doctype", "title", "hold", "source", "approved_by", "note",
                   "ts", "dim", "engine"] {
             if let Some(v) = e.get(k) {
                 if !is_empty(v) { out.insert(k.into(), v.clone()); }

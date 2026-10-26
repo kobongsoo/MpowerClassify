@@ -111,3 +111,58 @@ def test_보안등급_기준파일을_넘긴다(tmp_path):
     assert app.cso_rules_args({"rules": str(tmp_path)}) == []
     assert app.cso_rules_args({}) == []
     assert app.cso_rules_args(None) == []
+
+
+#------------------------------------------------------------------
+# 등급 스트림 체크 상자 → 엔진 인자
+#=> 기본(켬)은 --write-grade-stream 하나. 하위 선택은 켰을 때만 붙고, 보안등급 축이
+#   꺼졌거나 Windows 가 아니면 아무것도 넘기지 않는다(엔진이 1003 · 1012 로 멈추지 않게).
+#
+# -in: 없음
+# -out: 없음(단언)
+# -out: error = 없음
+#------------------------------------------------------------------
+def test_등급스트림_인자():
+    assert app.grade_stream_args(True, is_windows=True) == ["--write-grade-stream"]
+    assert app.grade_stream_args(True, none=True, update=True, is_windows=True) == [
+        "--write-grade-stream", "--grade-stream-unclassified", "none", "--grade-stream-update-time"]
+    # 껐으면 하위 선택이 켜져 있어도 넘기지 않는다
+    assert app.grade_stream_args(False, none=True, update=True, is_windows=True) == []
+    # 보안등급 축이 꺼짐 · 리눅스
+    assert app.grade_stream_args(True, do_sec=False, is_windows=True) == []
+    assert app.grade_stream_args(True, is_windows=False) == []
+
+
+#------------------------------------------------------------------
+# 사람 결정 목록 → 엔진 인자
+#=> 켰고 파일이 있을 때만 --grade-overrides 를 넘긴다(없는 파일이면 엔진이 2009 로 멈춘다).
+#
+# -in: tmp_path = pytest 임시 폴더
+# -out: 없음(단언)
+# -out: error = 없음
+#------------------------------------------------------------------
+def test_사람결정_인자(tmp_path):
+    ov = tmp_path / "cso_override.jsonl"
+    assert app.grade_overrides_args(True, str(ov)) == []            # 결정이 아직 없음
+    ov.write_text("", encoding="utf-8")
+    assert app.grade_overrides_args(True, str(ov)) == ["--grade-overrides", str(ov)]
+    assert app.grade_overrides_args(False, str(ov)) == []
+    assert app.grade_overrides_args(True, "") == []
+
+
+#------------------------------------------------------------------
+# 엔진이 적용 · 거절한 사람 결정을 화면이 같은 뜻으로 읽는다
+#=> stale(내용이 바뀌어 따르지 않음)이면 엔진 판정 + 다시 검토, 적용됐으면 원래 판정과 비교해 '고침'.
+#
+# -in: 없음
+# -out: 없음(단언)
+# -out: error = 없음
+#------------------------------------------------------------------
+def test_엔진_결정_결과를_화면이_따른다():
+    latest = {"a.docx": {"new_grade": "O"}}
+    stale = {"file": "a.docx", "grade": "C",
+             "why": {"security": {"override": {"stale": True, "applied": False}}}}
+    assert app.effective_grade(stale, latest) == ("C", False)
+    applied = {"file": "a.docx", "grade": "O",
+               "why": {"security": {"method": "manual_override", "computed": {"grade": "C"}}}}
+    assert app.grade_changed(applied, latest) is True
