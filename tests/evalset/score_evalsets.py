@@ -44,8 +44,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 # 평가셋 원본이 가리키는 문서 뿌리. ref_상대경로 는 이 폴더 아래의 상대 경로다.
 SRC_DIR = r"D:\분류함"
 
-DOCTYPE_XLSX = os.path.join(ROOT, "report", "업무분류-평가셋-500-20260914.xlsx")
-SECURITY_XLSX = os.path.join(ROOT, "report", "보안등급-C재현율-평가셋-500-20260914.xlsx")
+# 평가셋은 resources/golden_dataset/ 에 모아 둔다(2026-10-22 report/ 에서 옮김 · gitignore)
+DOCTYPE_XLSX = os.path.join(ROOT, "resources", "golden_dataset", "업무분류-평가셋-500-20260914.xlsx")
+SECURITY_XLSX = os.path.join(ROOT, "resources", "golden_dataset", "보안등급-C재현율-평가셋-500-20260914.xlsx")
 
 # 업무분류 시트의 열 번호(1부터). build_evalsets.py 가 쓰는 배치와 같아야 한다.
 D_COL = {"no": 1, "folder": 2, "name": 3, "ext": 4, "ans1": 8, "ans2": 9,

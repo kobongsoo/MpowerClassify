@@ -46,7 +46,9 @@ SEED = 20260914
 MIN_TEXT_LEN = 20
 RS_EXE = os.path.join(ROOT, "Rust", "target", "release", "MpowerClassify-rs.exe")
 POLICY_DIR = os.path.join(ROOT, "resources", "policy")
-OLD_XLSX = os.path.join(ROOT, "report", "업무분류-정밀도검증셋-라벨링시트.xlsx")
+# 옛 검증셋(분류체계 시트 · 정답 재사용)은 골든데이터셋 폴더에서 읽는다(2026-10-22 이동).
+# 새로 만드는 시트는 정답이 비어 있으므로 골든데이터셋을 덮지 않게 report/ 에 쓴다.
+OLD_XLSX = os.path.join(ROOT, "resources", "golden_dataset", "업무분류-정밀도검증셋-라벨링시트.xlsx")
 OUT_DOCTYPE = os.path.join(ROOT, "report", "업무분류-평가셋-500-20260914.xlsx")
 OUT_SECURITY = os.path.join(ROOT, "report", "보안등급-C재현율-평가셋-500-20260914.xlsx")
 

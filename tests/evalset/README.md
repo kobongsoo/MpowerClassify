@@ -7,10 +7,19 @@
 | `build_evalsets.py` | 문서를 층화 표집해 사람이 정답을 적을 라벨링 시트(xlsx)를 만든다 |
 | `score_evalsets.py` | 정답이 채워진 평가셋으로 엔진을 채점한다 |
 
-평가셋 xlsx 는 고객사 실데이터라 저장소에 없다. `report/` 아래에 둔다.
+평가셋 xlsx 는 고객사 실데이터라 저장소에 없다(`/resources/golden_dataset/` 는 gitignore).
+`resources/golden_dataset/` 에 모아 둔다(2026-10-22 `report/` 에서 옮김).
 
-- `report/업무분류-평가셋-500-20260914.xlsx`
-- `report/보안등급-C재현율-평가셋-500-20260914.xlsx`
+| 파일 | 무엇 | 쓰는 곳 |
+|---|---|---|
+| `업무분류-평가셋-500-20260918-사람재검-01.xlsx` | 업무분류 **기준 정답지** — 사람이 다시 본 판 | `bm25_experiment.py` · `bm25_fields_experiment.py` 기본값, `score_evalsets.py --doctype-xlsx` 로 지정 |
+| `업무분류-평가셋-500-20260914.xlsx` | 업무분류 원본(사람 132 + AI 라벨 368) | `score_evalsets.py` 기본값 |
+| `보안등급-C재현율-평가셋-500-20260914.xlsx` | 보안등급(C 재현율 중심) | `score_evalsets.py` 기본값 |
+| `업무분류-정밀도검증셋-라벨링시트.xlsx` | 업무분류 1단계 정밀도 검증셋(150건) | 참고 |
+| `기준문서-보안등급-라벨링시트-20260921.xlsx` | 기준 문서 중 보안등급이 없던 41건 | 기준 문서 보강 |
+
+> `build_evalsets.py` 는 옛 검증셋을 `resources/golden_dataset/` 에서 읽고, 새로 만든 라벨링 시트는
+> 정답이 비어 있으므로 골든데이터셋을 덮지 않게 `report/` 에 쓴다. 정답을 다 채운 뒤 골든데이터셋으로 옮긴다.
 
 ---
 
@@ -69,7 +78,7 @@ python tests/evalset/score_evalsets.py --run work/run_new.jsonl --prev work/run_
 | `--details` | 놓침·오부착 목록을 분류별로 펼친다 — **규칙에 넣을 말을 찾는 자리** |
 | `--json 경로` | 결과를 json 으로도 남긴다 |
 | `--src-dir` | `ref_상대경로` 를 붙일 문서 뿌리(기본 `D:\분류함`) |
-| `--doctype-xlsx` / `--security-xlsx` | 평가셋 경로 바꾸기 |
+| `--doctype-xlsx` / `--security-xlsx` | 평가셋 경로 바꾸기(기본 `resources/golden_dataset/` 의 20260914 판). 기준 정답지로 채점하려면 `--doctype-xlsx resources/golden_dataset/업무분류-평가셋-500-20260918-사람재검-01.xlsx` |
 
 종료코드는 정상 `0`, **정답 시트에 앞뒤가 안 맞는 줄이 있으면 `2`** 다
 (숫자는 그래도 찍는다).
