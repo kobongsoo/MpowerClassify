@@ -101,6 +101,8 @@
     <tr><th>#</th><th>차이</th><th>종류</th><th>어느 쪽이 맞나</th><th>상태</th></tr>
     <tr><td>A</td><td>지번 주소에서 <b>가짜 시군구</b>를 주소로 봄</td><td>일부러 다르게</td>
         <td class="chg-n">Rust</td><td class="chg-n">적용됨 — Rust·Python 양쪽(2026-09-03) · 보충 사전(2026-09-04)</td></tr>
+    <tr><td>A-2</td><td>도로명에서 <b>낱말이 쪼개진</b> 가짜 주소(<code>실시간으로 3</code>)를 주소로 봄</td><td>일부러 다르게</td>
+        <td class="chg-n">Rust</td><td class="chg-n">적용됨 — Rust·Python 양쪽(2026-10-26)</td></tr>
     <tr><td>B</td><td><b>판번호</b>(<code>1.2.3.4 Build 7</code>)를 IP 로 봄</td><td>일부러 다르게</td>
         <td class="chg-n">Rust</td><td class="chg-n">적용됨 — Rust·Python 양쪽(2026-09-03)</td></tr>
     <tr><td>C</td><td><code>::ffff:1.2.3.4</code> 의 <b>범위</b>가 다름</td><td>아직 못 맞춤</td>
@@ -200,9 +202,30 @@ ADDRESS  '연구 정보관리 1'  conf=0.75
   남아 등급이 <code>C → C</code> 로 그대로였고, 전수 등급 변화는 여전히 <b>1건</b>(올바른 정정)이었습니다.
   그래도 미탐은 미탐이라 고쳤습니다.</div>
 
-  <p><b>적용 범위는 지번 브랜치뿐</b>입니다. 도로명(<code>…로/길 + 번호</code>)은 신호가 훨씬 강해 같은 오탐이
-  관측되지 않았고, 괜히 건드리면 미탐 위험만 커집니다.</p>
+  <p><b>적용 범위는 지번 브랜치뿐</b>입니다. 도로명(<code>…로/길 + 번호</code>)은 신호가 훨씬 강해 이 판정을 그대로
+  걸면 미탐 위험만 커집니다. 도로명에서 나온 오탐은 아래 A-2 가 더 좁게 막습니다.</p>
   <p class="def">지키는 시험: <code>pii::tests::주소_가짜시군구는_거른다</code> · 소스 근거: <code>jibun_admin_ok()</code> 헤더의 <code>[중요]</code> 블록</p>
+</section>
+
+<h2 id="a2"><span class="n">A-2</span> 도로명 주소 — 낱말 속 가짜 시군구 거부 <span class="pill">일부러 다르게</span></h2>
+<section class="card">
+  <p>ko-pii 도로명 갈래는 <b>시군구와 도로명 사이에 띄어쓰기를 요구하지 않습니다</b>. 그래서 낱말 하나가 쪼개져 주소가 됩니다.</p>
+<pre><code>detect_all("표정 변화가 실시간으로 3D 인물", include=["ADDRESS"])
+  → ADDRESS '실시간으로 3'  extra={'city': None, 'districts': '실시', 'road': '간으로', 'building_number': '3'}</code></pre>
+  <p>'실시간으로'를 <b>실시(市) + 간으로(路) + 3</b> 으로 읽은 것입니다. 2026-10-26 배포 교차 검증에서
+  <code>4_디지털콘텐츠_통합보고서_업로드용.pdf</code> 로 처음 관측했습니다.</p>
+  <p><b>세 조건이 모두 맞을 때만 버립니다</b> — 진짜 주소를 놓치지 않게 좁게 막습니다.</p>
+  <div class="scroll"><table>
+    <tr><th>조건</th><th>예</th><th>결과</th></tr>
+    <tr><td>① 광역(시·도)이 없다</td><td><code>서울특별시 강남구 테헤란로 152</code></td><td>광역이 있어 통과</td></tr>
+    <tr><td>② 마지막 시군구와 도로명이 붙어 있다</td><td><code>강남구 테헤란로 152</code></td><td>띄어 써서 통과</td></tr>
+    <tr><td>③ 그 시군구가 진짜 행정구역이 아니다(ko-pii 사전 ∪ 보충 사전)</td><td><code>강남구테헤란로 152</code></td><td>강남구가 실제라 통과</td></tr>
+    <tr><td>셋 다 맞음</td><td><code>실시간으로 3</code></td><td class="bad">거부</td></tr>
+  </table></div>
+  <p>버린 자리는 그대로 <b>'이미 본 자리'로 남깁니다</b>. 파이썬 판은 ko-pii 가 낸 결과를 뒤에서 거르므로 ko-pii 안에서
+  지번 갈래가 그 자리를 다시 잡지 않습니다 — Rust 도 같게 했습니다.</p>
+  <p class="def">지키는 시험: <code>pii::tests::주소_도로명_낱말쪼개기는_거른다</code> · <code>tests/test_rules.py::test_road_glued_fake_district_rejected</code>
+  · 소스 근거: Rust <code>road_admin_ok()</code> · 파이썬 <code>rules._road_admin_ok</code></p>
 </section>
 
 <h2 id="b"><span class="n">B</span> IP — 판번호 문맥 배제 <span class="pill">일부러 다르게</span></h2>

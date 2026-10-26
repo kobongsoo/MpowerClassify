@@ -184,3 +184,63 @@ fn set_grade_와_재분류_유지() {
     assert_eq!(summ["S"], 1);
     assert_eq!(summ["unclassified"], 0);
 }
+
+//------------------------------------------------------------------
+// --set-grade 를 목록(--filelist)의 문서 전부에 — 파이썬 test_set_grade_목록_여러건 과 같은 경우
+//=> 문서마다 같은 등급 · 결정 목록에 한 줄씩 · doc_id 는 sfile_id. 없는 파일도 결과에 남기고
+//   종료코드는 처음 난 실패(없는 파일 → 1)를 따른다.
+//
+// -in: 없음
+//
+// -out: 없음
+// -out: error = 동작이 다르면 assert 실패
+//------------------------------------------------------------------
+#[test]
+fn set_grade_목록_여러건() {
+    let env = Env::new("list");
+    let a = env.store("a.txt", BODY_NONE);
+    let b = env.store("b.txt", BODY_NONE);
+    let gone = env.dir.join("docs").join("c_없음.txt");
+    let fl = env.dir.join("list.jsonl");
+    let lines: String = [(&b, "SF-2"), (&gone, "SF-3"), (&a, "SF-1")].iter()
+        .map(|(p, sid)| serde_json::json!({"path": p.to_str().unwrap(), "sfile_id": sid}).to_string() + "\n")
+        .collect();
+    std::fs::write(&fl, lines).unwrap();
+    let ov = env.dir.join("ov.jsonl");
+    std::fs::write(&ov, "").unwrap();
+    let o = env.run(&["--set-grade", "S", "--filelist", fl.to_str().unwrap(), "--grade-overrides", ov.to_str().unwrap(),
+                      "--reviewer", "홍길동", "--reason", "일괄 지정", "--format", "jsonl"]);
+    // 없는 파일이 하나 있어 종료코드 1 — 그래도 나머지 두 건은 끝까지 처리한다
+    assert_eq!(o.status.code(), Some(1), "{}", String::from_utf8_lossy(&o.stderr));
+    let out = String::from_utf8_lossy(&o.stdout).to_string();
+    let recs: Vec<Value> = out.lines().filter(|l| l.starts_with("{\"file\""))
+        .map(|l| serde_json::from_str(l).unwrap()).collect();
+    let names: Vec<String> = recs.iter()
+        .map(|r| r["file"].as_str().unwrap().replace('\\', "/").rsplit('/').next().unwrap().to_string()).collect();
+    assert_eq!(names, vec!["a.txt", "b.txt", "c_없음.txt"]);
+    let ids: Vec<&str> = recs.iter().map(|r| r["doc_id"].as_str().unwrap_or("")).collect();
+    assert_eq!(ids, vec!["SF-1", "SF-2", "SF-3"]);
+    assert_eq!(recs[0]["grade"], "S");
+    assert_eq!(recs[1]["grade"], "S");
+    assert!(recs[2]["grade"].is_null() && recs[2]["error"]["kind"] == "file_missing");
+    let ovl: Vec<Value> = std::fs::read_to_string(&ov).unwrap().lines().filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).unwrap()).collect();
+    assert_eq!(ovl.len(), 2);
+    assert!(ovl.iter().all(|x| x["new_grade"] == "S" && x["reviewer"] == "홍길동"));
+}
+
+//------------------------------------------------------------------
+// --set-grade 대상이 없으면(--file · --filelist 둘 다 없음) 1003
+//
+// -in: 없음
+//
+// -out: 없음
+// -out: error = 동작이 다르면 assert 실패
+//------------------------------------------------------------------
+#[test]
+fn set_grade_대상이_없으면_1003() {
+    let env = Env::new("notarget");
+    let o = env.run(&["--set-grade", "C"]);
+    assert_eq!(o.status.code(), Some(3));
+    assert!(String::from_utf8_lossy(&o.stdout).contains("bad_args"));
+}

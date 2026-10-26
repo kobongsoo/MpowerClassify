@@ -340,6 +340,35 @@ class _FileTimes:
 
 
 #------------------------------------------------------------------
+# 탐색기에 '이 파일이 바뀌었다' 알리기
+#=> 대체 스트림만 바뀌면 탐색기는 아이콘 오버레이 · 툴팁을 다시 읽지 않아 F5 를 눌러야
+#   새 등급이 보인다(설계서 탐색기-등급표시-오버레이-툴팁 §7 후속 과제).
+#   SHChangeNotify(SHCNE_UPDATEITEM) 로 그 파일 하나만 다시 그리게 한다.
+#    1) SHCNF_PATHW | SHCNF_FLUSHNOWAIT — 경로로 알리고, 탐색기 처리를 기다리지 않는다
+#       (여러 건을 쓸 때 한 건마다 멈추지 않게)
+#    2) 긴 경로 접두(\\?\)는 셸이 알아보지 못해 보통 절대 경로로 준다
+#    3) 알림이 실패해도 등급은 이미 써졌다 — 조용히 넘어간다(F5 로 보인다)
+#   Rust 판 gradestream::notify_shell 과 같다.
+#
+# -in: path = 문서 경로
+#
+# -out: 없음
+# -out: error = 없음(Windows 가 아니거나 호출이 실패해도 예외를 내지 않는다)
+#------------------------------------------------------------------
+def notify_shell(path):
+    if not supported():
+        return
+    try:
+        import ctypes
+        shell32 = ctypes.WinDLL("shell32")
+        # SHCNE_UPDATEITEM=0x2000 · SHCNF_PATHW=0x0005 · SHCNF_FLUSHNOWAIT=0x3000
+        shell32.SHChangeNotify(0x2000, 0x0005 | 0x3000,
+                               ctypes.c_wchar_p(os.path.abspath(path)), None)
+    except (OSError, AttributeError) as e:
+        log.debug("탐색기 알림 실패 file=%s :: %s", path, e)
+
+
+#------------------------------------------------------------------
 # 한 파일에 등급 쓰기
 #=> 설계 §05 절차. 같은 값이면 안 쓰고, 새 버전 스트림은 지키고, 쓴 뒤 다시 읽어 확인한다.
 #    1) 지금 상태를 읽는다 — 같은 등급이면 unchanged(수정 시각도 그대로)
@@ -348,6 +377,7 @@ class _FileTimes:
 #    4) 12바이트를 쓴다(CREATE_ALWAYS)
 #    5) 시각 · 읽기 전용을 되돌린다(실패는 경고만 — 등급은 이미 써졌다)
 #    6) 다시 읽어 기대한 값인지 본다(가로채고 성공을 돌려주는 필터 대비)
+#    7) 썼으면 탐색기에 알려 표식을 바로 다시 그리게 한다(notify_shell)
 #
 # -in: path      = 문서 경로
 # -in: grade     = "C" | "S" | "O" | "NONE"
@@ -407,6 +437,8 @@ def mark(path, grade, keep_time=True):
     st2, cur2, _ = read_state(path)
     if st2 not in (ST_MARKED, ST_UNCLASSIFIED) or cur2 != code:
         return {"state": "failed", "value": grade, "reason": "verify_failed"}
+    # 탐색기가 등급 표식(오버레이 · 툴팁)을 F5 없이 바로 다시 그리게 알린다
+    notify_shell(path)
     out = {"state": "written", "value": grade}
     if prev is not None:
         out["prev"] = prev

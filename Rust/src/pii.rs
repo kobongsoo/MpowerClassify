@@ -1374,6 +1374,9 @@ fn det_address(text: &str) -> Vec<Det> {
         // 동·호·층·건물명·괄호 상세까지가 한 주소다(원본 _extend_with_detail).
         let end = extend_with_detail(text, mm.end());
         seen.push((mm.start(), end));
+        // [중요] ko-pii 에 없는 추가 검증 — 함수 헤더 참고. 버려도 seen 에는 남긴다:
+        // 파이썬 판은 ko-pii 가 낸 결과를 뒤에서 거르므로, 그 자리를 지번 갈래가 다시 잡지 않는다.
+        if !road_admin_ok(&m) { continue; }
         out.push(Det { start: mm.start(), end, risk: R_MED, conf: 0.8, label: "ADDRESS" });
     }
     // 2) 지번 — MEDIUM 0.75
@@ -1545,6 +1548,29 @@ fn jibun_admin_ok(cap: &regex::Captures) -> bool {
     districts::is_district(first_district)
         || EXTRA_DISTRICTS.contains(&first_district)
         || districts::is_legal_dong(dong)
+}
+
+//------------------------------------------------------------------
+// 도로명 주소 — 낱말 속 가짜 시군구 거르기 [ko-pii 와 의도적으로 다름]
+//=> ko-pii 도로명 갈래는 시군구와 도로명 사이에 띄어쓰기를 요구하지 않아, 낱말 하나가
+//   쪼개져 주소가 된다("실시간으로 3D" → 실시(市) + 간으로(路) + 3). 2026-10-26 배포
+//   교차 검증에서 관측. 파이썬 rules._road_admin_ok 와 같은 판정이다.
+//    1) 광역(시·도)이 있으면 통과 — addr_struct_ok 가 이미 조합을 검증했다
+//    2) 마지막 시군구 토큰과 도로명이 띄어 쓰여 있으면 통과
+//    3) 붙어 있으면, 그 토큰이 진짜 행정구역 이름일 때만 통과(ko-pii 사전 + 보충 사전)
+//
+// -in: cap = RE_ROAD 매치(1 광역 · 2 시군구 · 3 도로명)
+//
+// -out: bool = 주소로 인정하면 true
+// -out: error = 없음
+//------------------------------------------------------------------
+fn road_admin_ok(cap: &regex::Captures) -> bool {
+    if cap.get(1).map_or(false, |m| !m.as_str().is_empty()) { return true; }
+    let raw = cap.get(2).map(|m| m.as_str()).unwrap_or("");
+    let last = match raw.split_whitespace().last() { Some(t) => t, None => return true };
+    // 시군구 칸 끝에 공백이 있으면 도로명과 띄어 쓴 것이다 — 건드리지 않는다
+    if raw.ends_with(char::is_whitespace) { return true; }
+    districts::is_district(last) || EXTRA_DISTRICTS.contains(&last)
 }
 
 /// 매치 끝 뒤에 숫자/하이픈이 이어지면 거부(ko-pii `(?![0-9-])`).
@@ -2020,6 +2046,29 @@ mod tests {
         assert_eq!(count("주소는 경기도 부천시 원미구 중동 1153 입니다.", "ADDRESS"), 1);
         assert_eq!(count("원미구 중동 1153", "ADDRESS"), 1);
         assert_eq!(count("분당구 정자동 100", "ADDRESS"), 1);
+    }
+
+    //--------------------------------------------------------------
+    // [중요] ko-pii 와 의도적으로 다른 동작 — 도로명 낱말 쪼개기 거르기
+    //=> ko-pii 는 "실시간으로 3D" 를 실시(市) + 간으로(路) + 3 으로 읽어 주소로 낸다.
+    //   위 지번 시험과 같은 이유로 pii_corpus.yaml 이 아니라 여기 손으로 둔다.
+    //   파이썬 판에도 같은 벡터가 있다(tests/test_rules.py::test_road_glued_fake_district_rejected).
+    //   구현 근거는 road_admin_ok 헤더.
+    //
+    // -in: 없음
+    //
+    // -out: 없음
+    // -out: error = 동작이 바뀌면 assert 실패
+    //--------------------------------------------------------------
+    #[test]
+    fn 주소_도로명_낱말쪼개기는_거른다() {
+        assert_eq!(count("표정 변화가 실시간으로 3D 인물 표정", "ADDRESS"), 0);
+        // 진짜 도로명은 그대로 — 띄어 쓴 것 · 붙였어도 실제 시군구인 것 · 광역이 있는 것
+        assert_eq!(count("주소: 강남구 테헤란로 152", "ADDRESS"), 1);
+        assert_eq!(count("강남구테헤란로 152 에서", "ADDRESS"), 1);
+        assert_eq!(count("서울특별시 강남구 테헤란로 152", "ADDRESS"), 1);
+        assert_eq!(count("성남시 분당구 판교역로 235", "ADDRESS"), 1);
+        assert_eq!(count("원미구 길주로 1 번지", "ADDRESS"), 1);
     }
 
     //--------------------------------------------------------------

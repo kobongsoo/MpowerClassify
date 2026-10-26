@@ -1128,11 +1128,14 @@ MpowerClassify.exe --dir D:\share\docs --write-grade-stream --grade-stream-updat
     <tr><th>인자</th><th>값</th><th>설명</th></tr>
     <tr><td><code>--grade-overrides</code></td><td>파일</td><td>분류할 때 사람 결정 목록을 읽어, 판정 · 전파가 끝난 뒤 <b>사람 등급이 판정을 이깁니다</b>. 다시 분류해도 사람 결정이 유지되고 <code>--write-grade-stream</code> 이면 파일에도 사람 등급이 써집니다.
         찾는 순서는 문서 ID → 내용 지문 → 경로(정규화 · 대소문자 무시) — UI 화면과 같습니다. 이 옵션을 주면 지문을 구합니다(결과에 <code>hash</code> 가 붙습니다)</td></tr>
-    <tr><td><code>--set-grade</code></td><td><code>C</code> · <code>S</code> · <code>O</code> · <code>NONE</code></td><td>문서를 읽거나 판정하지 않고 <code>--file</code> 문서에 이 등급을 바로 정합니다. <code>--write-grade-stream</code> 이면 파일에 쓰고, <code>--grade-overrides</code> 를 함께 주면 결정을 목록에 한 줄 덧붙여 <b>다음 분류에도 유지</b>됩니다. <code>--dir</code> 과는 함께 쓸 수 없습니다</td></tr>
+    <tr><td><code>--set-grade</code></td><td><code>C</code> · <code>S</code> · <code>O</code> · <code>NONE</code></td><td>문서를 읽거나 판정하지 않고 <code>--file</code> 문서(또는 <code>--filelist</code> 에 적은 문서 전부)에 이 등급을 바로 정합니다. 목록이면 문서마다 결과 레코드가 나오고(<code>doc_id</code> 는 목록의 <code>sfile_id</code>), 없는 파일도 <code>file_missing</code> 으로 남기며 나머지는 끝까지 처리합니다(종료코드는 처음 난 실패) <span class="pill">2026-10-26 목록 추가</span>. <code>--write-grade-stream</code> 이면 파일에 쓰고, <code>--grade-overrides</code> 를 함께 주면 결정을 목록에 한 줄 덧붙여 <b>다음 분류에도 유지</b>됩니다. <code>--dir</code> 과는 함께 쓸 수 없습니다</td></tr>
     <tr><td><code>--reviewer</code> · <code>--reason</code></td><td>문자열</td><td><code>--set-grade</code> 결정을 목록에 덧붙일 때 <b>필수</b>(감사 기록)</td></tr>
   </table></div>
 <pre>:: 파일 하나만 O → C 로(파일에도 쓰고, 다음 분류에도 유지)
 MpowerClassify-rs.exe --set-grade C --file "D:\sample\28.학자금 지원 제도_20.01.01.docx" --write-grade-stream --grade-overrides D:\policy\cso_override.jsonl --reviewer 홍길동 --reason "계약 단가 포함"
+
+:: 목록의 문서 전부를 S 로(문서마다 결정 목록에 한 줄씩)
+MpowerClassify-rs.exe --set-grade S --filelist 지정목록.jsonl --write-grade-stream --grade-overrides D:\policy\cso_override.jsonl --reviewer 홍길동 --reason "일괄 지정"
 
 :: 폴더 재분류 — 사람 결정이 있는 문서는 그 등급으로
 MpowerClassify-rs.exe --dir "d:\sample" --grade-overrides D:\policy\cso_override.jsonl --write-grade-stream --out result.jsonl</pre>
