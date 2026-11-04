@@ -3739,8 +3739,10 @@ def run_classify(files, args, out_fp):
 
         # 내부 seed 읽기(cso_rule.yaml)
         # => cso_rule.yaml에서 고신뢰(seed_eligible) 설정된 경우에 대해 읽어옴
+        # 임계값은 cso_rule.yaml 의 embed: 가 정한다(칸이 없으면 코드 기본값).
         records, pstats = propagate_records(records, seed_index=seed_index, failsafe=args.failsafe,
-                                            on_progress=_prop_progress("전파·보안등급"))
+                                            on_progress=_prop_progress("전파·보안등급"),
+                                            **ruleset.embed.kwargs())
 
         #-------------------------------------------------------------
         # **업무분류 전파**
@@ -4405,8 +4407,23 @@ def run_propagate(args):
     # 입력 레코드/seed 는 외부 파일이라 손으로 고쳐졌을 수 있다. 등급 값이 정의된
     # 서열에 없으면 max_grade 가 예외를 던지므로(fail-closed), 원시 스택 대신
     # "어느 파일이 문제인지" 알려 주고 규칙셋 오류와 같은 코드 4 로 나간다.
+    # 보안등급 전파 임계값(cso_rule.yaml 의 embed:) — 1차 분류 때와 같은 값을 써야
+    # "분류할 때와 다시 전파할 때 결과가 다른" 일이 없다. 전파 모드는 규칙셋이 없어도
+    # 돌던 모드라, 파일이 없으면 코드 기본값으로 계속한다(내용이 틀리면 멈춘다).
+    from .classify.rules import load_rules, CsoEmbedSpec, RuleSetValidationError
     try:
-        records, stats = propagate_records(recs, seed_index=seed_index, failsafe=args.failsafe)
+        cso_embed = load_rules(args.rules).embed
+    except FileNotFoundError:
+        cso_embed = CsoEmbedSpec()
+        print("[MpowerClassify] cso_rule.yaml 이 없어 보안등급 전파 임계값은 기본값을 씁니다",
+              file=sys.stderr)
+    except RuleSetValidationError as e:
+        log.error("규칙셋 검증 실패 count=%d path=%s", len(e.violations), e.path)
+        return fail_err("rules_invalid", f"[MpowerClassify] {e}", e.path)
+
+    try:
+        records, stats = propagate_records(recs, seed_index=seed_index, failsafe=args.failsafe,
+                                           **cso_embed.kwargs())
     except UnknownGradeError as e:
         log.error("전파 입력 등급 오류 :: %s", e)
         return fail_err("rules_invalid",
