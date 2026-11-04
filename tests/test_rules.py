@@ -1185,3 +1185,65 @@ def test_pii_cap_loaded_and_validated(tmp_path):
         with pytest.raises(R.RuleSetValidationError) as ei:
             R.load_rules(str(p))
         assert any(v["code"] == "V14" for v in ei.value.violations)
+
+
+#------------------------------------------------------------------
+# embed: 칸 — 보안등급 2차 전파 임계값을 정책 파일에서 읽는다
+#=> 배포 규칙셋의 값은 코드 상수와 같아야 하고(판정 불변), 칸을 지워도 같은 값,
+#   적은 값은 그대로 읽히고, 범위를 벗어나면 V15 로 막혀야 한다.
+#
+# -in: tmp_path = pytest 임시 폴더
+#
+# -out: 없음
+# -out: error = 기대와 다르면 AssertionError
+#------------------------------------------------------------------
+def test_cso_embed_loaded_and_validated(tmp_path):
+    import yaml
+    import importlib
+    P = importlib.import_module("csoclassify.classify.propagate")  # 패키지가 같은 이름의 함수를 내보내 모듈을 직접 가져온다
+    # 배포 규칙셋 값 = 코드 상수 → 이 칸을 넣어도 판정이 바뀌지 않는다
+    shipped = R.load_rules(R.default_rules_path()).embed
+    assert shipped.kwargs() == {"k": P.DEFAULT_K, "dup_threshold": P.DUP_THRESHOLD,
+                                "min_sim": P.MIN_SIM, "min_share": P.MIN_SHARE}
+
+    data = yaml.safe_load(open(R.default_rules_path(), encoding="utf-8"))
+    p = tmp_path / "cso_rule.yaml"
+    # 칸이 없으면 코드 기본값
+    data.pop("embed", None)
+    p.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    assert R.load_rules(str(p)).embed == R.CsoEmbedSpec()
+    # 적은 값은 그대로(일부만 적으면 나머지는 기본값)
+    data["embed"] = {"min_sim": 0.7, "k": 5}
+    p.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    e = R.load_rules(str(p)).embed
+    assert (e.min_sim, e.k, e.min_share, e.dup_threshold) == (0.7, 5, 0.70, 0.95)
+    # 틀린 값은 V15
+    for bad in ({"min_sim": 1.5}, {"min_share": -0.1}, {"k": 0}, {"k": True},
+                {"dup_threshold": "0.9"}, [1, 2]):
+        data["embed"] = bad
+        p.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+        with pytest.raises(R.RuleSetValidationError) as ei:
+            R.load_rules(str(p))
+        assert any(v["code"] == "V15" for v in ei.value.violations), bad
+
+
+#------------------------------------------------------------------
+# embed.min_sim 이 실제 전파 판정을 바꾸는지
+#=> 1등 유사도 0.6 인 문서는 기본값(0.55)이면 등급이 붙고, 0.70 이면 too_far 로 보류.
+#
+# -in: 없음
+#
+# -out: 없음
+# -out: error = 기대와 다르면 AssertionError
+#------------------------------------------------------------------
+def test_cso_embed_min_sim_changes_propagation():
+    import numpy as np
+    import importlib
+    P = importlib.import_module("csoclassify.classify.propagate")  # 패키지가 같은 이름의 함수를 내보내 모듈을 직접 가져온다
+    seeds = P.SeedIndex.from_records([{"vector": [1.0, 0.0], "grade": "C",
+                                       "seed_eligible": True, "file": "a"}])
+    # 코사인 0.6 인 질의 벡터
+    q = [0.6, float(np.sqrt(1 - 0.36))]
+    assert P.propagate(q, seeds, **R.CsoEmbedSpec().kwargs()).grade == "C"
+    far = P.propagate(q, seeds, **R.CsoEmbedSpec(min_sim=0.70).kwargs())
+    assert far.grade is None and far.method == "too_far"

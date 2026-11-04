@@ -4248,6 +4248,8 @@ fn main() {
                     None => propagate::SeedIndex::empty(),
                 };
                 let seeds = propagate::SeedIndex::merge(external, internal);
+                // 임계값은 cso_rule.yaml 의 embed: 가 정한다(칸이 없으면 모듈 상수 그대로).
+                let sec_params = rs.embed;
                 // 보류 문서만 전파(이미 등급 확정 문서는 손대지 않음).
                 let (mut decided, mut still) = (0u32, 0u32);
                 // 2차 패스도 진행을 알린다. 추출·1차는 파일마다 [progress] 를 내는데
@@ -4260,7 +4262,7 @@ fn main() {
                     }
                     if it.grade.is_some() { continue; }
                     let vec = match &it.vector { Some(v) => v.clone(), None => continue };
-                    let esig = propagate::propagate(&vec, &seeds);
+                    let esig = propagate::propagate(&vec, &seeds, &sec_params);
                     let dict = esig.as_dict();
                     it.grade = rules::refuse_with_embed(&mut it.rec, esig.grade.as_deref(), esig.confidence as f64, dict, opts.failsafe.as_deref());
                     if it.grade.is_some() { decided += 1; } else { still += 1; }
@@ -5151,6 +5153,21 @@ fn run_propagate(opts: &Opts) -> i32 {
         internal
     };
 
+    // 보안등급 전파 임계값(cso_rule.yaml 의 embed:) — 1차 분류 때와 같은 값을 써야
+    // "분류할 때와 다시 전파할 때 결과가 다른" 일이 없다. 전파 모드는 규칙셋 없이도
+    // 돌던 모드라, 파일이 없으면 기본값으로 계속한다. 내용이 틀리면 멈춘다(코드 4).
+    let sec_params = match resolve_rules(opts).filter(|p| p.is_file()) {
+        Some(rp) => match load_rules(&rp) {
+            Ok(rs) => rs.embed,
+            Err(e) => errcodes::fail("rules_invalid",
+                &format!("[MpowerClassify-rs] {}", e), rp.to_str()),
+        },
+        None => {
+            note!("[MpowerClassify-rs] cso_rule.yaml 이 없어 보안등급 전파 임계값은 기본값을 씁니다");
+            propagate::SecurityParams::default()
+        }
+    };
+
     // security 전파 — 이미 등급이 확정된 문서는 손대지 않는다(상향 전용, 과분류 방지).
     let (mut already, mut decided, mut still, mut novec) = (0u32, 0u32, 0u32, 0u32);
     for rec in records.iter_mut() {
@@ -5159,7 +5176,7 @@ fn run_propagate(opts: &Opts) -> i32 {
             Some(v) => v,
             None => { novec += 1; continue; }   // 보류인데 벡터도 없으면 전파 불가
         };
-        let esig = propagate::propagate(&vec, &seeds);
+        let esig = propagate::propagate(&vec, &seeds, &sec_params);
         let dict = esig.as_dict();
         // refuse_with_embed 가 security 칸을 통째로 다시 만든다(옛 칸은 걷어낸다).
         let grade = rules::refuse_with_embed(rec, esig.grade.as_deref(), esig.confidence as f64,

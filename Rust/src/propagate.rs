@@ -154,8 +154,36 @@ fn l2(v: &mut [f32]) {
     if n > 1e-9 { for x in v.iter_mut() { *x /= n; } }
 }
 
+/// 보안등급 전파에 쓸 임계값 묶음 — cso_rule.yaml 의 embed: 블록.
+/// [왜 인자로 받는가] 예전에는 위 모듈 상수를 그대로 써서 정책 파일로 못 바꿨다.
+/// 업무분류(DoctypeParams)와 같은 방식으로 받아, 칸이 없으면 Default = 위 상수를 쓴다.
+#[derive(Debug, Clone, Copy)]
+pub struct SecurityParams {
+    pub k: usize,
+    pub dup_threshold: f32,
+    pub min_sim: f32,
+    pub min_share: f32,
+}
+
+impl Default for SecurityParams {
+    //------------------------------------------------------------------
+    // 기본 임계값 — 모듈 상수 그대로
+    //=> 정책 파일에 embed: 칸이 없을 때 종전과 똑같이 동작하게 한다.
+    //
+    // -in: 없음
+    //
+    // -out: SecurityParams = 모듈 상수로 채운 묶음
+    // -out: error = 없음
+    //------------------------------------------------------------------
+    fn default() -> Self {
+        SecurityParams { k: DEFAULT_K, dup_threshold: DUP_THRESHOLD,
+                         min_sim: MIN_SIM, min_share: MIN_SHARE }
+    }
+}
+
 /// 벡터 1개 전파 — propagate.py 판정순서 그대로.
-pub fn propagate(vec: &[f32], seeds: &SeedIndex) -> EmbedSignal {
+/// 임계값은 p(cso_rule.yaml 의 embed:)를 따른다.
+pub fn propagate(vec: &[f32], seeds: &SeedIndex, p: &SecurityParams) -> EmbedSignal {
     if seeds.size() == 0 {
         return EmbedSignal { grade: None, confidence: 0.0, method: "no_seeds".into(), top_sim: 0.0, neighbors: vec![] };
     }
@@ -163,7 +191,7 @@ pub fn propagate(vec: &[f32], seeds: &SeedIndex) -> EmbedSignal {
     // 유사도 내림차순 상위 k.
     let mut order: Vec<usize> = (0..sims.len()).collect();
     order.sort_by(|&a, &b| sims[b].partial_cmp(&sims[a]).unwrap_or(std::cmp::Ordering::Equal));
-    order.truncate(DEFAULT_K);
+    order.truncate(p.k.max(1));
     let top: Vec<(String, String, f32)> = order.iter().map(|&i| {
         (seeds.files.get(i).cloned().unwrap_or_default(), seeds.grades[i].clone(), sims[i])
     }).collect();
@@ -171,11 +199,11 @@ pub fn propagate(vec: &[f32], seeds: &SeedIndex) -> EmbedSignal {
     let neigh: Vec<(String, String, f32)> = top.iter().take(5).cloned().collect();
 
     // ② near-dup 상속.
-    if top1_sim >= DUP_THRESHOLD {
+    if top1_sim >= p.dup_threshold {
         return EmbedSignal { grade: Some(top1_grade), confidence: top1_sim, method: "dup_inherit".into(), top_sim: top1_sim, neighbors: neigh };
     }
     // ③ 너무 멂 → 보류.
-    if top1_sim < MIN_SIM {
+    if top1_sim < p.min_sim {
         return EmbedSignal { grade: None, confidence: top1_sim, method: "too_far".into(), top_sim: top1_sim, neighbors: neigh };
     }
     // ④ 유사도 가중 다수결.
@@ -186,7 +214,7 @@ pub fn propagate(vec: &[f32], seeds: &SeedIndex) -> EmbedSignal {
     let total: f32 = buckets.values().sum::<f32>().max(1e-9);
     let (winner, wsum) = buckets.iter().max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal)).unwrap();
     let share = wsum / total;
-    if share < MIN_SHARE {
+    if share < p.min_share {
         return EmbedSignal { grade: None, confidence: share, method: "mixed".into(), top_sim: top1_sim, neighbors: neigh };
     }
     EmbedSignal { grade: Some(winner.clone()), confidence: share, method: "knn_vote".into(), top_sim: top1_sim, neighbors: neigh }

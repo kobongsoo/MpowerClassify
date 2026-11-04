@@ -624,6 +624,41 @@ class Defaults:
 
 
 #------------------------------------------------------------------
+# 보안등급 2차 전파 임계값 묶음 (cso_rule.yaml 의 embed:)
+#=> 1차 규칙으로 등급이 안 나온 문서를, 비슷한 기준문서(seed) 등급으로 구제할 때의
+#   문턱값이다. 예전에는 propagate.py 의 모듈 상수로만 박혀 있어 파일로 못 바꿨다.
+#   업무분류는 doc_rule.yaml 의 embed: 로 이미 조정하므로, 보안등급도 같은 모양으로 둔다.
+#   칸이 없으면 아래 기본값 = propagate.py 상수와 같은 값 → 종전 판정이 그대로다.
+#
+# -필드: k             = kNN 투표인단 크기(기본 10)
+# -필드: dup_threshold = 1등 유사도가 이 이상이면 사본으로 보고 그 등급 상속(기본 0.95)
+# -필드: min_sim       = 1등 유사도가 이보다 낮으면 너무 멀다고 보고 보류(기본 0.55)
+# -필드: min_share     = 1등 등급 득표율이 이보다 낮으면 의견 갈림으로 보류(기본 0.70)
+#------------------------------------------------------------------
+@dataclass(frozen=True)
+class CsoEmbedSpec:
+    # 값은 propagate.py 의 DEFAULT_K/DUP_THRESHOLD/MIN_SIM/MIN_SHARE 와 같아야 한다
+    # (rules.py 가 numpy 를 쓰는 propagate.py 를 끌어오지 않도록 숫자를 직접 적는다).
+    k: int = 10
+    dup_threshold: float = 0.950
+    min_sim: float = 0.55
+    min_share: float = 0.70
+
+    #------------------------------------------------------------------
+    # propagate() 에 넘길 인자로
+    #=> 전파 함수의 인자 이름과 같으므로 그대로 풀어 넘기면 된다.
+    #
+    # -in: 없음
+    #
+    # -out: dict = {k, dup_threshold, min_sim, min_share}
+    # -out: error = 없음
+    #------------------------------------------------------------------
+    def kwargs(self):
+        return {"k": self.k, "dup_threshold": self.dup_threshold,
+                "min_sim": self.min_sim, "min_share": self.min_share}
+
+
+#------------------------------------------------------------------
 # PII 유형 규칙 1개(L1) — ko-pii 라벨 → 등급 정책
 #=> 검출은 ko-pii 가 하고(패턴·체크섬·문맥 내장), 이 규칙은 "그 유형이 몇 건이면
 #   몇 등급인가"라는 정책만 담는다. (A안 이전엔 정규식 pattern 을 직접 담았다)
@@ -790,6 +825,7 @@ class StampRule:
 # -필드: sensitive_rules = SensitiveRule 리스트(Signal F, 법상 민감정보군)
 # -필드: stamp_rules    = StampRule 리스트(Signal E, 보안분류 스탬프)
 # -필드: confidence     = weight→신뢰도 표({regex/keyword/sensitive/stamp/path:{high/med/low}, name:float})
+# -필드: embed          = CsoEmbedSpec(2차 전파 임계값, 칸 없으면 코드 기본값)
 #------------------------------------------------------------------
 @dataclass(frozen=True)
 class RuleSet:
@@ -801,6 +837,7 @@ class RuleSet:
     sensitive_rules: list = field(default_factory=list)
     stamp_rules: list = field(default_factory=list)
     confidence: dict = field(default_factory=_default_confidence)
+    embed: CsoEmbedSpec = field(default_factory=CsoEmbedSpec)
 
 
 #------------------------------------------------------------------
@@ -1866,6 +1903,62 @@ def _violation(code, section, rule_id, field, value, detail):
 
 
 #------------------------------------------------------------------
+# embed: 블록 검사 (V15)
+#=> 보안등급 2차 전파 임계값이 쓸 수 있는 값인지 본다.
+#    1) 블록이 없거나 비어 있으면 통과(코드 기본값을 쓴다)
+#    2) 매핑이 아니면 위반
+#    3) k 는 1 이상 정수, 나머지 셋은 0.0~1.0 숫자여야 한다
+#
+# -in: raw = yaml 의 embed 값(원본 그대로, None 가능)
+#
+# -out: list = 위반 dict 목록(없으면 빈 리스트)
+# -out: error = 없음
+#------------------------------------------------------------------
+def _check_embed(raw):
+    out = []
+    if raw is None:
+        return out
+    if not isinstance(raw, dict):
+        return [_violation("V15", "embed", "-", "", raw, "embed 는 매핑(mapping)이어야 합니다")]
+    if "k" in raw:
+        k = raw["k"]
+        # bool 은 int 의 하위형이라 따로 막는다(true 를 1 로 읽지 않게).
+        if isinstance(k, bool) or not isinstance(k, int) or k < 1:
+            out.append(_violation("V15", "embed", "-", "k", k, "1 이상의 정수여야 합니다"))
+    for name in ("dup_threshold", "min_sim", "min_share"):
+        if name not in raw:
+            continue
+        v = raw[name]
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not (0.0 <= v <= 1.0):
+            out.append(_violation("V15", "embed", "-", name, v, "0.0~1.0 사이 숫자여야 합니다"))
+    return out
+
+
+#------------------------------------------------------------------
+# embed: 블록 읽기
+#=> 검증을 통과한 값만 덮어쓰고, 칸이 없으면 코드 기본값(CsoEmbedSpec())을 쓴다.
+#   validate=False 로 읽을 때 틀린 값이 들어와도 죽지 않도록 같은 기준으로 거른다.
+#
+# -in: raw = yaml 의 embed 값(None 가능)
+#
+# -out: CsoEmbedSpec = 2차 전파 임계값 묶음
+# -out: error = 없음
+#------------------------------------------------------------------
+def _load_embed(raw):
+    base = CsoEmbedSpec()
+    if not isinstance(raw, dict) or _check_embed(raw):
+        # 틀린 값은 validate=True 면 이미 위에서 막혔다. 여기선 기본값으로 안전하게.
+        return base
+    vals = {}
+    if "k" in raw:
+        vals["k"] = int(raw["k"])
+    for name in ("dup_threshold", "min_sim", "min_share"):
+        if name in raw:
+            vals[name] = float(raw[name])
+    return _replace(base, **vals)
+
+
+#------------------------------------------------------------------
 # 등급 필드 1개 검사 (V5)
 #=> 값이 정의된 등급인지 본다. 키가 아예 없으면 로더가 기본값을 넣으므로 통과시킨다.
 #    1) 키 없음 → 검사 대상 아님(None 반환)
@@ -1952,6 +2045,10 @@ def validate_rules_data(data):
         violations.append(_violation("V14", "defaults", "pii_grade_cap", "-", cap,
                                      "C · S · O 중 하나여야 합니다"
                                      "(개인정보만으로 올릴 수 있는 최고 등급 — 제한하지 않으려면 칸을 지우세요)"))
+
+    # 2차 전파 임계값(embed:) — 틀린 값을 조용히 기본값으로 되돌리면 "고쳤는데 왜 안
+    # 바뀌지"가 된다. 범위를 벗어나면 로드 단계에서 알린다.
+    violations.extend(_check_embed(data.get("embed")))
 
     for section, single_fields, bulk_pair in _GRADE_SECTIONS:
         items = data.get(section) or []
@@ -2205,4 +2302,6 @@ def load_rules(path=None, validate=True):
         sensitive_rules=sensitive_rules,
         stamp_rules=stamp_rules,
         confidence=confidence,
+        # 칸이 없으면 코드 기본값 — 옛 규칙셋은 전파 판정이 한 글자도 달라지지 않는다.
+        embed=_load_embed(data.get("embed")),
     )

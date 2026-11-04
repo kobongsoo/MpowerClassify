@@ -169,6 +169,10 @@ pub fn validate_rules_data(data: &Value) -> Vec<Violation> {
         }
     }
 
+    // 2차 전파 임계값(embed:) — Python V15 와 같은 항목. 틀린 값을 조용히 기본값으로
+    // 되돌리면 "고쳤는데 왜 안 바뀌지"가 된다.
+    out.extend(check_embed(data.get("embed")));
+
     for &(section, single_fields, bulk_pair) in SECTIONS.iter() {
         let node = match data.get(section) { Some(v) => v, None => continue };
         if node.is_null() { continue; }
@@ -331,6 +335,8 @@ pub struct RuleSet {
     /// PII(L1·COMBO) 근거만으로 올릴 수 있는 최고 등급. None = 제한 없음(종전).
     /// 키워드·민감정보·스탬프·파일명이 낸 C 는 그대로다 — 막는 것은 'PII 하나로만' C.
     pub pii_grade_cap: Option<Grade>,
+    /// 보안등급 2차 전파 임계값(cso_rule.yaml 의 embed:). 칸이 없으면 모듈 상수 그대로.
+    pub embed: crate::propagate::SecurityParams,
 }
 
 const STAMP_HEAD_CHARS: usize = 400;
@@ -460,8 +466,71 @@ pub fn load_rules(path: &std::path::Path) -> Result<RuleSet, RulesError> {
         case_insensitive: b(&d, "case_insensitive", true),
         // 칸이 없으면 None = 제한 없음 — 옛 규칙셋은 판정이 한 글자도 달라지지 않는다.
         pii_grade_cap: d.get("pii_grade_cap").and_then(|v| v.as_str()).and_then(Grade::from_str_exact),
+        // 칸이 없으면 기본값 — 옛 규칙셋은 전파 판정이 한 글자도 달라지지 않는다.
+        embed: load_embed(data.get("embed")),
         conf, regex_rules, pii_combos, keyword_rules, sensitive_rules, stamp_rules,
     })
+}
+
+//------------------------------------------------------------------
+// embed: 블록 검사 (V15) — 파이썬 rules.py::_check_embed 와 같은 기준
+//=> 보안등급 2차 전파 임계값이 쓸 수 있는 값인지 본다.
+//    1) 블록이 없으면(null 포함) 통과 — 코드 기본값을 쓴다
+//    2) 매핑이 아니면 위반
+//    3) k 는 1 이상 정수, 나머지 셋은 0.0~1.0 숫자여야 한다
+//
+// -in: raw = yaml 의 embed 값(None 가능)
+//
+// -out: Vec<Violation> = 위반 목록(없으면 빈 벡터)
+// -out: error = 없음
+//------------------------------------------------------------------
+fn check_embed(raw: Option<&Value>) -> Vec<Violation> {
+    let mut out = vec![];
+    let raw = match raw { Some(v) if !v.is_null() => v, _ => return out };
+    if !raw.is_object() {
+        out.push(Violation { code: "V15", section: "embed", rule_id: "-".into(), field: "",
+            value: show(raw), detail: "embed 는 매핑(mapping)이어야 합니다".into(), hint: None });
+        return out;
+    }
+    if let Some(v) = raw.get("k") {
+        // bool 은 숫자로 읽지 않는다(true 를 1 로 받지 않게).
+        let ok = !v.is_boolean() && v.as_i64().map_or(false, |x| x >= 1);
+        if !ok {
+            out.push(Violation { code: "V15", section: "embed", rule_id: "-".into(), field: "k",
+                value: show(v), detail: "1 이상의 정수여야 합니다".into(), hint: None });
+        }
+    }
+    for (key, field) in [("dup_threshold", "dup_threshold"), ("min_sim", "min_sim"), ("min_share", "min_share")] {
+        if let Some(v) = raw.get(key) {
+            let ok = !v.is_boolean() && v.as_f64().map_or(false, |x| (0.0..=1.0).contains(&x));
+            if !ok {
+                out.push(Violation { code: "V15", section: "embed", rule_id: "-".into(), field,
+                    value: show(v), detail: "0.0~1.0 사이 숫자여야 합니다".into(), hint: None });
+            }
+        }
+    }
+    out
+}
+
+//------------------------------------------------------------------
+// embed: 블록 읽기 — 파이썬 rules.py::_load_embed 와 같다
+//=> 검증을 통과한 블록만 값을 덮어쓰고, 없거나 틀리면 코드 기본값을 쓴다.
+//
+// -in: raw = yaml 의 embed 값(None 가능)
+//
+// -out: SecurityParams = 2차 전파 임계값 묶음
+// -out: error = 없음
+//------------------------------------------------------------------
+fn load_embed(raw: Option<&Value>) -> crate::propagate::SecurityParams {
+    let mut p = crate::propagate::SecurityParams::default();
+    let raw = match raw { Some(v) if v.is_object() => v, _ => return p };
+    // 틀린 값은 검증 단계에서 이미 막힌다. 여기선 기본값으로 안전하게 둔다.
+    if !check_embed(Some(raw)).is_empty() { return p; }
+    if let Some(k) = raw.get("k").and_then(|v| v.as_i64()) { p.k = k as usize; }
+    if let Some(x) = raw.get("dup_threshold").and_then(|v| v.as_f64()) { p.dup_threshold = x as f32; }
+    if let Some(x) = raw.get("min_sim").and_then(|v| v.as_f64()) { p.min_sim = x as f32; }
+    if let Some(x) = raw.get("min_share").and_then(|v| v.as_f64()) { p.min_share = x as f32; }
+    p
 }
 
 // ---- 스캔 헬퍼 ----
@@ -1085,5 +1154,74 @@ mod pii_grade_cap_tests {
         assert!(validate_rules_data(&num).iter().any(|v| v.code == "V14"));
         let ok = json!({"defaults": {"pii_grade_cap": "S"}});
         assert!(!validate_rules_data(&ok).iter().any(|v| v.code == "V14"));
+    }
+}
+
+// embed: 칸(보안등급 2차 전파 임계값) — 파이썬 판 tests/test_rules.py::test_cso_embed_* 와 같은 사례.
+#[cfg(test)]
+mod cso_embed_tests {
+    use super::*;
+    use crate::propagate::{SecurityParams, SeedIndex, propagate};
+
+    //------------------------------------------------------------------
+    // 배포 규칙셋 값 = 코드 기본값, 칸 없음 = 기본값, 일부만 적으면 나머지 기본값
+    //=> 이 칸을 넣어도 판정이 바뀌지 않음을 보장한다.
+    //
+    // -in: 없음
+    //
+    // -out: 없음
+    // -out: error = 기대와 다르면 panic
+    //------------------------------------------------------------------
+    #[test]
+    fn shipped_equals_default_and_partial_override() {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/policy/cso_rule.yaml");
+        let rs = load_rules(&p).unwrap_or_else(|e| panic!("cso_rule.yaml 로드 실패: {}", e));
+        let d = SecurityParams::default();
+        assert_eq!((rs.embed.k, rs.embed.dup_threshold, rs.embed.min_sim, rs.embed.min_share),
+                   (d.k, d.dup_threshold, d.min_sim, d.min_share));
+        let none = load_embed(None);
+        assert_eq!((none.k, none.min_sim), (d.k, d.min_sim));
+        let part = load_embed(Some(&json!({"min_sim": 0.7, "k": 5})));
+        assert_eq!((part.k, part.min_sim, part.min_share), (5, 0.7f32, d.min_share));
+    }
+
+    //------------------------------------------------------------------
+    // 틀린 값은 V15
+    //=> 범위 밖·bool·문자열·목록은 모두 위반으로 잡혀야 한다.
+    //
+    // -in: 없음
+    //
+    // -out: 없음
+    // -out: error = 기대와 다르면 panic
+    //------------------------------------------------------------------
+    #[test]
+    fn bad_values_are_v15() {
+        for bad in [json!({"min_sim": 1.5}), json!({"min_share": -0.1}), json!({"k": 0}),
+                    json!({"k": true}), json!({"dup_threshold": "0.9"}), json!([1, 2])] {
+            let data = json!({"embed": bad});
+            assert!(validate_rules_data(&data).iter().any(|v| v.code == "V15"), "{}", bad);
+        }
+        let ok = json!({"embed": {"k": 10, "dup_threshold": 0.95, "min_sim": 0.55, "min_share": 0.7}});
+        assert!(!validate_rules_data(&ok).iter().any(|v| v.code == "V15"));
+    }
+
+    //------------------------------------------------------------------
+    // min_sim 이 실제 판정을 바꾸는지
+    //=> 1등 유사도 0.6 인 문서는 기본값(0.55)이면 등급이 붙고, 0.70 이면 too_far.
+    //
+    // -in: 없음
+    //
+    // -out: 없음
+    // -out: error = 기대와 다르면 panic
+    //------------------------------------------------------------------
+    #[test]
+    fn min_sim_changes_decision() {
+        let seeds = SeedIndex::from_records(&[(Some(vec![1.0, 0.0]), Some("C".into()), true, "a".into())]);
+        let q = [0.6f32, (1.0f32 - 0.36).sqrt()];
+        assert_eq!(propagate(&q, &seeds, &SecurityParams::default()).grade.as_deref(), Some("C"));
+        let strict = SecurityParams { min_sim: 0.70, ..SecurityParams::default() };
+        let far = propagate(&q, &seeds, &strict);
+        assert!(far.grade.is_none());
+        assert_eq!(far.method, "too_far");
     }
 }
