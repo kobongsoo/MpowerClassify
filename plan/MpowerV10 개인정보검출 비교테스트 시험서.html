@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>개인정보 검출 비교 시험서 — V10 vs MC</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --panel:#ffffff; --ink:#1c2230; --muted:#5b6472; --line:#e3e7ee;
+    --code-bg:#f0f2f6; --code-ink:#0f172a; --accent:#2563eb; --accent-soft:#e8f0ff;
+    --c:#dc2626; --s:#ea8a00; --o:#16a34a; --chip:#eef1f6; --shadow:0 1px 3px rgba(20,30,50,.08);
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --bg:#0f1420; --panel:#161d2b; --ink:#e6eaf2; --muted:#9aa4b6; --line:#273248;
+      --code-bg:#0c1120; --code-ink:#d7e0f0; --accent:#6ea8ff; --accent-soft:#16233d;
+      --c:#f2726f; --s:#f0a83a; --o:#5cc98a; --chip:#1d2637; --shadow:0 1px 3px rgba(0,0,0,.4);
+    }
+  }
+  :root[data-theme="dark"]{
+      --bg:#0f1420; --panel:#161d2b; --ink:#e6eaf2; --muted:#9aa4b6; --line:#273248;
+      --code-bg:#0c1120; --code-ink:#d7e0f0; --accent:#6ea8ff; --accent-soft:#16233d;
+      --c:#f2726f; --s:#f0a83a; --o:#5cc98a; --chip:#1d2637; --shadow:0 1px 3px rgba(0,0,0,.4);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:"Segoe UI",-apple-system,"Malgun Gothic","맑은 고딕",system-ui,sans-serif;
+    line-height:1.65;font-size:15px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:980px;margin:0 auto;padding:32px 16px 80px}
+  header.hero{background:linear-gradient(135deg,var(--accent-soft),transparent);
+    border:1px solid var(--line);border-radius:16px;padding:26px 28px;margin-bottom:26px;box-shadow:var(--shadow)}
+  header.hero h1{margin:0 0 6px;font-size:26px;letter-spacing:-.02em}
+  header.hero p{margin:0;color:var(--muted)}
+  h2{font-size:20px;margin:34px 0 12px;padding-top:10px;border-top:2px solid var(--line);letter-spacing:-.01em}
+  h2 .n{display:inline-block;min-width:1.6em;color:var(--accent);font-weight:800}
+  h3{font-size:16px;margin:22px 0 8px}
+  p{margin:8px 0}
+  .muted{color:var(--muted)}
+  section.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:4px 22px 18px;margin-bottom:18px;box-shadow:var(--shadow)}
+  pre{background:var(--code-bg);color:var(--code-ink);border:1px solid var(--line);border-radius:10px;
+    padding:14px 16px;overflow-x:auto;margin:10px 0;font-size:13.5px}
+  code{font-family:"Cascadia Code",Consolas,"D2Coding",monospace}
+  pre code{font-size:13.5px;white-space:pre}
+  p code,li code,td code{background:var(--code-bg);border:1px solid var(--line);border-radius:5px;
+    padding:1px 6px;font-size:.9em}
+  .tblwrap{overflow-x:auto;margin:12px 0}
+  table{width:100%;border-collapse:collapse;font-size:14px;
+    background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--chip);font-weight:700;white-space:nowrap}
+  tr:last-child td{border-bottom:none}
+  .tag{display:inline-block;border-radius:20px;padding:1px 9px;font-size:12px;font-weight:700;border:1px solid var(--line);white-space:nowrap}
+  .tag.c{color:var(--c)} .tag.s{color:var(--s)} .tag.o{color:var(--o)} .tag.a{color:var(--accent)}
+  .note{border-left:3px solid var(--accent);background:var(--accent-soft);border-radius:0 8px 8px 0;
+    padding:10px 14px;margin:12px 0}
+  .warn{border-left:3px solid var(--s);background:color-mix(in srgb,var(--s) 12%,transparent);
+    border-radius:0 8px 8px 0;padding:10px 14px;margin:12px 0}
+  .ok{border-left:3px solid var(--o);background:color-mix(in srgb,var(--o) 12%,transparent);
+    border-radius:0 8px 8px 0;padding:10px 14px;margin:12px 0}
+  ul.toc{list-style:none;padding:0;margin:6px 0;columns:2;column-gap:24px}
+  ul.toc li{margin:4px 0;break-inside:avoid}
+  ul.toc a{color:var(--accent);text-decoration:none}
+  ul.toc a:hover{text-decoration:underline}
+  .tree{font-family:"Cascadia Code",Consolas,"D2Coding",monospace;font-size:13px;white-space:pre;
+    background:var(--code-bg);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow-x:auto}
+  .step{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--accent);
+    border-radius:0 10px 10px 0;padding:12px 16px 14px;margin:14px 0}
+  .step h4{margin:0 0 6px;font-size:15px}
+  .step h4 .num{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;
+    border-radius:50%;background:var(--accent);color:#fff;font-size:12px;font-weight:800;margin-right:8px}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start}
+  @media(max-width:820px){.two{grid-template-columns:1fr}ul.toc{columns:1}}
+  footer{color:var(--muted);font-size:12.5px;text-align:center;margin-top:40px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>개인정보 검출 비교 시험서 — V10 엔진 vs MpowerClassify</h1>
+  <p>같은 .TXT 파일을 두 엔진에 넣고 <b>재현율 · 정밀도 · 검출시간</b>을 잰다. 문서 파서는 쓰지 않는다.
+  작성 2026-11-05 · 상태 <span class="tag o">시험 완료 (2026-11-05, 회차 20261105_03 — 여권·계좌 보강판 MC)</span><br>
+  결과: <code>doc/MpowerV10 개인정보검출 비교테스트 결과-20261105.html</code> · 도구: <code>tools/v10pii/bench/</code></p>
+</header>
+
+<section class="card">
+<h3>목차</h3>
+<ul class="toc">
+  <li><a href="#s1">1. 목적과 범위</a></li>
+  <li><a href="#s2">2. 시험 대상 (두 엔진)</a></li>
+  <li><a href="#s3">3. 검출 항목 구분 — 공통 / 한쪽만</a></li>
+  <li><a href="#s4">4. 시험 자료 (.TXT 코퍼스)</a></li>
+  <li><a href="#s5">5. 정답 판정(채점) 규칙</a></li>
+  <li><a href="#s6">6. 지표 — 재현율 · 정밀도 · F1</a></li>
+  <li><a href="#s7">7. 검출시간 측정</a></li>
+  <li><a href="#s8">8. 공정성 조건</a></li>
+  <li><a href="#s9">9. 시험 도구와 절차</a></li>
+  <li><a href="#s10">10. 결과 보고 양식</a></li>
+  <li><a href="#s11">11. 위험 · 한계</a></li>
+  <li><a href="#s12">12. 참고 자료</a></li>
+</ul>
+</section>
+
+<h2 id="s1"><span class="n">1.</span>목적과 범위</h2>
+<section class="card">
+<p><b>목적</b> — 엠파워 V10 의 개인정보 검출엔진(S-FILTER, <code>mpiisl.dll</code>)과 MpowerClassify(이하 MC)가 쓰는
+개인정보 검출(ko-pii + MC 가드)을 <b>같은 텍스트</b>로 시험해, 어느 쪽이 무엇을 더 잘 잡고 무엇을 잘못 잡는지, 얼마나 빠른지를 숫자로 비교한다.</p>
+<div class="two">
+<div>
+<p><b>범위 안</b></p>
+<ul>
+  <li>UTF-8 .TXT 파일로 된 합성(가짜) 개인정보 코퍼스</li>
+  <li>값 단위 재현율 · 정밀도 · F1 (유형별 / 전체)</li>
+  <li>파일당 검출시간, 처리량, 크기별 시간 변화</li>
+  <li>공통 항목 비교 + 한쪽에만 있는 항목은 따로 분석</li>
+</ul>
+</div>
+<div>
+<p><b>범위 밖</b></p>
+<ul>
+  <li>문서 파서(사이냅·하이브리드) 성능 — <b>쓰지 않는다</b></li>
+  <li>HWP·DOCX·PDF·압축·DRM 파일</li>
+  <li>V10 판정(<code>PI</code>/<code>PL</code>/<code>NO</code>, MIN_LIMIT)과 MC 보안등급(C/S/O) — 건수·값만 본다</li>
+  <li>이름(성명) — 두 엔진 모두 이번 MC 설정에서 쓰지 않음</li>
+</ul>
+</div>
+</div>
+</section>
+
+<h2 id="s2"><span class="n">2.</span>시험 대상 (두 엔진)</h2>
+<section class="card">
+<div class="tblwrap"><table>
+<tr><th></th><th>V10 (S-FILTER)</th><th>MC</th></tr>
+<tr><td>엔진</td><td><code>mpiisl.dll</code> (SRC_V10.0B20170828, Release_VS2019_x64, 2026-02-20 빌드)</td><td>ko-pii 1.15.2 + MC 가드(주소 가짜 시군구 거르기, IP 판번호 문맥 배제)</td></tr>
+<tr><td>호출</td><td><code>tools/v10pii/v10pii.py</code> → <code>mpiisl_scan_file_w(파일, 2, 0, "UTF-8")</code></td><td><code>csoclassify.classify.rules.collect_pii(text, ruleset)</code> — 운영 계수 경로(<code>_kopii_scan</code>)와 같은 스캔</td></tr>
+<tr><td>정책</td><td>설치 기본 12종(<code>db_factory_data_check.php</code>), <b>12종 모두 켬</b>(IP 포함)</td><td><code>resources/policy/cso_rule.yaml</code> 의 <code>regex_pii</code> 19종 (현재 저장소 판)</td></tr>
+<tr><td>입력</td><td>.TXT 파일 경로 (엔진이 내부에서 TXT 를 읽음)</td><td>같은 파일을 UTF-8 로 읽은 문자열</td></tr>
+<tr><td>출력</td><td>패턴ID 별 건수 + 검출 값</td><td>라벨 · 값 · 위치(start/end)</td></tr>
+</table></div>
+<div class="note">MC 는 <code>collect_pii</code> 가 돌려주는 값을 그대로 쓴다. 보안등급 산정(base/bulk 등급, 결합 규칙)은 이 시험에서 쓰지 않는다.</div>
+</section>
+
+<h2 id="s3"><span class="n">3.</span>검출 항목 구분 — 공통 / 한쪽만</h2>
+<section class="card">
+<h3>3-1. 공통 항목 (두 엔진 모두 지원) — 본 비교 대상 11종</h3>
+<div class="tblwrap"><table>
+<tr><th>비교 유형</th><th>V10 패턴ID</th><th>MC 라벨</th><th>비고</th></tr>
+<tr><td>주민등록번호</td><td><code>jumin</code></td><td><code>RRN</code></td><td></td></tr>
+<tr><td>외국인등록번호</td><td><code>FOREIGN</code></td><td><code>FRN</code></td><td>검증식이 서로 다름 — 4-3 특수 묶음 참고</td></tr>
+<tr><td>사업자등록번호</td><td><code>bsnno</code></td><td><code>BUSINESS_REG</code></td><td>V10 은 계좌(<code>account</code>)로 분류하는 경향 — 5-2 "유형 무관" 지표로 따로 봄</td></tr>
+<tr><td>법인등록번호</td><td><code>incno</code></td><td><code>CORP_REG</code></td><td>V10 은 실재 등기소코드만 받음 → 코퍼스는 실재 코드로 생성</td></tr>
+<tr><td>카드번호</td><td><code>creditcard</code></td><td><code>CARD</code></td><td></td></tr>
+<tr><td>계좌번호</td><td><code>account</code></td><td><code>ACCOUNT</code></td><td>MC 는 "계좌" 낱말 근처만 잡음 — 문맥 있음/없음을 나눠 넣음</td></tr>
+<tr><td>여권번호</td><td><code>passport</code></td><td><code>PASSPORT</code></td><td>접두 M·S·R·G·D·O 고루 넣음</td></tr>
+<tr><td>운전면허번호</td><td><code>driving</code></td><td><code>DRIVER_LICENSE</code></td><td></td></tr>
+<tr><td>이메일</td><td><code>email</code></td><td><code>EMAIL</code></td><td><code>.co.kr</code>·<code>.or.kr</code> 등 2단 도메인 포함</td></tr>
+<tr><td>전화번호</td><td><code>tel</code> + <code>cell</code> (합침)</td><td><code>PHONE</code></td><td>V10 은 유선/휴대를 나눔 → 비교 땐 하나로 합치고, 유선/휴대 분류 정확도는 따로 표기</td></tr>
+<tr><td>IP 주소</td><td><code>ip</code></td><td><code>IP</code></td><td>V10 설치 기본은 꺼짐 — 이 시험에선 켬</td></tr>
+</table></div>
+
+<h3>3-2. MC 에만 있는 항목 — 9종</h3>
+<p>주소(<code>ADDRESS</code>) · 건강보험번호(<code>MEDICAL_INSURANCE</code>) · 처방전(<code>PRESCRIPTION_ID</code>) · 의약품 EDI(<code>EDI_DRUG</code>) ·
+차량번호(<code>VEHICLE</code>) · 사건번호(<code>COURT_CASE</code>) · 부동산고유번호(<code>PNU</code>) · 국적(<code>NATIONALITY</code>) · URL(<code>URL</code>)</p>
+<ul>
+  <li><b>MC 단독 성능</b>(재현율·정밀도)만 낸다. V10 과의 우열 비교에는 넣지 않는다.</li>
+  <li>대신 이 값들을 V10 이 <b>다른 유형으로 잘못 잡는지</b>(예: 건강보험번호 → 계좌·전화) 센다 → V10 오검출에 포함.</li>
+</ul>
+
+<h3>3-3. V10 에만 있는 항목</h3>
+<p>유형으로는 없다(V10 12종은 모두 MC 에 대응 라벨이 있음). 단 <b>유선/휴대 구분</b>과 <b>예외값 목록(PI_EXCLUDE)</b>은 V10 기능이다.
+예외값(<code>02-2141-4105</code> 등 3개)은 코퍼스에 일부러 넣어, V10 은 빼고 MC 는 세는 차이를 확인한다(정답에서는 "개인정보 아님"으로 둔다 — 회사 대표번호).</p>
+
+<h3>3-4. 비교 결과를 나누는 방식</h3>
+<div class="tblwrap"><table>
+<tr><th>묶음</th><th>포함</th><th>무엇을 보나</th></tr>
+<tr><td>A. 공통 비교</td><td>3-1 의 11종</td><td>V10 vs MC 재현율·정밀도·F1·시간 — <b>주 결과</b></td></tr>
+<tr><td>B. MC 단독</td><td>3-2 의 9종</td><td>MC 재현율·정밀도 + V10 교차 오검출 수</td></tr>
+<tr><td>C. 특수 묶음</td><td>4-3 (체크섬 불일치 주민번호, 외국인번호 두 검증식, 예외값)</td><td>정답 정의가 엇갈리는 값 — 점수에 섞지 않고 따로 표</td></tr>
+<tr><td>D. 함정(음성)</td><td>4-4 의 개인정보 아닌 숫자·문자열</td><td>오검출(정밀도) 원인 분석</td></tr>
+</table></div>
+</section>
+
+<h2 id="s4"><span class="n">4.</span>시험 자료 (.TXT 코퍼스)</h2>
+<section class="card">
+<div class="warn">개인정보는 <b>전부 가짜</b>로 만든다. 다만 주민·외국인·사업자·법인·카드는 검증식을 통과하는 값만 쓴다
+(두 엔진 모두 검증식을 보므로, 아무 숫자나 쓰면 "둘 다 못 잡음"만 나온다). 생성은 고정 시드로 해 다시 만들어도 같은 코퍼스가 나오게 한다.</div>
+
+<h3>4-1. 난이도 3단계 (각 유형 동일 비율)</h3>
+<div class="tblwrap"><table>
+<tr><th>단계</th><th>모양</th><th>예</th></tr>
+<tr><td>L1 평문</td><td>항목명 + 값, 표준 구분자</td><td><code>주민등록번호: 900101-1234568</code></td></tr>
+<tr><td>L2 표</td><td>머리줄만 항목명, 값은 탭/콤마 구분 행 (값 옆에 항목명 없음)</td><td><code>홍길동,010-1234-5678,hong@example.co.kr</code></td></tr>
+<tr><td>L3 변형</td><td>현업 문서에서 생기는 모양 — 공백 구분(<code>900101 1234568</code>), 점 구분, 괄호, 전각 숫자, 하이픈 없음, 문장 속 삽입</td><td><code>연락처는 (010)1234.5678 입니다</code></td></tr>
+</table></div>
+
+<h3>4-2. 양(안)</h3>
+<div class="tblwrap"><table>
+<tr><th>묶음</th><th>값 수</th><th>구성</th></tr>
+<tr><td>A. 공통 11종</td><td>유형당 60 → <b>660</b></td><td>L1·L2·L3 각 20. 전화는 유선 30 + 휴대 30. 계좌는 "계좌" 문맥 있음 30 + 없음 30</td></tr>
+<tr><td>B. MC 단독 9종</td><td>유형당 30 → <b>270</b></td><td>L1·L3 각 15</td></tr>
+<tr><td>C. 특수</td><td><b>약 80</b></td><td>체크섬 불일치 주민 20 · 외국인(표준식) 20 · 외국인(옛 +2 식) 20 · V10 예외값 전화 6 · 체크섬 불일치 사업자·법인·카드 각 5</td></tr>
+<tr><td>D. 함정</td><td><b>약 300</b></td><td>4-4 참고</td></tr>
+</table></div>
+<p>파일은 <b>업무문서 모양 TXT 60개 안팎</b>(회의록·인사명부·거래명세·민원회신·접속로그 등 골격)에 값을 흩어 넣는다.
+파일당 값 수는 10~40개로, V10 패턴당 최대 1000건 한도(MAX_FIND_LIMIT)에 걸리지 않게 한다. 인코딩은 <b>UTF-8(BOM 없음), 줄바꿈 CRLF</b>.</p>
+
+<h3>4-3. 특수 묶음 (점수 밖, 별도 표)</h3>
+<ul>
+  <li><b>체크섬 불일치 주민번호</b> — 2020-10 이후 주민번호는 체크섬이 안 맞을 수 있다. 실제 개인정보일 수 있으므로 "정답/오답"을 정하지 않고, 각 엔진이 몇 개 잡는지만 보고한다. (사전 실측: V10 0/90, MC 90/90)</li>
+  <li><b>외국인등록번호 두 검증식</b> — 표준식(주민번호와 같은 식)과 옛 외국인식(표준 검증숫자 + 2). 사전 실측에서 V10 은 옛 식만, MC 는 검증숫자를 보지 않고 둘 다 잡았다.</li>
+  <li><b>V10 예외값</b> — <code>02-2141-4105</code>, <code>02-2141-4161</code>, <code>02-2141-4150</code>. 회사 대표번호라 "개인정보 아님"으로 둔다.</li>
+</ul>
+
+<h3>4-4. 함정(음성) 값 — 개인정보가 아닌데 모양이 비슷한 것</h3>
+<div class="tblwrap"><table>
+<tr><th>노리는 유형</th><th>함정 예</th></tr>
+<tr><td>주민·외국인·법인</td><td>13자리 주문번호·송장번호, 날짜+일련번호(<code>20261105-0000123</code>), 체크섬 틀린 13자리</td></tr>
+<tr><td>카드</td><td>Luhn 틀린 16자리, 일련번호 <code>1111-2222-3333-4444</code></td></tr>
+<tr><td>계좌</td><td>제품코드·문서번호(<code>110-234-567890</code> 모양, 문맥 없음), 금액(<code>1,234,567,890</code>)</td></tr>
+<tr><td>사업자</td><td>3-2-5 모양 관리번호(체크섬 틀림)</td></tr>
+<tr><td>전화</td><td>날짜(<code>2026-11-05</code>), 시간, 우편번호+번지, 버전(<code>010.12.3456</code> 류)</td></tr>
+<tr><td>IP</td><td>버전번호(<code>1.2.3.4</code>), 규정 조항(<code>3.1.2.4</code>), 판번호</td></tr>
+<tr><td>여권·운전면허</td><td>모델명(<code>MX12345678</code>), 12자리 바코드</td></tr>
+<tr><td>이메일</td><td><code>@멘션</code>, 파일명 <code>a@2x.png</code></td></tr>
+</table></div>
+<p>함정은 정답 목록에 없으므로, 어느 엔진이든 잡으면 그대로 오검출(FP)이 된다.</p>
+
+<h3>4-5. 정답 파일 <code>_manifest.json</code></h3>
+<pre><code>{ "file": "f012_인사명부.txt", "line": 7, "start": 15, "end": 29,
+  "type": "RRN", "group": "A", "level": "L3",
+  "value": "900101 1234568", "norm": "9001011234568", "subset": null }</code></pre>
+<p><code>start/end</code> 는 파일 문자열 기준 문자 위치. <code>norm</code> 은 5-1 정규화 결과. 함정 값은 <code>type: "NEG"</code> 로 따로 적어 오검출 원인 분석에 쓴다.</p>
+</section>
+
+<h2 id="s5"><span class="n">5.</span>정답 판정(채점) 규칙</h2>
+<section class="card">
+<h3>5-1. 값 정규화</h3>
+<div class="tblwrap"><table>
+<tr><th>유형</th><th>정규화</th></tr>
+<tr><td>번호류(주민·외국인·사업자·법인·카드·계좌·운전면허·전화·건강보험 등)</td><td>숫자만 남김 (전각 숫자는 반각으로)</td></tr>
+<tr><td>여권·차량·사건번호</td><td>공백·하이픈 제거, 영문 대문자</td></tr>
+<tr><td>이메일·URL</td><td>소문자, 앞뒤 구두점 제거</td></tr>
+<tr><td>IP</td><td>그대로 (각 옥텟 앞 0 제거)</td></tr>
+<tr><td>주소·국적</td><td>공백 하나로 접기</td></tr>
+</table></div>
+<p>V10 은 위치를 주지 않고 <b>값</b>만 주므로, 채점은 위치가 아니라 <b>파일 안 정규화 값</b>으로 맞춘다. 같은 값이 한 파일에 여러 번 나오면 개수까지 맞춘다(다중집합 짝짓기 — 정답 1개에 검출 1개만 짝지음).</p>
+
+<h3>5-2. 일치 판정 3가지 (모두 보고)</h3>
+<div class="tblwrap"><table>
+<tr><th>판정</th><th>조건</th><th>쓰임</th></tr>
+<tr><td><span class="tag a">엄격</span></td><td>비교 유형이 같고 정규화 값이 완전히 같음</td><td><b>주 지표</b></td></tr>
+<tr><td><span class="tag o">유형 무관</span></td><td>유형은 달라도 정규화 값이 같음 (예: V10 이 사업자번호를 <code>account</code> 로 잡음)</td><td>"놓쳤나 / 이름만 틀렸나" 구분</td></tr>
+<tr><td><span class="tag s">부분 일치</span></td><td>유형 같고 한쪽 값이 다른 쪽에 포함되며 길이 70% 이상 (예: <code>hong@example.co</code> ↔ <code>hong@example.co.kr</code>)</td><td>잘림·덧붙음 확인</td></tr>
+</table></div>
+
+<h3>5-3. TP · FN · FP 세기</h3>
+<ul>
+  <li><b>TP</b> — 정답과 짝지어진 검출</li>
+  <li><b>FN</b> — 짝이 없는 정답 (못 잡음)</li>
+  <li><b>FP</b> — 짝이 없는 검출. 원인을 함정 값 / 정답 값의 유형 혼동 / 일부만 잡음 / 그 밖으로 나눠 센다</li>
+  <li>특수 묶음(C) 값과 짝지어진 검출은 TP·FP 어디에도 넣지 않고 별도 표로 뺀다</li>
+  <li>MC 단독 유형(B) 정답 값을 V10 이 다른 유형으로 잡으면 → V10 FP(유형 혼동)</li>
+</ul>
+</section>
+
+<h2 id="s6"><span class="n">6.</span>지표 — 재현율 · 정밀도 · F1</h2>
+<section class="card">
+<pre><code>재현율(Recall)    = TP / (TP + FN)      — 실제 개인정보 중 잡은 비율
+정밀도(Precision) = TP / (TP + FP)      — 잡은 것 중 진짜 비율
+F1               = 2 × P × R / (P + R)</code></pre>
+<ul>
+  <li><b>유형별</b> 표 (11종, 엄격 기준) + 유형 무관 · 부분 일치 보조 열</li>
+  <li><b>전체</b>: 마이크로 평균(모든 값 합산)과 매크로 평균(유형별 평균) 둘 다</li>
+  <li><b>난이도별</b>: L1 / L2 / L3 재현율</li>
+  <li><b>유선/휴대</b>: V10 의 <code>tel</code>/<code>cell</code> 분류 정확도</li>
+  <li>재현율·정밀도에는 <b>95% 신뢰구간</b>(Wilson)을 붙인다 — 유형당 60개라 몇 개 차이로 순위가 바뀔 수 있기 때문</li>
+</ul>
+</section>
+
+<h2 id="s7"><span class="n">7.</span>검출시간 측정</h2>
+<section class="card">
+<h3>7-1. 재는 것</h3>
+<div class="tblwrap"><table>
+<tr><th>항목</th><th>V10</th><th>MC</th></tr>
+<tr><td>준비 시간 (1회)</td><td>DLL 올리기 + <code>mpiisl_init</code> + 정책 적재</td><td><code>import</code>(ko-pii 포함) + <code>cso_rule.yaml</code> 읽기</td></tr>
+<tr><td>파일당 검출 시간</td><td><code>scan_file_w</code> 호출 ~ 값 꺼내기 끝 (파일 읽기 포함 — 엔진 안에서 읽음)</td><td>파일 읽기(UTF-8) + <code>collect_pii</code> (같은 조건으로 읽기 포함)</td></tr>
+<tr><td>V10 텍스트 읽기 몫</td><td><code>mpiisl_extract_text</code> 를 따로 재서 검출 시간 중 TXT 읽기 비중을 표시</td><td>—</td></tr>
+<tr><td>건수만 모드</td><td><code>nType=1</code> 로도 한 번 (운영 배치 경로)</td><td><code>_kopii_counts</code> (운영 계수 경로)</td></tr>
+</table></div>
+
+<h3>7-2. 측정 방법</h3>
+<ul>
+  <li><code>time.perf_counter()</code>, 한 프로세스 · 단일 스레드, 두 엔진을 같은 PC 에서 번갈아 실행</li>
+  <li>워밍업 1회는 버리고 <b>5회 반복의 중앙값</b> — 파일당 중앙값 · p95 · 합계 · 처리량(문자/초)</li>
+  <li>측정 중 다른 무거운 작업 금지, 전원 모드 "최고 성능", PC 사양(CPU·RAM·OS·Python)을 결과에 기록</li>
+</ul>
+
+<h3>7-3. 크기별 시간 (별도 세트)</h3>
+<p>같은 내용을 반복해 <b>1KB · 10KB · 100KB · 1MB</b> TXT 를 만들어 시간이 크기에 비례하는지 본다.</p>
+<div class="warn">MC 는 전화·주소·계좌 검출기를 앞 100만 자까지만 1만 자 창으로 돌린다(<code>CSOCLASSIFY_KOPII_MAX_TOTAL</code>). V10 은 패턴당 1000건에서 멈춘다(MAX_FIND_LIMIT).
+그래서 크기별 세트는 <b>시간만</b> 보고, 정확도 채점에는 쓰지 않는다. 1MB 를 넘는 크기는 두 엔진의 상한 동작이 달라 비교하지 않는다.</div>
+</section>
+
+<h2 id="s8"><span class="n">8.</span>공정성 조건</h2>
+<section class="card">
+<ul>
+  <li><b>같은 파일</b>: 두 엔진 모두 같은 .TXT 바이트를 입력으로 받는다.</li>
+  <li><b>문서 파서 없음</b>: MC 는 <code>extract/</code> · <code>clean.py</code> 를 거치지 않고 원문 문자열을 그대로 검출에 넣는다.
+    V10 은 API 가 파일 경로만 받아 엔진 안의 TXT 읽기는 피할 수 없다 → 7-1 처럼 그 몫을 따로 재서 밝힌다.</li>
+  <li><b>판정 규칙 끔</b>: V10 MIN_LIMIT(20건)·<code>PI</code>/<code>PL</code> 판정, MC 등급·결합 규칙은 적용하지 않고 <b>값</b>만 비교한다.</li>
+  <li><b>정책 고정</b>: V10 = 설치 기본 12종 모두 켬, MC = 현재 저장소 <code>cso_rule.yaml</code>. 시험 중 바꾸지 않고 결과에 판 정보를 적는다.</li>
+  <li><b>유형 매핑 고정</b>: 3-1 표대로. V10 <code>tel</code>+<code>cell</code> → 전화.</li>
+  <li><b>잣대 먼저 의심</b>: 한쪽이 0% 처럼 극단값이 나오면 코퍼스 값부터 검증한다(과거 비교에서 측정 도구 결함 8건 — 대부분 생성값이 규격 밖이었음).</li>
+</ul>
+</section>
+
+<h2 id="s9"><span class="n">9.</span>시험 도구와 절차</h2>
+<section class="card">
+<h3>9-1. 도구 구성 (만들 것)</h3>
+<div class="tree">tools/v10pii/
+  v10pii.py              <span class="muted"># (있음) V10 엔진 래퍼</span>
+  bench/
+    gen_corpus.py        <span class="muted"># 코퍼스 + _manifest.json 생성 (고정 시드)</span>
+    run_v10.py           <span class="muted"># V10 검출 → results/&lt;회차&gt;/v10.json (값 + 시간)</span>
+    run_mc.py            <span class="muted"># MC 검출  → results/&lt;회차&gt;/mc.json  (값 + 위치 + 시간)</span>
+    score.py             <span class="muted"># 짝짓기·지표 계산 → score.json + 콘솔 표</span>
+    report.py            <span class="muted"># HTML 보고서 → results/&lt;회차&gt;/report.html</span>
+    corpus/              <span class="muted"># 생성된 TXT 와 _manifest.json</span>
+    results/&lt;회차&gt;/       <span class="muted"># 예: 20261105_01</span></div>
+<p class="muted">tools/ 폴더는 git 대상이 아니다. 보고서는 결론이 나면 doc/ 로 옮긴다.</p>
+
+<h3>9-2. 절차</h3>
+<div class="step"><h4><span class="num">1</span>코퍼스 만들기</h4>
+<p><code>python bench/gen_corpus.py</code> — 생성 후 <b>자가검증</b>: 정답 값이 체크섬·형식을 통과하는지, 함정 값이 정답 목록과 겹치지 않는지, manifest 의 위치가 실제 문자열과 맞는지 확인.</p></div>
+<div class="step"><h4><span class="num">2</span>엔진 동작 확인</h4>
+<p>V10: 7-5 확인용 샘플(<code>doc/MpowerV10-개인정보검출-정리.md</code>)로 6개 패턴이 나오는지. MC: 같은 샘플로 <code>collect_pii</code> 결과 확인.</p></div>
+<div class="step"><h4><span class="num">3</span>정확도 실행</h4>
+<p><code>run_v10.py &lt;회차&gt;</code>, <code>run_mc.py &lt;회차&gt;</code> — 값 수집(nType=2 / collect_pii).</p></div>
+<div class="step"><h4><span class="num">4</span>시간 실행</h4>
+<p>같은 스크립트의 <code>--timing</code> 모드: 워밍업 1 + 5회, 크기별 세트 포함.</p></div>
+<div class="step"><h4><span class="num">5</span>채점 · 보고서</h4>
+<p><code>score.py &lt;회차&gt;</code> → <code>report.py &lt;회차&gt;</code>. 극단값은 8절 "잣대 먼저 의심" 점검 후 확정.</p></div>
+</section>
+
+<h2 id="s10"><span class="n">10.</span>결과 보고 양식</h2>
+<section class="card">
+<h3>10-1. 주 결과표 (묶음 A, 엄격 기준)</h3>
+<div class="tblwrap"><table>
+<tr><th>유형</th><th>정답 수</th><th>V10 재현율</th><th>V10 정밀도</th><th>V10 F1</th><th>MC 재현율</th><th>MC 정밀도</th><th>MC F1</th><th>비고</th></tr>
+<tr><td>주민등록번호</td><td>60</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td></td></tr>
+<tr><td>…</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+<tr><td><b>전체(마이크로)</b></td><td>660</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td></td></tr>
+</table></div>
+<h3>10-2. 보조 표</h3>
+<ul>
+  <li>유형 무관 · 부분 일치 재현율 (유형별)</li>
+  <li>난이도별 재현율 (L1/L2/L3 × 엔진)</li>
+  <li>오검출 원인 분해 (함정 / 유형 혼동 / 일부만 / 기타) + 오검출 값 목록</li>
+  <li>MC 단독 9종 성능 + V10 교차 오검출</li>
+  <li>특수 묶음 검출 수 (체크섬 불일치 주민, 외국인 두 검증식, 예외값)</li>
+  <li>서로 못 잡은 것 — "V10 만 잡음" / "MC 만 잡음" 값 목록</li>
+</ul>
+<h3>10-3. 시간 표</h3>
+<div class="tblwrap"><table>
+<tr><th>항목</th><th>V10</th><th>MC</th></tr>
+<tr><td>준비 시간</td><td>— ms</td><td>— ms</td></tr>
+<tr><td>파일당 중앙값 / p95</td><td>— / — ms</td><td>— / — ms</td></tr>
+<tr><td>전체 합계 · 처리량</td><td>— s · — 문자/s</td><td>— s · — 문자/s</td></tr>
+<tr><td>V10 TXT 읽기 몫</td><td>— %</td><td>—</td></tr>
+<tr><td>1KB / 10KB / 100KB / 1MB</td><td>— / — / — / — ms</td><td>— / — / — / — ms</td></tr>
+</table></div>
+<h3>10-4. 기록할 판 정보</h3>
+<p>PC 사양 · Python 판 · <code>mpiisl.dll</code> 빌드일 · ko-pii 판 · <code>cso_rule.yaml</code> version · MC git 커밋 · 코퍼스 시드.</p>
+</section>
+
+<h2 id="s11"><span class="n">11.</span>위험 · 한계</h2>
+<section class="card">
+<ul>
+  <li><b>엔진 판 차이</b> — 이 PC 의 <code>mpiisl.dll</code>(2026-02-20 빌드)이 운영 서버 <code>.so</code> 와 같다는 보장은 없다. 이메일 <code>.kr</code> 잘림이 같아 같은 계열로 본다.</li>
+  <li><b>정책 차이</b> — 설치 기본 정책 기준이다. 고객사 정책(예외값·사용자 패턴·끈 패턴)은 반영되지 않는다.</li>
+  <li><b>합성 데이터</b> — 실제 문서의 분포와 다르다. 결과는 "검출기 규격 비교"로 읽고, 실문서 재현율로 일반화하지 않는다.</li>
+  <li><b>V10 엔진 충돌</b> — 서버에서도 문서 파싱 중 프로세스가 죽는 사례가 있었다. TXT 라 가능성은 낮지만, 죽으면 파일 단위로 이어서 돌릴 수 있게 결과를 파일마다 저장한다.</li>
+  <li><b>코퍼스 편향</b> — 생성기를 만든 쪽(MC 개발 측)의 가정이 들어간다. 함정·변형 목록은 V10 의 알려진 동작(옛 외국인 검증식, 사업자→계좌)에 맞추되, 어느 한쪽이 유리하도록 고르지 않는다.</li>
+</ul>
+</section>
+
+<h2 id="s12"><span class="n">12.</span>참고 자료</h2>
+<section class="card">
+<ul>
+  <li><code>doc/MpowerV10-개인정보검출-정리.md</code> — V10 검출 유형·방법·소스, 체크섬 사전 실측(6절), 로컬 엔진 환경(7절)</li>
+  <li><code>tools/v10pii/v10pii.py</code>, <code>tools/v10pii/checksum_probe.py</code> — V10 엔진 래퍼, 체크섬 시험</li>
+  <li><code>doc/ko-pii 차이점.html</code>, <code>doc/ko-pii-33패턴-검출방식.html</code> — MC 쪽 검출 방식과 의도적 차이</li>
+  <li><code>C:\svn\Mpower_rag\_tools\gx10\rag-pii-dected\</code> — 과거 서버 기반 S-FILTER vs ko-pii 비교(문서 파서 포함, 7회차). 코퍼스 설계·측정 도구 결함 이력 참고</li>
+</ul>
+</section>
+
+<footer>MpowerClassify · 개인정보 검출 비교 시험서 · 2026-11-05</footer>
+</div>
+</body>
+</html>
