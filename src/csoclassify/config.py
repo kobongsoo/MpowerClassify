@@ -123,7 +123,7 @@ MIN_TEXT_LEN_WARN = MIN_TEXT_LEN     # 옛 이름(하위호환)
 #   읽을 것이 있는 문서다(실측 '지능형지식관리플랫폼' — 12쪽 중 11쪽이 그림, 1쪽 565자).
 #   [값의 근거] D:\분류함 PDF 382건 실측 — 스캔본은 페이지당 0~0.1자·그림 덮음 100%,
 #   그림이 많은 정상 문서(매뉴얼·제품소개서)는 페이지당 50자 이상이었다.
-#   Rust 판(Rust/src/extract.rs 의 SCAN_PDF_*)과 같은 값이어야 한다 — 시험이 지킨다.
+#   Rust 문서파서(DocParse-rust crates/docparse/src/extract.rs 의 SCAN_PDF_*)과 같은 값이어야 한다 — 시험이 지킨다.
 SCAN_PDF_PAGE_MAX_CHARS = 10     # 이 글자 수(공백 제외) 미만인 페이지만 스캔 후보
 SCAN_PDF_IMAGE_COVER = 0.5       # 그림이 페이지 넓이의 이 비율 이상을 덮어야 스캔 페이지
 SCAN_PDF_PAGE_RATIO = 0.5        # 스캔 페이지가 읽은 페이지의 이 비율 이상이어야 스캔 PDF
@@ -185,6 +185,15 @@ MAX_PDF_PAGES = int(os.environ.get("CSOCLASSIFY_MAX_PDF_PAGES", 3000))
 #   갈린다(실측 354건 중 11건). 기본을 자체 파서로 맞춰 그 원인을 없앤다.
 #   CSOCLASSIFY_HYBRID=0 또는 --synap-only 로 종전(사이냅 단독)으로 되돌릴 수 있다.
 DEFAULT_HYBRID_PARSE = _env_bool("CSOCLASSIFY_HYBRID", True)
+
+# 자체 파서가 누구냐 — "py"(지금 파이썬 파서) 또는 "rust"(docparse 라이브러리 = Rust 판과 같은 파서).
+# 설계: plan/Python-문서파서-Rust연동-설계-20261110.html §4-3
+#   · 형식별 본문 파서와 압축 해제를 '한 스위치'로 함께 고른다(조합이 늘지 않게).
+#   · --synap-only · --synap-fallback 과는 독립이다(그쪽은 "사이냅을 언제 쓰나").
+#   · --extractor 가 이 값을 덮어쓴다. 상주 서버·배치는 환경변수 CSOCLASSIFY_EXTRACTOR 로 고른다.
+#   · 전환 기간(2단계까지) 기본은 "py" — 평가셋으로 판정 차이를 확인한 뒤 "rust" 로 바꾼다.
+EXTRACTOR = os.environ.get("CSOCLASSIFY_EXTRACTOR", "py").strip().lower() or "py"
+EXTRACTORS = ("py", "rust")
 
 # 종료 코드(설계서 §7)
 EXIT_OK = 0

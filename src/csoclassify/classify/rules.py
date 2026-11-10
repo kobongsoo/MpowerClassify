@@ -77,6 +77,15 @@ try:
         r"|figure|table|appendix|clause)\s*[.·:]?\s*\Z", _re.IGNORECASE)
     _IP_CTX_RIGHT_RE = _re.compile(
         r"\s*(?:버전|버젼|version|빌드|build|릴리[스즈])", _re.IGNORECASE)
+    # [의도적 차이 G·H·I] 여권·계좌 보강용 (근거: _passport_detect · _guarded_account_detect ·
+    # _table_account_detect 헤더, doc/ko-pii 차이점.html). Rust/src/pii.rs 의
+    # RE_PASSPORT_MODERN · RE_ACCT_CELL · RE_DIGITS4 와 글자까지 같은 패턴이다.
+    from ko_pii.core.types import DetectionResult as _KDet, RiskLevel as _KRisk
+    # 2021년~ 차세대 전자여권: 영문 1 + 숫자 3 + 영문 1 + 숫자 4 (ko-pii 1.22 의 _MODERN_FORMAT 과 같다)
+    _PASSPORT_MODERN_RE = _re.compile(r"(?<![A-Za-z0-9])[MSROD][0-9]{3}[A-Z][0-9]{4}(?![A-Za-z0-9])")
+    _LINE_BREAK_RE = _re.compile(r"[\r\n]")
+    _ACCT_CELL_RE = _re.compile(r"[0-9]+(?:[ \-][0-9]+){0,4}")
+    _DIGITS4_RE = _re.compile(r"[0-9]{4}")
     # [보충 사전] ko-pii 의 ALL_DISTRICTS(206개)에는 광역시의 '자치구'만 있고,
     # 광역시가 아닌 시(市) 아래의 '일반구(행정구)'가 빠져 있다. 그래서 부천시
     # 원미구처럼 실존하는 주소가 시군구 검증을 통과하지 못한다.
@@ -114,6 +123,12 @@ except Exception as _e:   # pragma: no cover - ko-pii 미설치 환경에서만
     _IP_CTX_LEFT_RE = None
     _IP_CTX_RIGHT_RE = None
     _EXTRA_DISTRICTS = frozenset()
+    _KDet = None
+    _KRisk = None
+    _PASSPORT_MODERN_RE = None
+    _LINE_BREAK_RE = None
+    _ACCT_CELL_RE = None
+    _DIGITS4_RE = None
 
 # 성능/지연 가드: subset(필요한 검출기만) 으로 바꾼 뒤에도 phone(O(n²))·address·
 # account 때문에 검출 시간이 입력 길이에 '초선형'으로 는다(실측: 10K≈0.08s,
@@ -374,18 +389,145 @@ def _guarded_ip_detect(text):
     return out
 
 
+#------------------------------------------------------------------
+# 여권번호 — 옛 형식 + 신형 형식 [ko-pii 1.15.2 와 의도적으로 다름 — 차이 G]
+#=> ko-pii 1.15.2 는 "영문 접두 + 숫자 8자리"만 안다. 2021년부터 나오는 차세대 전자여권
+#   (영문 1 + 숫자 3 + 영문 1 + 숫자 4, 예: M123A4567)은 규칙에 없어 놓친다.
+#   ko-pii 1.22 는 이 형식을 _MODERN_FORMAT = [MSROD][0-9]{3}[A-Z][0-9]{4} 로 더했다.
+#   우리도 같은 정규식을 덧붙여, 나중에 ko-pii 를 올려도 결과가 바뀌지 않게 한다.
+#    1) ko-pii 원래 여권 검출기 결과
+#    2) 신형 형식 검출 결과를 뒤에 덧붙인다 (Rust det_passport 와 같은 차례)
+#   [실측] 비교 시험(2026-11-05) 신형 여권 10건 중 4건만 잡혔고, 그것도 가운데 글자가
+#   닮은꼴(S·Z·B)이라 숫자로 접혀 '옛 형식'으로 우연히 맞은 것이었다.
+#
+# -in: text = 검사할 본문 (정규화본 또는 원본)
+#
+# -out: list[DetectionResult] = 여권 검출 결과
+# -out: error = 없음 (정규식 미초기화면 ko-pii 원래 결과만)
+#------------------------------------------------------------------
+def _passport_detect(text):
+    out = list(_p_pass.detect(text))
+    if _PASSPORT_MODERN_RE is None:
+        return out
+    for m in _PASSPORT_MODERN_RE.finditer(text):
+        v = m.group(0)
+        out.append(_KDet(
+            label="PASSPORT", text=v, start=m.start(), end=m.end(),
+            risk_level=_KRisk.CRITICAL, confidence=0.9,
+            evidence=["pattern:passport", "format:modern"],
+            legal_basis=_p_pass.LEGAL_BASIS,
+            extra={"prefix": v[0], "number": v[1:], "kind": "modern", "category": _p_pass.CATEGORY}))
+    return out
+
+
+#------------------------------------------------------------------
+# 계좌번호 — 줄바꿈을 넘지 않게 자르기 [ko-pii 와 의도적으로 다름 — 차이 H]
+#=> ko-pii 계좌 정규식은 숫자 사이 구분자로 [\s\-] 를 받는데 \s 에 줄바꿈이 들어 있다.
+#   그래서 "계좌번호: 3333-76-8211051\r\n62우 2183" 에서 다음 줄 첫 숫자까지 붙여
+#   "3333-76-8211051\r\n62" 를 한 값으로 낸다(ko-pii 1.22.17 도 같음, 2026-11-05 확인).
+#   값이 틀려 진짜 계좌를 놓치고, 다음 줄의 차량번호 등도 겹침 해소에서 밀려난다.
+#    1) ko-pii 원래 계좌 검출 결과를 받는다
+#    2) 값 안에 줄바꿈이 있으면 첫 줄바꿈 앞까지만 남기고 뒤 공백을 걷는다
+#    3) 남은 값이 ko-pii 의 계좌 조건(구분자 뺀 10~16자리 숫자)을 못 채우면 버린다
+#   Rust det_account 의 마지막 단계와 같은 규칙이다.
+#
+# -in: text = 검사할 본문
+#
+# -out: list[DetectionResult] = 줄바꿈을 넘지 않는 계좌 검출 결과
+# -out: error = 없음
+#------------------------------------------------------------------
+def _guarded_account_detect(text):
+    out = []
+    for m in _p_acct.detect(text):
+        cut = _LINE_BREAK_RE.search(m.text) if _LINE_BREAK_RE is not None else None
+        if cut is None:
+            out.append(m)
+            continue
+        raw = m.text[:cut.start()].rstrip()
+        digits = _re.sub(r"[\s\-]", "", raw)
+        # ko-pii _normalize_and_check 와 같은 조건 — 줄여서 짧아졌으면 계좌가 아니다
+        if not (digits.isdigit() and 10 <= len(digits) <= 16):
+            continue
+        out.append(_replace(m, text=raw, end=m.start + len(raw),
+                            extra={**(m.extra or {}), "digits": digits, "length": len(digits)}))
+    return out
+
+
+#------------------------------------------------------------------
+# 표 머리줄 문맥으로 계좌번호 찾기 [ko-pii 와 의도적으로 다름 — 차이 I]
+#=> ko-pii 는 값 바로 앞에 "계좌"·은행명이 있어야만 계좌로 본다. 엑셀·DB 에서 내보낸
+#   표(TSV·CSV)는 머리줄에만 "계좌번호"가 있고 각 행엔 숫자뿐이라 통째로 놓친다
+#   (비교 시험 2026-11-05: 표 안 계좌 0/20, 같은 표를 V10 은 15/20).
+#   머리줄의 같은 칸에 "계좌"가 있으면 그 칸의 값을 계좌 문맥으로 인정한다.
+#    1) 줄마다 구분자를 정한다 — 탭이 있으면 탭, 없고 쉼표가 있으면 쉼표, 둘 다 없으면 표가 아님
+#    2) 머리줄 = 칸이 2개 이상이고, 어느 칸에 "계좌"가 있으며, 4자리 이상 숫자가 어디에도 없는 줄
+#    3) 머리줄 아래로 구분자·칸 수가 같은 줄이 이어지는 동안, "계좌" 칸의 값이
+#       숫자(공백·하이픈 구분 최대 5묶음)이고 숫자만 10~16자리면 계좌로 낸다
+#    4) 구분자나 칸 수가 바뀌는 줄, 빈 줄을 만나면 표가 끝난 것으로 본다
+#   좌표는 원문 기준. Rust det_account_table 과 같은 규칙이다.
+#
+# -in: text = 원문 본문
+#
+# -out: list[DetectionResult] = 표 문맥 계좌 검출 결과
+# -out: error = 없음 ("계좌" 낱말이 없으면 바로 빈 목록)
+#------------------------------------------------------------------
+def _table_account_detect(text):
+    if _KDet is None or not text or "계좌" not in text:
+        return []
+    out, header, pos = [], None, 0
+    for raw_line in text.split("\n"):
+        line_start = pos
+        pos += len(raw_line) + 1
+        line = raw_line[:-1] if raw_line.endswith("\r") else raw_line
+        d = "\t" if "\t" in line else ("," if "," in line else None)
+        if d is None:
+            header = None
+            continue
+        cells = line.split(d)
+        # 머리줄이면 "계좌" 칸 번호를 기억하고 다음 줄로
+        if (len(cells) >= 2 and any("계좌" in c for c in cells)
+                and not any(_DIGITS4_RE.search(c) for c in cells)):
+            header = (d, len(cells), [i for i, c in enumerate(cells) if "계좌" in c])
+            continue
+        if header is None or header[0] != d or header[1] != len(cells):
+            header = None
+            continue
+        offs, off = [], 0
+        for c in cells:
+            offs.append(off)
+            off += len(c) + 1
+        for i in header[2]:
+            c = cells[i]
+            val = c.strip(" ")
+            if not val or not _ACCT_CELL_RE.fullmatch(val):
+                continue
+            digits = _re.sub(r"[ \-]", "", val)
+            if not (10 <= len(digits) <= 16):
+                continue
+            s = line_start + offs[i] + (len(c) - len(c.lstrip(" ")))
+            out.append(_KDet(
+                label="ACCOUNT", text=val, start=s, end=s + len(val),
+                risk_level=_KRisk.HIGH, confidence=0.9,
+                evidence=["pattern:account", "context:table-header"],
+                legal_basis=_p_acct.LEGAL_BASIS,
+                extra={"digits": digits, "length": len(digits), "category": _p_acct.CATEGORY}))
+    return out
+
+
 # 설정 라벨 → 검출기. 튜플 순서는 ko_pii.detect.DETECTORS 실행 순서를 보존해,
 # 겹침 해소의 '동점 시 먼저 시작한 span' 규칙까지 detect_all 과 동일하게 만든다.
-# 두 자리만 원본 대신 우리 래퍼를 쓴다.
-#   · ADDRESS → _gated_address_detect : 프리필터(비용 절감) + 가짜 시군구 거부(차이 A)
-#   · IP      → _guarded_ip_detect    : 판번호 문맥 배제(차이 B)
-# 이 둘은 ko-pii 와 '일부러' 결과가 다르다 — 근거는 각 함수 헤더와
+# 네 자리는 원본 대신 우리 래퍼를 쓴다.
+#   · ADDRESS  → _gated_address_detect   : 프리필터(비용 절감) + 가짜 시군구 거부(차이 A)
+#   · IP       → _guarded_ip_detect      : 판번호 문맥 배제(차이 B)
+#   · PASSPORT → _passport_detect        : 신형 여권 형식 추가(차이 G)
+#   · ACCOUNT  → _guarded_account_detect : 줄바꿈을 넘는 값 자르기(차이 H)
+# 이들은 ko-pii 와 '일부러' 결과가 다르다 — 근거는 각 함수 헤더와
 # doc/ko-pii 차이점.html. import 실패(_HAVE_KOPII=False)면 빈 맵으로 둔다.
 if _HAVE_KOPII:
     _LABEL_TO_DETECTOR = (
         ("RRN", _p_rrn.detect), ("FRN", _p_frn.detect),
         ("BUSINESS_REG", _p_breg.detect), ("CORP_REG", _p_creg.detect),
-        ("DRIVER_LICENSE", _p_dl.detect), ("PASSPORT", _p_pass.detect),
+        ("DRIVER_LICENSE", _p_dl.detect), ("PASSPORT", _passport_detect),
         ("CARD", _p_card.detect), ("MEDICAL_INSURANCE", _p_mi.detect),
         # 처방전 주의: 검출기는 'PRESCRIPTION_ID' 라벨을 내보내지만 cso_rule.yaml 은
         # 'PRESCRIPTION' 을 쓴다. 두 별칭 모두 이 검출기를 고르게 하되, 실제 결과는
@@ -396,7 +538,7 @@ if _HAVE_KOPII:
         ("PNU", _p_pnu.detect), ("PHONE", _p_phone.detect),
         ("EMAIL", _p_email.detect), ("VEHICLE", _p_veh.detect),
         ("ADDRESS", _gated_address_detect), ("NATIONALITY", _p_nat.detect),
-        ("ACCOUNT", _p_acct.detect), ("EDI_DRUG", _p_edi.detect),
+        ("ACCOUNT", _guarded_account_detect), ("EDI_DRUG", _p_edi.detect),
         ("COURT_CASE", _p_court.detect),
         ("URL", _p_url.detect), ("IP", _guarded_ip_detect),
     )
@@ -421,11 +563,13 @@ else:
 # -in: text      = 스캔 대상 텍스트
 # -in: include   = 셀 ko-pii 라벨들(반복가능). 이 라벨의 검출기만 실행한다.
 # -in: normalize = True(기본)면 우회 방어 정규화 수행. detect_all 과 동일 의미.
+# -in: extra     = 겹침 해소 전에 함께 넣을 추가 검출 결과(원본 좌표, 기본 없음)
+#                  — 표 머리줄 계좌(차이 I)처럼 이 함수 밖에서 만든 것
 #
 # -out: list[DetectionResult] = include 라벨에 해당하는 검출 결과(겹침 해소됨)
 # -out: error = 없음 (ko-pii 미설치 시엔 _kopii_counts 가 먼저 RuntimeError 를 낸다)
 #------------------------------------------------------------------
-def _detect_subset(text, include, *, normalize=True):
+def _detect_subset(text, include, *, normalize=True, extra=()):
     inc = set(include)
     # (1) 우리가 매핑 못 한 라벨이 요청에 있으면(예: 향후 yaml 에 PERSON 추가) 놓치지
     #     않도록 전체 엔진으로 안전 폴백한다. 현재 설정 라벨은 모두 매핑돼 있어 미발생.
@@ -461,9 +605,17 @@ def _detect_subset(text, include, *, normalize=True):
         if _run_shape(source) != _run_shape(text):
             for fn in detectors:
                 raw.extend(fn(source))
+        # [의도적 차이 G] 숫자 닮은꼴 되돌리기(O→0·S→5·G→6)가 여권 접두를 지워
+        # "O48832568" 이 "048832568" 이 된다 → S·O·G 여권을 하나도 못 잡는다(실측 0/21).
+        # ko-pii 1.22 처럼 여권만 '글자를 접지 않은 본문'으로 한 번 더 본다. 1.15.2 의
+        # 정규화엔 접기만 끄는 옵션이 없어 원문(source)을 쓴다 — 좌표 변환도 필요 없다.
+        # 같은 자리를 두 번 잡은 것은 아래 겹침 해소가 하나로 걷는다.
+        if "PASSPORT" in inc:
+            raw.extend(_passport_detect(source))
 
     # (4) detect_all 과 동일하게 include 로 최종 필터(검출기가 include 밖 라벨을 낼
     #     경우 방어; 예: prescription 이 PRESCRIPTION_ID 를 내면 걸러짐) 후 겹침 해소.
+    raw.extend(extra)
     raw = [d for d in raw if d.label in inc]
     return _kopii_resolve_overlaps(raw)
 
@@ -1103,11 +1255,14 @@ def _kopii_scan(text, labels):
     if not text or not labels:
         return []
     labels = set(labels)
+    # [의도적 차이 I] 표 머리줄 문맥 계좌는 표 전체(머리줄~행)를 봐야 해서 청크로 자르지
+    # 않고 원문 전체에서 한 번만 찾는다. 결과는 다른 검출과 함께 한 번에 겹침 해소한다.
+    extra = _table_account_detect(text) if "ACCOUNT" in labels else []
 
     # (소형) 청크 크기 이하 문서는 예전과 100% 동일한 단일 패스로 처리한다.
     # 모든 라벨을 한 스캔에서 검출해 교차라벨 겹침해소(detect_all 동작)까지 그대로 보존.
     if len(text) <= _KOPII_MAX_CHARS:
-        return list(_detect_subset(text, labels, normalize=True))
+        return list(_detect_subset(text, labels, normalize=True, extra=extra))
 
     # 두 갈래(선형·초선형)의 검출을 '한 자루'에 모은 뒤 마지막에 한 번만 겹침을
     # 해소한다. 예전에는 갈래마다 따로 세어, 갈래가 다른 두 라벨이 같은 자리를
@@ -1134,6 +1289,7 @@ def _kopii_scan(text, labels):
                 raw.append(_replace(m, start=base + m.start, end=base + m.end))
 
     # (3) 교차라벨 겹침 해소 — detect_all 과 같은 우선순위(위험도→확신도→길이→시작).
+    raw.extend(extra)
     return list(_kopii_resolve_overlaps(raw))
 
 

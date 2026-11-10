@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Python 문서파서 Rust 연동</title>
+</head>
+<body>
+<style>
+  :root{
+    --bg:#f4f6f9; --surface:#ffffff; --surface-2:#eef1f6; --ink:#191d24;
+    --muted:#58616e; --faint:#8b94a2; --line:#dde2ea; --line-strong:#c7cfda;
+    --accent:#26437e; --accent-2:#365fb0; --accent-soft:#e7edf7;
+    --c:#cf3b2e; --c-soft:#fbeceb; --s:#b3760f; --s-soft:#f9f0dc; --o:#2f8f57; --o-soft:#e6f3ea;
+    --shadow:0 1px 2px rgba(20,30,50,.04), 0 8px 24px rgba(20,30,50,.06);
+    --sans:"Pretendard Variable",Pretendard,"Malgun Gothic","맑은 고딕",-apple-system,"Apple SD Gothic Neo",system-ui,sans-serif;
+    --mono:ui-monospace,"Cascadia Code","Cascadia Mono",Consolas,"D2Coding",monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0e1116; --surface:#161b22; --surface-2:#1d232c; --ink:#e7ebf1;
+      --muted:#9aa4b2; --faint:#6b7684; --line:#262d38; --line-strong:#333c49;
+      --accent:#7ea0e8; --accent-2:#8fb0f2; --accent-soft:#182233;
+      --c:#f2695c; --c-soft:#2a1715; --s:#e6a748; --s-soft:#271e10; --o:#57bd85; --o-soft:#122217;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#f4f6f9; --surface:#ffffff; --surface-2:#eef1f6; --ink:#191d24;
+    --muted:#58616e; --faint:#8b94a2; --line:#dde2ea; --line-strong:#c7cfda;
+    --accent:#26437e; --accent-2:#365fb0; --accent-soft:#e7edf7;
+    --c:#cf3b2e; --c-soft:#fbeceb; --s:#b3760f; --s-soft:#f9f0dc; --o:#2f8f57; --o-soft:#e6f3ea;
+  }
+  :root[data-theme="dark"]{
+    --bg:#0e1116; --surface:#161b22; --surface-2:#1d232c; --ink:#e7ebf1;
+    --muted:#9aa4b2; --faint:#6b7684; --line:#262d38; --line-strong:#333c49;
+    --accent:#7ea0e8; --accent-2:#8fb0f2; --accent-soft:#182233;
+    --c:#f2695c; --c-soft:#2a1715; --s:#e6a748; --s-soft:#271e10; --o:#57bd85; --o-soft:#122217;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    line-height:1.7;-webkit-font-smoothing:antialiased;font-size:16px;letter-spacing:-0.003em;}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 24px 96px;}
+  header.doc{padding:56px 0 34px;border-bottom:1px solid var(--line);margin-bottom:40px;}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);font-weight:600;display:flex;gap:10px;align-items:center;margin-bottom:20px;}
+  .eyebrow::before{content:"";width:26px;height:2px;background:var(--accent);border-radius:2px;}
+  h1.title{font-size:clamp(28px,4.6vw,44px);line-height:1.12;margin:0 0 14px;font-weight:800;
+    letter-spacing:-0.02em;text-wrap:balance;}
+  .lede{font-size:clamp(16px,2.1vw,19px);color:var(--muted);margin:0 0 22px;max-width:64ch;}
+  .lede b{color:var(--ink);font-weight:600;}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;}
+  .chip{font-size:12px;font-family:var(--mono);color:var(--muted);background:var(--surface);
+    border:1px solid var(--line);border-radius:999px;padding:5px 12px;}
+  .chip b{color:var(--ink);font-weight:600;}
+  section{margin:52px 0;scroll-margin-top:20px;}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:22px;}
+  .sec-num{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--accent);
+    border:1px solid var(--line-strong);border-radius:7px;padding:3px 9px;flex:none;line-height:1.3;}
+  h2{font-size:clamp(21px,3vw,27px);margin:0;font-weight:750;letter-spacing:-0.015em;line-height:1.25;}
+  h3{font-size:17px;margin:30px 0 12px;font-weight:700;letter-spacing:-0.01em;}
+  p{margin:0 0 15px;max-width:72ch;}
+  ul.plain{margin:0 0 15px;padding-left:20px;} ul.plain li{margin:5px 0;color:var(--muted);}
+  ul.plain li b{color:var(--ink);font-weight:600;}
+  ol.plain{margin:0 0 15px;padding-left:22px;} ol.plain li{margin:6px 0;color:var(--muted);}
+  ol.plain li b{color:var(--ink);font-weight:600;}
+  .tldr{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--accent);
+    border-radius:12px;padding:22px 24px;box-shadow:var(--shadow);}
+  .tldr .k{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);font-weight:700;margin-bottom:10px;}
+  .tldr p{margin:0;font-size:17px;color:var(--ink);max-width:none;}
+  .tldr b{color:var(--accent-2);}
+  .twrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);margin:16px 0;}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:640px;background:var(--surface);}
+  th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--line);vertical-align:top;}
+  thead th{background:var(--surface-2);font-size:12px;letter-spacing:.03em;color:var(--muted);
+    text-transform:uppercase;font-weight:700;white-space:nowrap;}
+  tbody tr:last-child td{border-bottom:none;}
+  td.mono,.mono-cell{font-family:var(--mono);font-size:13px;white-space:nowrap;}
+  code.inl{font-family:var(--mono);font-size:.9em;background:var(--surface-2);border:1px solid var(--line);
+    border-radius:5px;padding:1px 6px;}
+  pre{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 20px;
+    overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.65;box-shadow:var(--shadow);color:var(--ink);}
+  pre .cm{color:var(--o);} pre .kw{color:var(--accent-2);font-weight:600;} pre .hi{color:var(--c);font-weight:600;}
+  .note{border:1px solid var(--line);background:var(--surface-2);border-radius:12px;padding:16px 18px;
+    font-size:14.5px;display:flex;gap:12px;align-items:flex-start;margin:16px 0;}
+  .note .badge{font-family:var(--mono);font-size:10.5px;font-weight:800;letter-spacing:.06em;
+    padding:3px 8px;border-radius:6px;flex:none;text-transform:uppercase;white-space:nowrap;}
+  .note.safe .badge{color:var(--o);background:var(--o-soft);border:1px solid color-mix(in srgb,var(--o) 35%,transparent);}
+  .note.warn .badge{color:var(--s);background:var(--s-soft);border:1px solid color-mix(in srgb,var(--s) 35%,transparent);}
+  .note.bad .badge{color:var(--c);background:var(--c-soft);border:1px solid color-mix(in srgb,var(--c) 35%,transparent);}
+  .note.info .badge{color:var(--accent-2);background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent-2) 35%,transparent);}
+  .note p{margin:0;color:var(--muted);max-width:none;}
+  .note b{color:var(--ink);}
+  .x{color:var(--c);font-weight:700}
+  .ok{color:var(--o);font-weight:700}
+  .wn{color:var(--s);font-weight:700}
+  .src{font-family:var(--mono);font-size:12px;color:var(--faint);}
+  .fig{background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);
+    padding:18px;margin:16px 0;overflow-x:auto;}
+  .fig svg{display:block;min-width:680px;width:100%;height:auto;}
+  .fig text{font-family:var(--sans);fill:var(--ink);font-size:13px;}
+  .fig .t-mono{font-family:var(--mono);font-size:11.5px;fill:var(--muted);}
+  .fig .t-h{font-weight:700;font-size:14px;}
+  .fig .box{fill:var(--surface-2);stroke:var(--line-strong);}
+  .fig .box-a{fill:var(--accent-soft);stroke:var(--accent-2);}
+  .fig .ln{stroke:var(--muted);stroke-width:1.4;fill:none;}
+  .fig .ln-d{stroke:var(--faint);stroke-width:1.2;fill:none;stroke-dasharray:5 4;}
+  .fig .ah{fill:var(--muted);}
+  footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);
+    font-size:13px;color:var(--faint);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;
+    font-family:var(--mono);letter-spacing:.02em;}
+  @media print{ body{background:#fff;} .tldr,pre,.twrap,.fig{box-shadow:none;} }
+  .warn{color:var(--s);font-weight:700}
+</style>
+
+
+<div class="wrap">
+
+  <header class="doc">
+    <div class="eyebrow">구조 설계 · Python Binding for docparse</div>
+    <h1 class="title">Python 판도 Rust 문서파서를 쓰게 하기<br>— <code class="inl">docparse.dll / libdocparse.so</code> 를 ctypes 로</h1>
+    <p class="lede">1편에서 별도 프로젝트(<code class="inl">D:\Project\DocParse-rust</code>)로 떼어 낸 문서파서 <b>공유 라이브러리</b>를 Python 판이 <b>ctypes 로 불러</b>, Python 판의 형식별 자체 파서
+    (<code class="inl">src/csoclassify/extract/</code> 의 pdf·hwp·hwpx·doc·xls·ppt·docx·xlsx·pptx·html·텍스트)를 <b>그것으로 바꾼다</b>.
+    두 판이 <b>같은 파서 하나</b>를 쓰게 된다. 대신 Python 판의 추출 결과가 바뀌므로 <b>평가셋으로 판정 차이를 확인한 뒤</b> 기본값을 바꾼다.</p>
+    <div class="meta">
+      <span class="chip"><b>대상</b> Python 판</span>
+      <span class="chip"><b>선행</b> 1편 (Rust 라이브러리 분리) 완료</span>
+      <span class="chip"><b>연결</b> ctypes 감싸개 <code class="inl">extract/_docparse.py</code> (PyO3 아님)</span>
+      <span class="chip"><b>바뀌는 동작</b> 추출 결과 (평가셋 확인 후 전환)</span>
+      <span class="chip"><b>상태</b> 1단계 구현 · 2단계(평가셋 비교) 남음 (개정 2)</span>
+      <span class="chip"><b>작성일</b> 2026-11-10</span>
+    </div>
+  </header>
+
+  <div class="tldr">
+    <div class="k">한 줄 요약</div>
+    <p>Rust 판과 <b>같은 파일</b>(<code class="inl">docparse.dll</code> / <code class="inl">libdocparse.so</code>)을 ctypes 로 불러 쓴다. Python 의 <code class="inl">HybridExtractor</code> 는 그대로 두고,
+    그 안의 <b>형식별 엔진 표</b>와 <b>압축 해제</b>를 Rust 로 바꾼다. 사이냅 폴백, 원시 텍스트 정제, 오류 종류는 Python 쪽이 지금처럼 맡는다.
+    <code class="inl">--extractor py</code> 로 예전 파이썬 파서를 고를 수 있게 남긴 채 <b>평가셋 1,000건으로 판정 차이를 확인</b>하고 기본값을 바꾼다.
+    차이가 정리되면 예전 파서와 <code class="inl">olefile</code>·<code class="inl">xlrd</code>·<code class="inl">pypdfium2</code> 의존을 지운다.</p>
+  </div>
+
+  <div class="note info"><span class="badge">개정 2 · PyO3 → ctypes</span>
+    <p>처음 판은 PyO3·maturin 으로 파이썬 확장 모듈(<code class="inl">Rust/crates/docparse-py</code>)을 만드는 방식이었다. 1편 개정으로 문서파서가 별도 프로젝트의 <b>C 진입점 공유 라이브러리</b>가 되면서,
+    Python 판도 그 파일을 <b>ctypes</b> 로 불러 쓰게 바꿨다. 그러면 Rust 판과 Python 판이 <b>바이트 단위로 같은 바이너리</b>를 쓰고, maturin·abi3 빌드가 따로 생기지 않는다(ctypes 는 표준 라이브러리 — V10 개인정보 엔진 <code class="inl">mpiisl.dll</code> 과 같은 방식).
+    파이썬에 보이는 모양(§4-1)은 PyO3 판과 같게 맞췄으므로 RustEngine·압축 연결·고르는 옵션 설계는 그대로다. 바뀐 곳은 §3·§4-1·§6·§8 이다.</p></div>
+
+  <!-- 1 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>왜 하나 — 지금 두 벌을 유지하는 비용</h2></div>
+    <ul class="plain">
+      <li><b>같은 기능 두 벌</b> — Python <code class="inl">extract/</code> 15개 파일 3,084줄과 Rust 추출 쪽 약 5,900줄이 같은 일을 한다. 고칠 때마다 양쪽을 맞춰야 한다
+      (예: PDF 표식 U+FFFE 지우기, 엑셀 날짜 서식, hwpx 문단 처리).</li>
+      <li><b>맞춤 시험의 짐</b> — <code class="inl">test_html_extract_parity.py</code> 처럼 두 판 결과를 맞추는 시험이 따로 있다. 맞추지 못한 형식은 판정이 조용히 갈린다.</li>
+      <li><b>속도</b> — PDF 는 둘 다 pdfium 이지만, OOXML(zip+XML)·xls·hwp 는 Rust 가 빠르다. 추출하는 동안 GIL 을 놓아 주면 파이썬 쪽 병렬 처리에도 유리하다.</li>
+      <li><b>의존 줄이기</b> — <code class="inl">olefile</code>·<code class="inl">xlrd</code>·<code class="inl">pypdfium2</code> 를 뺄 수 있다(pdfium 라이브러리 파일 자체는 계속 필요, §6).</li>
+    </ul>
+  </section>
+
+  <!-- 2 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>지금 Python 추출 구조</h2></div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>파일</th><th>역할</th><th>전환 후</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">__init__.py · build_extractor()</td><td>추출기 고르기. 기본(<code class="inl">DEFAULT_HYBRID_PARSE=True</code>)은 HybridExtractor(형식별 엔진 표 + snf 폴백)</td><td>엔진 표 자리에 Rust 엔진</td></tr>
+          <tr><td class="mono">hybrid.py</td><td>형식 감지 → 엔진 사슬 → 실패·빈·짧은 결과면 snf 폴백</td><td class="ok">유지</td></tr>
+          <tr><td class="mono">synap_exe.py</td><td>사이냅 외부 실행</td><td class="ok">유지</td></tr>
+          <tr><td class="mono">base.py</td><td><code class="inl">TextExtractor</code>, <code class="inl">ExtractError</code>, <code class="inl">SizeLimitError</code>, <code class="inl">check_size_limit</code>, <code class="inl">save_extracted_text</code></td><td class="ok">유지</td></tr>
+          <tr><td class="mono">notes.py</td><td>'부분추출' 표식(thread-local)</td><td class="ok">유지 — Rust 결과의 partial 을 여기에 옮겨 적음</td></tr>
+          <tr><td class="mono">archive.py</td><td>압축 풀기 — 7z 는 py7zr, rar 는 rarfile + 번들 unrar 실행파일</td><td class="warn">Rust <code class="inl">expand_paths</code> 로 (§4-4)</td></tr>
+          <tr><td class="mono">detect.py</td><td>내용으로 형식 감지</td><td class="warn">Rust <code class="inl">detect_format</code> 로 (§4-2)</td></tr>
+          <tr><td class="mono">pdf_pdfium.py · hwp5.py · hwpx_zip.py · office_ooxml.py · office_legacy.py · html_text.py · plaintext.py · xlsdate.py</td><td>형식별 파서</td><td class="x">Rust 로 대체 → 3단계에서 지움</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>원시 텍스트 정제는 <code class="inl">pipeline.py</code> 가 <code class="inl">clean.clean_text(raw, remove_page_markers=…)</code> 로 따로 한다. 그래서 Rust 엔진은 <b>정제 전 원시 텍스트</b>(<code class="inl">clean=False</code>)를 돌려줘야 지금 흐름과 맞는다.</p>
+  </section>
+
+  <!-- 3 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>목표 구조</h2></div>
+<pre>D:\Project\DocParse-rust\       <span class="cm">← 1편. 문서파서 본체·C 진입점·감싸개 정본(bindings/python/docparse.py)</span>
+
+MpowerClassify/
+  third_party/docparse/<span class="cm">&lt;windows-x64|linux-x64&gt;/</span>   <span class="cm">← 배포 묶음에서 받은 docparse.dll·pdfium (VERSION 고정)</span>
+  scripts/build/update-docparse.sh                 <span class="cm">← 묶음 받아 넣기(SHA256 확인, 감싸개 사본도 갈아 끼움)</span>
+  src/csoclassify/extract/
+    _docparse.py            <span class="cm">← ctypes 감싸개. DocParse-rust 정본의 사본 — 직접 고치지 않는다</span>
+    rust_engine.py          <span class="cm">← docparse 를 TextExtractor 로 감쌈. 라이브러리 위치: CSO_DOCPARSE → third_party(개발 PC) → 감싸개 기본 찾기</span>
+  __init__.py               <span class="cm">← build_extractor 가 엔진 표를 RustEngine 으로</span>
+  hybrid.py · synap_exe.py · base.py · notes.py · archive.py   <span class="cm">← 그대로</span></pre>
+    <div class="note info"><span class="badge">판단 · ctypes</span>
+      <p>ctypes 는 파이썬 버전과 무관하게 같은 DLL 을 부른다(abi3 같은 고민이 없다). 호출하는 동안 GIL 을 놓으므로 병렬 추출도 그대로 된다.
+      대신 함수 모양(인자·반환 타입)을 감싸개가 손으로 적어야 하므로, 불러오자마자 <code class="inl">docparse_abi_version()</code> 을 비교해 다르면 멈춘다.</p></div>
+  </section>
+
+  <!-- 4 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>설계</h2></div>
+    <h3>4-1. 파이썬에 보이는 모양</h3>
+<pre><span class="kw">from</span> csoclassify.extract <span class="kw">import</span> _docparse <span class="kw">as</span> docparse   <span class="cm"># ctypes 감싸개</span>
+
+docparse.load(path=<span class="kw">None</span>)                  <span class="cm"># 처음 한 번. ABI 버전 확인 — 다르면 RuntimeError</span>
+docparse.version()                         <span class="cm"># "0.1.0+abc1234" — 로그에 남김 (docparse.__version__ 도 됨)</span>
+docparse.detect_format(path) -&gt; str        <span class="cm"># "pdf" · "hwp" · "docx" · … · "unknown" (Python detect.py 와 같은 이름)</span>
+
+r = docparse.extract(
+        path, fmt=<span class="kw">None</span>,                    <span class="cm"># None 이면 안에서 감지</span>
+        clean=<span class="kw">False</span>,                       <span class="cm"># Python 은 원시 텍스트를 받아 자기 clean_text 로</span>
+        parser_timeout=…, max_pdf_pages=…,
+        max_file_bytes=…, max_file_bytes_text=…,
+        pdfium_lib=…)                      <span class="cm"># 배포본에 같이 넣은 libpdfium 경로</span>
+r.text, r.engine, r.fmt
+r.partial    <span class="cm"># None 또는 (reason, unit, read, total) — 지금 notes.partial 과 같은 모양</span>
+r.layout     <span class="cm"># None 또는 (pages, scan_pages)</span>
+
+<span class="cm"># 실패는 예외로</span>
+docparse.SizeLimitError   <span class="cm"># → base.SizeLimitError 로 바꿔 던짐</span>
+docparse.ExtractError     <span class="cm"># → base.ExtractError 로 바꿔 던짐</span>
+
+<span class="cm"># 압축 해제 — 1편에서 라이브러리 기본 기능</span>
+jobs, stats = docparse.expand_paths(paths, tmp_root, max_depth=3,
+                                    max_bytes=…, max_members=…)
+<span class="cm"># jobs  = [(src, label, origin), …]   지금 archive.expand_paths 의 Job 과 같은 뜻</span>
+<span class="cm"># stats = {"unexpanded": […], "unsupported": […], "partial": […]}</span>
+docparse.split_volume_hint(name, path) -&gt; str | <span class="kw">None</span></pre>
+    <ul class="plain">
+      <li><b>엔진은 Builtin 만</b> 노출한다. 사이냅은 Python <code class="inl">synap_exe.py</code> 가 이미 맡고 있고, 폴백 사슬도 <code class="inl">hybrid.py</code> 에 있다. 두 군데서 사이냅을 부르지 않게 한다.</li>
+      <li><b>GIL 놓기</b> — <code class="inl">ctypes.CDLL</code> 호출은 GIL 을 놓는다. 파이썬 스레드 여러 개가 동시에 추출할 수 있다.</li>
+      <li><b>옵션·결과는 JSON</b> — 감싸개가 키워드 인자를 옵션 JSON 으로 바꾸고 결과 JSON 을 위 모양(속성·튜플)으로 바꾼다. 라이브러리가 준 문자열은 감싸개가 <code class="inl">docparse_free</code> 로 돌려준다.</li>
+      <li><b>예외 문장</b> — Rust 오류의 사유 문자열을 그대로 메시지로 쓴다. 레코드의 <code class="inl">error</code>·<code class="inl">error_kind</code> 는 지금 Python 이 만드는 방식(예외 종류로 갈라 보기)을 그대로 쓴다.</li>
+    </ul>
+
+    <h3>4-2. RustEngine — 엔진 표에 끼우기</h3>
+<pre><span class="kw">class</span> RustEngine(TextExtractor):
+    <span class="kw">def</span> extract(self, input_path, save_dir=<span class="kw">None</span>):
+        <span class="kw">try</span>:
+            r = docparse.extract(input_path, fmt=self.fmt, clean=<span class="kw">False</span>, **self.limits)
+        <span class="kw">except</span> docparse.SizeLimitError <span class="kw">as</span> e:
+            <span class="kw">raise</span> SizeLimitError(str(e)) <span class="kw">from</span> e
+        <span class="kw">except</span> docparse.ExtractError <span class="kw">as</span> e:
+            <span class="kw">raise</span> ExtractError(str(e)) <span class="kw">from</span> e
+        <span class="kw">if</span> r.partial: notes.set_partial(*r.partial)      <span class="cm"># 지금 파서들이 하던 표식 남기기</span>
+        <span class="kw">if</span> r.layout:  notes.set_layout(*r.layout)
+        <span class="kw">if</span> save_dir: save_extracted_text(…)            <span class="cm"># 지금과 같은 보존 규칙</span>
+        <span class="kw">return</span> r.text
+
+<span class="cm"># build_extractor — 형식마다 같은 RustEngine 을 꽂는다(형식은 hybrid 가 감지해 넘김)</span>
+engines = {f: RustEngine(fmt=f, limits=…) <span class="kw">for</span> f <span class="kw">in</span> (<span class="hi">"pdf","hwp","hwpx","doc","xls","ppt","docx","xlsx","pptx","html","text"</span>)}</pre>
+    <ul class="plain">
+      <li><b>감지도 Rust 로</b> — 감지가 다르면 같은 파서를 써도 다른 엔진으로 간다. <code class="inl">HybridExtractor(detector=docparse.detect_format)</code> 로 넘긴다. 이미 <code class="inl">detector</code> 주입 자리가 있다.</li>
+      <li><b>크기 상한</b> — hybrid 가 이미 <code class="inl">check_size_limit</code> 를 부른다. Rust 쪽 검사와 겹치지만 같은 상한값을 넘기므로 결과가 같다. 이중 검사는 무해하니 그대로 둔다.</li>
+      <li><b>상주 서버</b>(<code class="inl">daemon/server.py</code>)는 <code class="inl">build_extractor</code> 를 부르므로 따로 고칠 것이 없다.</li>
+    </ul>
+
+    <h3>4-3. 고르는 옵션 (전환 기간)</h3>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>옵션</th><th>뜻</th><th>기본값</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">--extractor rust</td><td>형식별 엔진 = RustEngine</td><td>3단계에서 기본</td></tr>
+          <tr><td class="mono">--extractor py</td><td>형식별 엔진 = 지금 파이썬 파서</td><td>2단계까지 기본</td></tr>
+          <tr><td class="mono">CSOCLASSIFY_EXTRACTOR</td><td>같은 선택을 환경변수로(상주 서버·배치용)</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>같은 옵션이 압축 해제도 고른다(<code class="inl">rust</code> = docparse, <code class="inl">py</code> = 지금 archive.py). 본문 파서와 압축 해제를 따로 고르게 하면 조합만 늘어나므로 한 스위치로 묶는다.
+    <code class="inl">--synap-only</code>·<code class="inl">--synap-fallback</code> 와는 독립이다. 그 옵션은 "사이냅을 언제 쓰나"이고, 이 옵션은 "자체 파서가 누구냐"다.
+    <code class="inl">docparse</code> 모듈을 못 불러오면(배포 누락) <b>조용히 py 로 넘어가지 말고</b> 시작할 때 오류로 멈춘다. 조용한 전환은 판정이 몰래 바뀌는 원인이 된다.</p>
+
+    <h3>4-4. 압축 해제도 Rust 로</h3>
+    <p>지금 cli.py 는 <code class="inl">from .extract.archive import expand_paths</code> 로 압축을 펼친다(1244·2707·5634행 부근). <code class="inl">archive.py</code> 의 <code class="inl">expand_paths</code> 는 이름과 반환 모양을 그대로 두고, 안에서 <code class="inl">docparse.expand_paths</code> 를 불러 <code class="inl">Job</code> 으로 바꿔 돌려준다. 그러면 cli.py 는 고칠 것이 없다.</p>
+    <ul class="plain">
+      <li><b>rar 가 가장 크게 바뀐다</b> — 지금 Python 은 번들 <code class="inl">unrar</code> 실행파일(CentOS 7 에선 libstdc++ 문제까지 따로 챙기는)로 풀고, Rust 는 순수 Rust <code class="inl">rars</code> 로 푼다. 시험 문서로 지원 범위(RAR5·암호·하드링크)를 비교해서 차이를 기록한다.</li>
+      <li><b>임시 폴더와 정리</b>는 지금처럼 Python 이 만든다. Rust 는 받은 폴더에 풀기만 한다.</li>
+      <li>압축을 푸는 동안에도 GIL 을 놓는다(ctypes 호출).</li>
+    </ul>
+  </section>
+
+  <!-- 5 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h2>전환 단계</h2></div>
+    <ol class="plain">
+      <li><b>연결</b> — <code class="inl">_docparse.py</code>(ctypes)·<code class="inl">RustEngine</code>·<code class="inl">--extractor</code> 옵션. 개발 PC 는 저장소의 <code class="inl">third_party/docparse</code> 를 그대로 불러 쓴다(설치 단계 없음). <b>기본은 py</b>. <span class="ok">— 구현됨</span></li>
+      <li><b>차이 측정</b> — 평가셋 두 벌(1,000건)과 sample 을 <code class="inl">--extractor py</code> / <code class="inl">rust</code> 로 각각 돌린다. 비교는 세 층으로 한다.
+        <ul class="plain">
+          <li>본문 — 정제 후 본문 sha256 이 다른 문서 목록, 형식별 개수</li>
+          <li>판정 — 보안등급·업무분류가 바뀐 문서, 사람 정답지(…사람재검-01.xlsx) 기준 정밀도·재현율 변화</li>
+          <li>시간 — 문서당 추출 시간 중앙값·최댓값</li>
+        </ul>
+        차이 나는 문서는 원인을 한 건씩 본다. Rust 쪽이 틀리면 <code class="inl">docparse</code> 를 고친다(두 판 모두 좋아진다). Python 쪽이 틀렸던 것이면 그대로 받아들인다.</li>
+      <li><b>기본값 전환</b> — 판정 지표가 나빠지지 않으면 기본을 <code class="inl">rust</code> 로. 배포본·빌드 스크립트 반영(§6). 한 배포 주기 동안 <code class="inl">--extractor py</code> 를 남겨 둔다.</li>
+      <li><b>정리</b> — 문제가 없으면 파이썬 형식별 파서 8개 파일과 archive.py 의 해제 본체, <code class="inl">olefile</code>·<code class="inl">xlrd</code>·<code class="inl">pypdfium2</code>·<code class="inl">py7zr</code>·<code class="inl">rarfile</code> 의존, 번들 <code class="inl">unrar</code> 실행파일을 지운다. 두 판 맞춤 시험(<code class="inl">test_html_extract_parity.py</code> 등)은 "같은 모듈을 쓴다"로 바뀌므로 정리한다.</li>
+    </ol>
+  </section>
+
+  <!-- 6 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">06</span><h2>빌드·배포</h2></div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>곳</th><th>지금</th><th>바뀐 뒤</th></tr></thead>
+        <tbody>
+          <tr><td>개발 PC (Windows)</td><td>conda 환경 + pip</td><td><b>Rust 도구 불필요</b>. 저장소의 <code class="inl">third_party/docparse/windows-x64/docparse.dll</code> 을 그대로 불러 쓴다(<code class="inl">CSO_DOCPARSE</code> 로 바꿀 수 있다)</td></tr>
+          <tr><td>Windows 배포 (<code class="inl">win-deploy.sh</code>)</td><td>PyInstaller onedir</td><td>spec 의 <code class="inl">binaries</code> 로 <code class="inl">docparse.dll</code> 을 <code class="inl">_internal/</code> 에 넣는다(<code class="inl">hiddenimports</code> 에는 <code class="inl">_docparse</code>). 빠지면 배포 스크립트가 멈춘다. 3단계 뒤 <code class="inl">olefile</code>·<code class="inl">pypdfium2</code>·<code class="inl">xlrd</code> 를 뺀다</td></tr>
+          <tr><td>리눅스 빌드서버 (<code class="inl">linux-remote.sh</code>, CentOS 7)</td><td>Python 빌드는 conda 환경에서 PyInstaller. Rust 빌드는 같은 서버의 cargo</td><td>Python 소스 묶음에 <code class="inl">third_party/docparse/linux-x64</code> 를 같이 올리고 spec 이 <code class="inl">libdocparse.so</code> 를 묶는다. <b>maturin·Rust 빌드 단계 없음</b>(라이브러리는 DocParse-rust 가 같은 빌드서버에서 미리 만든 것)</td></tr>
+          <tr><td>pdfium 라이브러리</td><td>Python 은 pypdfium2 휠 안의 libpdfium. Rust 배포본은 <code class="inl">pypdfium2_raw/libpdfium.so</code> 를 복사해 동봉</td><td>Python 배포본도 Rust 배포본처럼 libpdfium 파일을 <b>직접 동봉</b>하고 <code class="inl">pdfium_lib</code> 로 넘긴다. 3단계에서 pypdfium2 를 지워도 PDF 가 산다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note warn"><span class="badge">주의 · CentOS 7</span>
+      <p><code class="inl">libdocparse.so</code> 는 <b>파이썬 프로세스 안에 실리는 공유 라이브러리</b>다. DocParse-rust 의 <code class="inl">linux-build.sh</code> 가 같은 빌드서버(glibc 2.17)에서 만들고, 요구 glibc 가 2.17 을 넘지 않는지 확인한다.
+      pdfium 은 라이브러리 자기 폴더에서도 찾으므로(1편 §4-2) python 실행파일이 어디 있든 PDF 가 읽힌다. 다만 지금 RustEngine 은 개발 PC·배포본의 pypdfium2 안 pdfium 을 <code class="inl">pdfium_lib</code> 로 직접 넘긴다.</p></div>
+  </section>
+
+  <!-- 7 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">07</span><h2>검증 기준</h2></div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>항목</th><th>통과 기준</th></tr></thead>
+        <tbody>
+          <tr><td>같은 모듈 확인</td><td><code class="inl">--extractor rust</code> 의 Python 판 정제 후 본문 = Rust 판 <code class="inl">--text-only</code> 본문 (평가셋·sample 전부 sha256 일치). 이게 이 작업의 목적이다</td></tr>
+          <tr><td>판정</td><td>사람 정답지 기준 보안 정밀도·재현율, 업무분류 F1 이 py 대비 <b>나빠지지 않음</b>. 바뀐 문서는 목록으로 남겨 한 건씩 원인 기록</td></tr>
+          <tr><td>오류 종류</td><td>크기 상한 문서 → <code class="inl">SizeLimitError</code> → 레코드 <code class="inl">error_kind</code> 가 지금과 같음. 깨진 파일 → <code class="inl">ExtractError</code></td></tr>
+          <tr><td>폴백</td><td>Rust 엔진 실패·빈·짧은 결과 → 사이냅 폴백이 지금처럼 동작 (<code class="inl">test_hybrid_extract.py</code>)</td></tr>
+          <tr><td>압축</td><td>압축 시험 문서(zip·tar·gz·bz2·xz·7z·rar, 중첩·분할볼륨·상한 초과·손상)에서 펼친 목록·label·origin 과 결과 요약의 "못 펼친 압축" 이 py 와 같음. 다르면 원인 기록(특히 rar — 해제기가 unrar → rars 로 바뀐다)</td></tr>
+          <tr><td>부분추출 표식</td><td>대형 PDF 에서 레코드의 부분추출 필드가 py 때와 같은 모양</td></tr>
+          <tr><td>병렬</td><td>추출 스레드 4개 동시 실행 시 결과가 단일 스레드와 같음(전역 상태 없음 확인)</td></tr>
+          <tr><td>배포본</td><td>Windows·Linux onedir 에서 모듈 불러오기 성공, PDF 추출 성공(pdfium 동봉 확인)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 8 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">08</span><h2>위험과 대응</h2></div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>위험</th><th>대응</th></tr></thead>
+        <tbody>
+          <tr><td><b>Python 판 판정이 바뀐다</b> — 두 파서가 지금도 세부적으로 다르게 뽑는다</td><td>§5-2 측정 후에만 기본 전환. <code class="inl">--extractor py</code> 로 한 주기 되돌릴 수 있게</td></tr>
+          <tr><td>Python 빌드에 Rust 도구가 필요해짐</td><td>빌드서버에는 이미 cargo 가 있다. 개발 PC 는 Rust 판 빌드에 이미 쓰고 있다</td></tr>
+          <tr><td>라이브러리 누락 배포본이 조용히 py 로 돎</td><td>§4-3 — 시작할 때 1017 로 멈춤. 로그에 <code class="inl">docparse=버전 lib=경로</code> 기록</td></tr>
+          <tr><td>Rust 패닉이 파이썬 프로세스를 죽임</td><td>C 진입점이 모든 함수를 <code class="inl">catch_unwind</code> 로 감싸 <code class="inl">kind="panic"</code> 오류로 돌려준다. 감싸개가 <code class="inl">ExtractError</code> 로 바꿔 그 파일만 추출실패 처리</td></tr>
+          <tr><td>ctypes 함수 모양을 잘못 적음(포인터 잘림 등)</td><td>감싸개가 모든 함수의 <code class="inl">argtypes·restype</code> 을 적고, 불러오자마자 ABI 버전을 비교한다. 정본은 DocParse-rust 한 곳에서만 고친다</td></tr>
+          <tr><td>로그 콜백 객체가 GC 되어 DLL 이 죽은 포인터를 부름</td><td>감싸개가 콜백 객체를 모듈 전역에 붙잡아 둔다</td></tr>
+          <tr><td>Python 판을 곧 접는다면 들인 수고가 아깝다</td><td>Python 판을 계속 유지할 계획이 확실할 때 시작한다. 1편만으로도 "다른 프로젝트에서 쓰기"는 해결된다</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 9 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">09</span><h2>작업량</h2></div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>단계</th><th>내용</th><th>예상</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>ctypes 감싸개 · RustEngine · 압축 해제 연결 · 옵션 · 단위 시험</td><td><span class="ok">완료</span></td></tr>
+          <tr><td>2</td><td>평가셋 비교 + 차이 원인 조사</td><td>1~3일 (차이 건수에 따라)</td></tr>
+          <tr><td>3</td><td>빌드 스크립트·배포본 반영, 기본 전환</td><td>0.5~1일</td></tr>
+          <tr><td>4</td><td>예전 파서·의존 정리</td><td>0.5일 (한 배포 주기 뒤)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <span>MpowerClassify · Python 판 Rust 문서파서 연동 설계 (2편 · 개정 2)</span>
+    <span>2026-11-10</span>
+  </footer>
+</div>
+</body>
+</html>

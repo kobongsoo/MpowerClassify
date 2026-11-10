@@ -5,7 +5,7 @@
 #   종료코드가 올라가, 진짜 깨진 문서가 스캔본 틈에 묻힌다.
 #
 #   판정: 스캔 페이지(글자 < 10 · 그림이 절반 이상 덮음)가 절반 이상이면서 문서 전체도
-#   페이지당 10자 미만. Rust 판(Rust/src/extract.rs scan_pdf_verdict)과 같은 식·같은 값.
+#   페이지당 10자 미만. Rust 문서파서(DocParse-rust crates/docparse/src/extract.rs scan_pdf_verdict)와 같은 식·같은 값.
 #------------------------------------------------------------------
 
 import ctypes
@@ -168,7 +168,13 @@ def test_simple에_처리제외가_남는다():
 # -out: error = 실패 시 AssertionError
 #------------------------------------------------------------------
 def test_판정값이_Rust판과_같다():
-    src = open(os.path.join(ROOT, "Rust", "src", "extract.rs"), encoding="utf-8").read()
+    # 문서파서 소스는 별도 프로젝트(DocParse-rust)에 있다 — 옆 폴더(또는 DOCPARSE_SRC)가 없으면 건너뛴다.
+    # 그림 덮개 비율(IMAGE_COVER)은 라이브러리 안에서만 쓰여 소스로만 확인할 수 있다.
+    base = os.environ.get("DOCPARSE_SRC") or os.path.join(os.path.dirname(ROOT), "DocParse-rust")
+    path = os.path.join(base, "crates", "docparse", "src", "extract.rs")
+    if not os.path.isfile(path):
+        pytest.skip("DocParse-rust 소스 없음: " + path)
+    src = open(path, encoding="utf-8").read()
 
     def rust(name):
         m = re.search(rf"pub const {name}: \w+ = ([0-9.]+);", src)
@@ -178,6 +184,35 @@ def test_판정값이_Rust판과_같다():
     assert rust("SCAN_PDF_PAGE_MAX_CHARS") == config.SCAN_PDF_PAGE_MAX_CHARS
     assert rust("SCAN_PDF_IMAGE_COVER") == config.SCAN_PDF_IMAGE_COVER
     assert rust("SCAN_PDF_PAGE_RATIO") == config.SCAN_PDF_PAGE_RATIO
+
+
+#------------------------------------------------------------------
+# 판정 식이 문서파서 라이브러리와 같다 (실제 DLL 로)
+#=> 소스가 없어도 배포된 라이브러리의 판정을 경계값으로 확인한다.
+#    · 쪽당 글자 수가 상한 바로 아래/위 · 스캔 쪽 비율이 기준 바로 위/아래
+#
+# -in: 없음
+# -out: 없음(assert)
+# -out: error = 실패 시 AssertionError, 라이브러리가 없으면 건너뜀
+#------------------------------------------------------------------
+def test_판정식이_라이브러리와_같다():
+    from csoclassify.extract import rust_engine
+    ok, why = rust_engine.available()
+    if not ok:
+        pytest.skip(why)
+    from csoclassify.extract import _docparse as dp
+    pages = 100
+    cases = [
+        (pages, pages, 0),                                                   # 전부 스캔·글자 없음
+        (pages, pages, int(config.SCAN_PDF_PAGE_MAX_CHARS * pages) - 1),     # 글자 상한 바로 아래
+        (pages, pages, int(config.SCAN_PDF_PAGE_MAX_CHARS * pages)),         # 글자 상한
+        (pages, int(config.SCAN_PDF_PAGE_RATIO * pages), 0),                 # 비율 경계
+        (pages, int(config.SCAN_PDF_PAGE_RATIO * pages) - 1, 0),             # 비율 바로 아래
+        (0, 0, 0),
+    ]
+    for p, sp, ch in cases:
+        want = p > 0 and sp / p >= config.SCAN_PDF_PAGE_RATIO and ch / p < config.SCAN_PDF_PAGE_MAX_CHARS
+        assert dp.scan_pdf_verdict(p, sp, ch) == want, (p, sp, ch)
 
 
 #------------------------------------------------------------------

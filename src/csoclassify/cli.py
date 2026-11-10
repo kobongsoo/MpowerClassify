@@ -310,6 +310,12 @@ def build_parser():
     p.add_argument("--synap-fallback", dest="synap_fallback", action="store_true",
                    help="자체 파서가 못 읽은 문서만 사이냅으로(기본 동작과 같다). 명시하면 "
                         "snf_exe 가 꼭 있어야 하고, 없으면 문서를 읽기 전에 1016 synap_missing 으로 멈춘다")
+    # 자체 파서가 누구냐 — 설계: plan/Python-문서파서-Rust연동-설계-20261110.html §4-3
+    p.add_argument("--extractor", dest="extractor", choices=config.EXTRACTORS, default=None,
+                   help="형식별 자체 파서와 압축 해제기를 고른다: py = 지금 파이썬 파서, "
+                        "rust = docparse 모듈(Rust 판과 같은 파서). 기본은 환경변수 "
+                        f"CSOCLASSIFY_EXTRACTOR, 없으면 {config.EXTRACTOR}. "
+                        "rust 인데 docparse 모듈이 없으면 문서를 읽기 전에 1017 extractor_missing 으로 멈춘다")
     p.add_argument("--synap-path", dest="synap_path", default=None, metavar="경로",
                    help="사이냅 실행파일(snf_exe) 경로를 직접 준다(찾기 순서를 건너뛴다)")
 
@@ -857,6 +863,42 @@ def check_synap_args(args):
     if os.name != "nt" and not os.access(exe, os.X_OK):
         return fail_err("synap_missing",
                         f"[MpowerClassify] 사이냅 실행파일에 실행 권한이 없습니다: {exe} (chmod +x)", exe)
+    return None
+
+
+#------------------------------------------------------------------
+# 자체 파서 고르기 검사 — 문서를 읽기 전에 끝낸다
+#=> 설계: plan/Python-문서파서-Rust연동-설계-20261110.html §4-3
+#    1) --extractor 가 있으면 그 값, 없으면 환경변수 CSOCLASSIFY_EXTRACTOR(config.EXTRACTOR)
+#    2) 환경변수 값이 py · rust 가 아니면 1003 bad_args
+#    3) rust 인데 docparse 모듈을 못 불러오면 1017 extractor_missing — 조용히 py 로
+#       넘어가면 판정이 몰래 바뀌므로 멈춘다
+#    4) 고른 값을 config.EXTRACTOR 에 새긴다(추출기 · 압축 해제가 이 값을 본다)
+#    5) 일반 로그에 고른 파서와 docparse 버전을 남긴다
+#
+# -in: args = 파싱된 인자
+#
+# -out: None = 문제 없음 / int = 종료코드(이미 오류를 알렸다 — 그대로 return 한다)
+# -out: error = 예외 없음
+#------------------------------------------------------------------
+def check_extractor_args(args):
+    which = (getattr(args, "extractor", None) or config.EXTRACTOR or "py").strip().lower()
+    if which not in config.EXTRACTORS:
+        return fail_err("bad_args",
+                        f"[MpowerClassify] CSOCLASSIFY_EXTRACTOR 값이 올바르지 않습니다: {which} (py · rust)")
+    log = logsetup.get_logger("csoclassify.cli")
+    if which == "rust":
+        from .extract import rust_engine
+        ok, why = rust_engine.available()
+        if not ok:
+            return fail_err("extractor_missing",
+                            f"[MpowerClassify] --extractor rust 를 골랐지만 {why} "
+                            "(docparse.dll / libdocparse.so 를 실행파일 옆에 두거나 CSO_DOCPARSE 로 알려 주세요)")
+        log.info("실행 자체파서=rust docparse=%s lib=%s pdfium=%s",
+                 rust_engine.version(), rust_engine.lib_path(), rust_engine.pdfium_lib_path())
+    else:
+        log.info("실행 자체파서=py")
+    config.EXTRACTOR = which
     return None
 
 
@@ -5413,6 +5455,10 @@ def _main(argv=None):
     _sc = check_synap_args(args)
     if _sc is not None:
         return _sc
+    # 자체 파서를 rust 로 골랐는데 docparse 모듈이 없으면 문서를 읽기 전에 끝낸다(1017).
+    _xc = check_extractor_args(args)
+    if _xc is not None:
+        return _xc
     # 등급 스트림 옵션 조합이 틀렸거나 쓸 수 없는 플랫폼이면 읽기 전에 끝낸다.
     _gc = check_grade_stream_args(args)
     if _gc is not None:

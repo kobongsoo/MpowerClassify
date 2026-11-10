@@ -44,6 +44,11 @@ hiddenimports = [
     "csoclassify.extract.html_text",
     "csoclassify.extract.office_ooxml",
     "csoclassify.extract.office_legacy",
+    # Rust 문서파서(--extractor rust) — 설계: plan/Rust-문서파서-라이브러리분리-설계-20261110.html §6-2.
+    # docparse 는 별도 프로젝트(DocParse-rust)가 만든 공유 라이브러리를 ctypes(_docparse.py)로 부른다.
+    # 라이브러리 파일은 아래 binaries 에 넣는다. 빠지면 그 배포본은 --extractor rust 에서 1017 로 멈춘다.
+    "csoclassify.extract.rust_engine",
+    "csoclassify.extract._docparse",
     # 포맷별 파서 라이브러리(전부 CentOS7/glibc2.17 호환 wheel).
     # docx/xlsx/pptx 는 stdlib(zipfile+ElementTree)로 직접 파싱하므로 라이브러리 불필요.
     "olefile", "pypdfium2", "xlrd",
@@ -66,6 +71,15 @@ if os.name != "nt":
 #             ② sys.prefix/lib (conda 파이썬으로 직접 빌드하던 기존 방식)
 # venv(--system-site-packages)로 빌드하면 sys.prefix 에는 없으므로 ①이 필요하다.
 binaries = []
+# 문서파서 라이브러리(docparse.dll / libdocparse.so) — 저장소 third_party/docparse/<os>-x64 의 정본을
+# 묶음 최상위(_internal = sys._MEIPASS)에 둔다. _docparse.py 는 _MEIPASS 를 찾아본다.
+_dp_sub = "windows-x64" if os.name == "nt" else "linux-x64"
+_dp_name = "docparse.dll" if os.name == "nt" else "libdocparse.so"
+_dp_path = os.path.join(ROOT, "third_party", "docparse", _dp_sub, _dp_name)
+if os.path.isfile(_dp_path):
+    binaries.append((_dp_path, "."))
+else:
+    print("[spec] 경고: 문서파서 라이브러리가 없습니다 — %s (--extractor rust 가 1017 로 멈춘다)" % _dp_path)
 if os.name != "nt":
     _libdirs = [d for d in (os.environ.get("CSO_EXTRA_LIBDIR"),
                             os.path.join(sys.prefix, "lib")) if d]

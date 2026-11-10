@@ -1,14 +1,12 @@
 //! MpowerClassify-rs — MpowerClassify rule-only 분류 코어의 Rust 포팅 (PoC).
 //! 추출(text/html/ooxml) + 규칙 분류(PII·키워드·민감·스탬프·경로·파일명·융합) + CLI.
 
-mod archive;
 mod textsave;
 mod axes;
 mod bm25;
 mod conflict;
 mod daemon;
 mod decrypt;
-mod detect;
 mod districts;
 mod doc_rules;
 mod doctype;
@@ -18,16 +16,14 @@ mod embed;
 mod errcodes;
 mod errlog;
 mod log;
-mod extract;
 mod synap;
+mod docparse;
+mod docparse_dyn;
+mod extractcfg;
 mod gradestream;
 mod gradeoverride;
-mod html_entities;
 mod filelist;
-mod hwp5;
 mod limits;
-mod office_legacy;
-mod ole;
 mod pii;
 mod pii_fold;
 mod propagate;
@@ -37,10 +33,12 @@ mod seedcli;
 mod taxhead;
 mod termsuggest;
 mod seedstore;
-mod xls;
-mod xlsdate;
 
 use std::path::{Path, PathBuf};
+
+// 문서 → 본문 추출과 압축 해제는 docparse 라이브러리로 떼어 냈다. 이 파일 안의
+// 호출부는 예전 모듈 이름(detect::·archive::)을 그대로 쓴다.
+use docparse::{archive, detect};
 use std::time::Instant;
 
 use serde_json::{json, Value};
@@ -76,6 +74,8 @@ struct Opts {
     synap_only: bool,
     synap_fallback: bool,
     synap_path: Option<String>,
+    // 문서파서 라이브러리(docparse.dll/.so)를 직접 가리킨다(없으면 CSO_DOCPARSE → exe 옆).
+    docparse_lib: Option<String>,
     // 등급 스트림 기록(설계: plan/등급스트림-기록-옵션-설계-20261019.html).
     //  · write_grade_stream        : 분류한 문서의 :mgrade 에 최종 등급을 쓴다
     //  · grade_stream_unclassified : 등급 없는 문서 — "skip"(기본) | "none"(NONE 기록)
@@ -384,6 +384,9 @@ fn usage() {
     eprintln!("  [찾기] --synap-path → CSOCLASSIFY_SYNAP_DIR → exe 옆 synap/ → exe 옆 resources/synap/");
     eprintln!("         (각 폴더에서 {}/ 하위폴더 먼저). 못 찾으면 문서를 읽기 전에 1016 synap_missing",
               if cfg!(windows) { "windows" } else { "linux" });
+    eprintln!("  --docparse-lib <경로>     문서파서 라이브러리({})를 직접 가리킵니다",
+              if cfg!(windows) { "docparse.dll" } else { "libdocparse.so" });
+    eprintln!("  [찾기] --docparse-lib → CSO_DOCPARSE → exe 옆. 못 찾으면 문서를 읽기 전에 1017 extractor_missing");
     eprintln!("  [환경변수] CSOCLASSIFY_SYNAP_MODE=off|fallback|only (인자가 이깁니다)");
     eprintln!("");
     eprintln!("─── ⑩-0b 등급 스트림 기록 — 문서 파일의 :mgrade 에 등급을 쓴다(Windows NTFS) ──");
@@ -568,6 +571,7 @@ fn parse_args() -> Result<Opts, String> {
         synap_only: false,
         synap_fallback: false,
         synap_path: None,
+        docparse_lib: None,
         write_grade_stream: false, grade_stream_unclassified: None, grade_stream_update_time: false,
         embed_flag: false,
         grade_overrides: None, set_grade: None, reviewer: None, reason: None,
@@ -689,6 +693,8 @@ fn parse_args() -> Result<Opts, String> {
             "--synap-only" => o.synap_only = true,
             "--synap-fallback" => o.synap_fallback = true,
             "--synap-path" => o.synap_path = take(false),
+            // 문서파서 라이브러리 파일(또는 그것이 든 폴더)
+            "--docparse-lib" => o.docparse_lib = take(false),
             // 등급 스트림 기록(check_grade_stream_args 가 조합을 본다)
             "--write-grade-stream" => o.write_grade_stream = true,
             "--grade-stream-unclassified" => o.grade_stream_unclassified = Some(take(false).unwrap_or_default()),
@@ -1614,7 +1620,11 @@ fn run_seed_fill_title(opts: &Opts) -> i32 {
         if text.is_none() && !file.is_empty() && std::path::Path::new(&file).is_file() {
             // 저장해 둔 본문이 없으면 원본을 다시 읽는다
             let p = std::path::Path::new(&file);
-            text = extract::extract_text_with(p, detect::detect_format(p), extract::mode(), &file).ok();
+            // 분리 전 이 자리는 크기 상한을 보지 않았다 — 같은 동작을 지키려고 크기 상한만 끈다.
+            let mut o = extractcfg::options(&file);
+            o.limits.max_file_bytes = None;
+            o.limits.max_file_bytes_text = None;
+            text = docparse::extract_as(p, detect::detect_format(p), &o).ok().map(|x| x.text);
         }
         let Some(text) = text else { nosrc += 1; continue };
         let t = bm25::title_of(&text, &file);
@@ -1987,7 +1997,7 @@ fn run_text_only(opts: &Opts) -> i32 {
     let _ = std::fs::remove_dir_all(&arc_tmp);
     let _ = std::fs::create_dir_all(&arc_tmp);
     let mut arc_stats = archive::ExpandStats::default();
-    let mut jobs: Vec<archive::Job> = archive::expand_paths(&files, &arc_tmp, 3, &mut arc_stats);
+    let mut jobs: Vec<archive::Job> = archive::expand_paths(&files, &arc_tmp, &limits::archive_options(), &mut arc_stats);
     if let Some((tmp_label, display)) = &dec_relabel {
         for j in jobs.iter_mut() {
             if j.label.starts_with(tmp_label.as_str()) {
@@ -2035,13 +2045,11 @@ fn run_text_only(opts: &Opts) -> i32 {
             None
         } else {
             // 이번 실행의 추출 모드(자체 파서 · 사이냅 폴백 · 사이냅만)로 뽑는다.
-            match extract::extract_text_with(path, fmt, extract::mode(), &job.label) {
+            match extractcfg::extract_text(path, fmt, &job.label) {
                 Ok(t) => Some(t),
                 Err(why) => { ext_why = why; None }
             }
         };
-        // 파서가 상한에서 멈췄다는 표식은 가져가서 비워 둔다(다음 문서에 안 묻게).
-        let _ = limits::notes_take();
         match text {
             Some(t) => {
                 let _ = writeln!(sink, "===== {} =====", job.label);
@@ -2358,7 +2366,7 @@ fn glob_match(pat: &str, name: &str) -> bool {
 //
 // -in: opts = 파싱된 실행 옵션
 //
-// -out: 없음(extract::set_mode 로 이번 실행의 모드를 새긴다)
+// -out: 없음(extractcfg::set_engine 으로 이번 실행의 엔진을 새긴다)
 // -out: error = 1006 mode_conflict · 1016 synap_missing · 1003 bad_args(환경변수 값이 틀림)로 종료(코드 3)
 //------------------------------------------------------------------
 fn handle_extractor_args(opts: &Opts) {
@@ -2380,7 +2388,7 @@ fn handle_extractor_args(opts: &Opts) {
             if opts.synap_path.is_some() {
                 note!("[MpowerClassify-rs] --synap-path 는 --synap-fallback 또는 --synap-only 와 함께 쓸 때만 쓰입니다(지금은 자체 파서만 씁니다).");
             }
-            extract::ExtractMode::Builtin
+            docparse::Engine::Builtin
         }
         "fallback" | "only" => {
             let snf = match synap::find_snf(opts.synap_path.as_deref()) {
@@ -2388,17 +2396,17 @@ fn handle_extractor_args(opts: &Opts) {
                 Err(why) => errcodes::fail("synap_missing",
                     &format!("[MpowerClassify-rs] {}", why), opts.synap_path.as_deref()),
             };
-            if want == "only" { extract::ExtractMode::SynapOnly(snf) } else { extract::ExtractMode::SynapFallback(snf) }
+            if want == "only" { docparse::Engine::SynapOnly(snf) } else { docparse::Engine::SynapFallback(snf) }
         }
         other => errcodes::fail("bad_args",
             &format!("[MpowerClassify-rs] CSOCLASSIFY_SYNAP_MODE 값이 올바르지 않습니다: {} (off · fallback · only)", other), None),
     };
     match &mode {
-        extract::ExtractMode::Builtin => linfo!("실행 추출기={}", mode.name()),
-        extract::ExtractMode::SynapFallback(p) | extract::ExtractMode::SynapOnly(p) =>
+        docparse::Engine::Builtin => linfo!("실행 추출기={}", mode.name()),
+        docparse::Engine::SynapFallback(p) | docparse::Engine::SynapOnly(p) =>
             linfo!("실행 추출기={} snf={}", mode.name(), p.display()),
     }
-    extract::set_mode(mode);
+    extractcfg::set_engine(mode);
 }
 
 //------------------------------------------------------------------
@@ -3074,6 +3082,13 @@ fn main() {
     // 일반 로그를 연다. parse_args 뒤에 두는 이유는 --log 경로를 알아야 하기
     // 때문이고, 그 앞의 인자 오류는 errlog(오류 로그)가 이미 받아 준다.
     log::init(opts.log.as_deref(), opts.verbose);
+    // 문서파서 라이브러리 위치를 직접 줬으면 처음 불러오기 전에 알려 둔다.
+    if let Some(p) = opts.docparse_lib.as_deref() {
+        docparse::set_explicit_path(std::path::PathBuf::from(p));
+    }
+    // docparse 가 남기는 추출 로그를 같은 로그 파일로 받는다(문장은 분리 전과 같다).
+    // 라이브러리는 처음 쓸 때 불러오고, 그때 로그 받기도 단다(문서를 읽지 않는 명령은 불러오지 않는다).
+    extractcfg::install_log_bridge();
     // 파이썬 판이 남기는 첫 두 줄과 같은 내용이다 — 로그 파일만 받아도 무슨
     // 명령으로 돌렸는지 알 수 있어야 재현이 된다.
     // 열쇠(--mrk 뒤의 값)는 로그에 남기지 않는다 — **** 로 가려서 적는다(설계 §8).
@@ -3318,7 +3333,7 @@ fn main() {
     } else {
         (files, vec![])
     };
-    let mut files: Vec<archive::Job> = archive::expand_paths(&plain_paths, &arc_tmp, 3, &mut arc_stats);
+    let mut files: Vec<archive::Job> = archive::expand_paths(&plain_paths, &arc_tmp, &limits::archive_options(), &mut arc_stats);
     for p in &dec_paths {
         files.push(archive::Job {
             src: p.clone(),
@@ -3669,7 +3684,7 @@ fn main() {
                     let tmp_label = d.file.to_string_lossy().replace('\\', "/");
                     let mark = (arc_stats.unexpanded.len(), arc_stats.unsupported.len(),
                                 arc_stats.partial.len());
-                    let mut jobs = archive::expand_paths(&[d.file.clone()], &xdir, 3, &mut arc_stats);
+                    let mut jobs = archive::expand_paths(&[d.file.clone()], &xdir, &limits::archive_options(), &mut arc_stats);
                     // 라벨에서 임시 경로를 원래 경로로 되돌린다 — 임시 경로는 결과·로그 어디에도
                     // 나가면 안 된다(곧 지워지는 경로이고, 임시 폴더 구조가 새어 나간다).
                     let fix = |s: &str| -> String {
@@ -3827,21 +3842,24 @@ fn main() {
         };
         // 사이냅 모드에서 못 읽은 까닭(엔진별). 자체 파서 모드는 빈 문자열이라 예전 문장 그대로다.
         let mut ext_why = String::new();
+        // 파서가 '상한에서 멈췄다'를 남겼으면 그 표식(G5 관측) — (사유, 단위, 읽은 수, 전체 수).
+        let mut partial: Option<(String, String, usize, usize)> = None;
+        // PDF 파서가 남긴 페이지 구성(읽은 쪽 수, 스캔 쪽 수) — 처리제외 판정 재료.
+        let mut layout: Option<(usize, usize)> = None;
         let extracted = if size_reason.is_some() || vol_reason.is_some() {
             None
         } else {
-            // 이번 실행의 추출 모드(자체 파서 · 사이냅 폴백 · 사이냅만)로 뽑는다.
-            // 로그에는 임시 경로 대신 원래 경로(shown)를 적는다.
-            match extract::extract_text_with(path, fmt, extract::mode(), &shown) {
-                Ok(t) => Some(t),
-                Err(why) => { ext_why = why; None }
+            // 이번 실행의 추출 엔진(자체 파서 · 사이냅 폴백 · 사이냅만)으로 뽑는다.
+            // 로그에는 임시 경로 대신 원래 경로(shown)를 적는다. 표식은 반환값에 담겨 온다.
+            match docparse::extract_as(path, fmt, &extractcfg::options(&shown)) {
+                Ok(x) => {
+                    partial = x.partial.map(|p| (p.reason, p.unit, p.read, p.total));
+                    layout = x.layout.map(|l| (l.pages, l.scan_pages));
+                    Some(x.text)
+                }
+                Err(e) => { ext_why = extractcfg::fail_reason(&e); None }
             }
         };
-        // 파서가 '상한에서 멈췄다'를 남겼으면 가져온다(G5 관측). 가져가면 비워지므로
-        // 다음 문서에 지난 표식이 남지 않는다.
-        let partial = limits::notes_take();
-        // PDF 파서가 남긴 페이지 구성(읽은 쪽 수, 스캔 쪽 수) — 처리제외 판정 재료.
-        let layout = limits::notes_take_layout();
         let text = match extracted {
             Some(t) => t,
             None => {
@@ -4007,7 +4025,7 @@ fn main() {
         // error 도 달지 않고 종료코드도 올리지 않는다. 본문이 20자를 넘는 스캔본(머리말
         // 몇 줄만 글자로 든 문서)도 있어 본문없음 판정과 무관하게 먼저 본다.
         let scan = layout.filter(|&(pages, scan_pages)|
-            extract::scan_pdf_verdict(pages, scan_pages, body_chars));
+            docparse::scan_pdf_verdict(pages, scan_pages, body_chars));
         if let Some((pages, scan_pages)) = scan {
             n_excluded += 1;
             errlog::note(&format!("[처리제외] {} (스캔 PDF, {}쪽 중 {}쪽이 그림)",

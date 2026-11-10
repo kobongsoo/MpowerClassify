@@ -2,47 +2,44 @@
 name = "MpowerClassify-rs"
 version = "0.1.0"
 edition = "2021"
-description = "MpowerClassify rule-only 분류 코어의 Rust 포팅 (추출 + 규칙 분류). 정적 단일 바이너리 지향."
+description = "MpowerClassify rule-only 분류 코어의 Rust 포팅 (추출은 docparse 동적 라이브러리 + 규칙 분류)."
+
+# 문서 → 본문 추출(+ 압축 해제)은 별도 프로젝트 D:\Project\DocParse-rust 가 만든
+# docparse.dll / libdocparse.so 를 실행 중에 불러 쓴다(src/docparse.rs). 소스는 이 저장소에 없다.
+# 라이브러리 파일은 ../third_party/docparse/ 에 버전을 고정해 두고 build.rs 가 exe 옆으로 복사한다.
+# 설계: plan/Rust-문서파서-라이브러리분리-설계-20261110.html (개정 2)
 
 [[bin]]
 name = "MpowerClassify-rs"
 path = "src/main.rs"
 
 [dependencies]
+# 문서파서 라이브러리(docparse.dll / libdocparse.so)를 실행 중에 불러오기 위해.
+# ort(load-dynamic)가 이미 쓰는 크레이트라 새로 받는 것이 없다.
+libloading = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 serde_yaml = "0.9"
 regex = "1"
 unicode-normalization = "0.1"
-zip = { version = "0.6", default-features = false, features = ["deflate"] }
-# HWP5 섹션은 zlib 헤더 없는 raw deflate — zip 이 이미 끌어오는 crate 라 새 의존이 아니다.
-flate2 = "1"
 walkdir = "2"
-# 압축 확장(archive.rs) — 전부 순수 Rust 다. C 라이브러리를 끌어오면 "정적 단일
-# 바이너리" 목표가 깨지고 CentOS 7 빌드가 까다로워진다.
-tar = "0.4"          # tar 자체는 압축을 안 한다 — gz 해제는 flate2 가 맡는다
-bzip2-rs = "0.1"     # 해제 전용 순수 Rust 구현
-lzma-rs = "0.3"      # xz 해제 전용 순수 Rust 구현
-encoding_rs = "0.8"
 sha2 = "0.10"
 once_cell = "1"
 # 레코드의 ts(생성 시각) — 파이썬 판과 같은 로컬 타임존 ISO-8601 을 내려면
 # 시스템 타임존을 알아야 한다. chrono 는 순수 Rust 라 C 컴파일러가 필요 없다.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-pdfium-render = "0.8"
 # 임베딩(전파/--vector-only)용 — 모델·런타임은 외부 파일 로딩(pdfium 방식).
 ort = { version = "=2.0.0-rc.10", default-features = false, features = ["load-dynamic"] }
 tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
-sevenz-rust2 = "0.22.2"
-rars = "0.9.4"
-# xlsx 시트 XML 을 흘려 읽기(SAX) 위한 순수 Rust 파서. 정규식으로 통째로 훑던
-# 방식은 거대한 단일 시트에서 비용이 급격히 커졌다(실측 15.2MB 파일 5.0초).
-quick-xml = { version = "0.42.0", default-features = false }
 # Ctrl+C 를 받아 압축 해제 임시폴더(내부 원문 포함)를 지우고 130 으로 끝내기 위해.
 # 순수 Rust(윈도우는 windows-sys, 리눅스는 nix)라 정적 단일 바이너리 목표를 깨지 않는다.
 ctrlc = "3"
 # 상주 서버 접속 토큰용 OS 난수. 이미 의존 트리에 있는 크레이트라(Cargo.lock) 새로 받는 것이 없다.
 getrandom = "0.3"
+
+[dev-dependencies]
+# 시험에서 압축 문서를 만들 때만 쓴다(추출은 docparse 라이브러리가 한다).
+zip = { version = "0.6", default-features = false, features = ["deflate"] }
 
 [profile.release]
 opt-level = 3

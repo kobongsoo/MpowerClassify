@@ -69,9 +69,13 @@ step "소스 올리기"
 tar -czf "$TMP/cso_src.tgz" \
     --exclude='build/_work' --exclude='build/_work_onefile' \
     --exclude='build/pyi-onefile' --exclude='build/csoclassify' \
-    src build requirements.txt || die "파이썬 소스를 묶지 못했습니다"
+    src build requirements.txt third_party/docparse/linux-x64 third_party/docparse/VERSION \
+    || die "파이썬 소스를 묶지 못했습니다"
+# third_party/docparse/linux-x64 = 별도 프로젝트(DocParse-rust)가 만든 libdocparse.so(문서파서).
+# Rust 판은 build.rs 가 exe 옆으로 복사하고, 파이썬 판은 spec 이 묶는다. 빠지면 두 판 모두 1017 로 멈춘다.
 tar -czf "$TMP/rustsrc.tgz" -C Rust \
     Cargo.toml Cargo.lock build.rs src resources tests README.md \
+    -C .. third_party/docparse/linux-x64 third_party/docparse/VERSION \
     || die "Rust 소스를 묶지 못했습니다"
 # 규칙셋·분류체계·seed 는 '갱신되는 쪽'에서 가져온다(빌드가이드 4장 '정책 파일 정본').
 tar -czf "$TMP/assets.tgz" -C . \

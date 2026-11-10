@@ -1247,3 +1247,82 @@ def test_cso_embed_min_sim_changes_propagation():
     assert P.propagate(q, seeds, **R.CsoEmbedSpec().kwargs()).grade == "C"
     far = P.propagate(q, seeds, **R.CsoEmbedSpec(min_sim=0.70).kwargs())
     assert far.grade is None and far.method == "too_far"
+
+
+#------------------------------------------------------------------
+# [의도적 차이 G] 여권 — S·O·G 접두와 신형 여권을 잡는다
+#=> ko-pii 1.15.2 는 숫자 닮은꼴 되돌리기(O→0·S→5·G→6)가 여권 접두를 지워 S·O·G
+#   여권을 못 잡고(비교 시험 0/21), 신형 여권(M123A4567)은 규칙에 없다. ko-pii 1.22 가
+#   고친 동작에 맞췄다. 근거: rules._passport_detect · _detect_subset 헤더,
+#   doc/ko-pii 차이점.html. Rust pii::tests::여권_접두_SOG와_신형을_잡는다 와 같은 벡터.
+#
+# -in: 없음
+# -out: 없음(assert)
+# -out: error = 동작이 바뀌면 AssertionError / ko-pii 미설치 시 skip
+#------------------------------------------------------------------
+def test_passport_prefix_and_modern():
+    if not R._HAVE_KOPII:
+        pytest.skip("ko-pii 미설치 환경")
+
+    # 여권만 켜고 (라벨, 값) 목록
+    def p(text):
+        return [(m.label, m.text) for m in R._kopii_scan(text, {"PASSPORT"})]
+
+    assert p("여권번호: O48832568") == [("PASSPORT", "O48832568")]
+    assert p("여권번호: S83855542") == [("PASSPORT", "S83855542")]
+    assert p("여권번호: G34612926") == [("PASSPORT", "G34612926")]
+    assert p("여권번호: M123A4567") == [("PASSPORT", "M123A4567")]
+    assert p("여권번호: M12345678") == [("PASSPORT", "M12345678")]
+    assert p("여권번호 PS87654321 소지.") == [("PASSPORT", "PS87654321")]
+    # 소문자 접두 · 영숫자에 붙은 것은 여권으로 보지 않는다(그대로)
+    assert p("여권번호: m12345678") == []
+    assert p("모델 AM123A4567B") == []
+
+
+#------------------------------------------------------------------
+# [의도적 차이 H] 계좌 — 값이 줄바꿈을 넘지 않는다
+#=> ko-pii 는 숫자 사이 구분자로 줄바꿈도 받아 다음 줄 첫 숫자를 붙여 낸다.
+#   첫 줄바꿈 앞에서 자르고, 10자리가 안 되면 버린다.
+#   Rust pii::tests::계좌가_줄바꿈을_넘지_않는다 와 같은 벡터.
+#
+# -in: 없음
+# -out: 없음(assert)
+# -out: error = 동작이 바뀌면 AssertionError / ko-pii 미설치 시 skip
+#------------------------------------------------------------------
+def test_account_no_line_cross():
+    if not R._HAVE_KOPII:
+        pytest.skip("ko-pii 미설치 환경")
+    v = [(m.label, m.text) for m in R._kopii_scan("계좌번호: 3333-76-8211051\r\n62우 2183 차량",
+                                                 {"ACCOUNT", "VEHICLE"})]
+    assert v == [("ACCOUNT", "3333-76-8211051"), ("VEHICLE", "62우 2183")]
+    assert R._kopii_counts("계좌번호: 110-123-\n456789", {"ACCOUNT"}).get("ACCOUNT", 0) == 0
+    assert R._kopii_counts("계좌번호: 110-123-456789", {"ACCOUNT"}).get("ACCOUNT", 0) == 1
+
+
+#------------------------------------------------------------------
+# [의도적 차이 I] 계좌 — 표 머리줄 문맥
+#=> 머리줄에만 "계좌번호"가 있는 TSV·CSV 표의 같은 칸 값을 계좌로 본다.
+#   구분자·칸 수가 바뀌거나 빈 줄이 나오면 표가 끝난 것으로 본다.
+#   Rust pii::tests::계좌_표_머리줄_문맥 과 같은 벡터.
+#
+# -in: 없음
+# -out: 없음(assert)
+# -out: error = 동작이 바뀌면 AssertionError / ko-pii 미설치 시 skip
+#------------------------------------------------------------------
+def test_account_table_header():
+    if not R._HAVE_KOPII:
+        pytest.skip("ko-pii 미설치 환경")
+
+    # 계좌 건수
+    def n(text):
+        return R._kopii_counts(text, {"ACCOUNT"}).get("ACCOUNT", 0)
+
+    v = [(m.label, m.text) for m in R._kopii_scan(
+        "성명\t계좌번호\t연락처\r\n홍길동\t110-123-456789\t010-2345-6789", {"ACCOUNT", "PHONE"})]
+    assert v == [("ACCOUNT", "110-123-456789"), ("PHONE", "010-2345-6789")]
+    assert n("성명,계좌번호\r\n김철수,3333-12-1234567") == 1
+    # 머리줄에 "계좌"가 없음 · 칸 수가 다름 · 빈 줄로 끊김 · 자릿수 모자람 → 계좌 아님
+    assert n("성명\t번호\r\n홍길동\t110-123-456789") == 0
+    assert n("성명\t계좌번호\r\n홍길동\t110-123-456789\t추가") == 0
+    assert n("성명\t계좌번호\r\n\r\n홍길동\t110-123-456789") == 0
+    assert n("성명\t계좌번호\r\n홍길동\t12-345") == 0

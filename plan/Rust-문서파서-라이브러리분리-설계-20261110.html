@@ -1,0 +1,568 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rust 문서파서 독립 분리</title>
+</head>
+<body>
+<style>
+  :root{
+    --bg:#f4f6f9; --surface:#ffffff; --surface-2:#eef1f6; --ink:#191d24;
+    --muted:#58616e; --faint:#8b94a2; --line:#dde2ea; --line-strong:#c7cfda;
+    --accent:#26437e; --accent-2:#365fb0; --accent-soft:#e7edf7;
+    --c:#cf3b2e; --c-soft:#fbeceb; --s:#b3760f; --s-soft:#f9f0dc; --o:#2f8f57; --o-soft:#e6f3ea;
+    --shadow:0 1px 2px rgba(20,30,50,.04), 0 8px 24px rgba(20,30,50,.06);
+    --sans:"Pretendard Variable",Pretendard,"Malgun Gothic","맑은 고딕",-apple-system,"Apple SD Gothic Neo",system-ui,sans-serif;
+    --mono:ui-monospace,"Cascadia Code","Cascadia Mono",Consolas,"D2Coding",monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0e1116; --surface:#161b22; --surface-2:#1d232c; --ink:#e7ebf1;
+      --muted:#9aa4b2; --faint:#6b7684; --line:#262d38; --line-strong:#333c49;
+      --accent:#7ea0e8; --accent-2:#8fb0f2; --accent-soft:#182233;
+      --c:#f2695c; --c-soft:#2a1715; --s:#e6a748; --s-soft:#271e10; --o:#57bd85; --o-soft:#122217;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#f4f6f9; --surface:#ffffff; --surface-2:#eef1f6; --ink:#191d24;
+    --muted:#58616e; --faint:#8b94a2; --line:#dde2ea; --line-strong:#c7cfda;
+    --accent:#26437e; --accent-2:#365fb0; --accent-soft:#e7edf7;
+    --c:#cf3b2e; --c-soft:#fbeceb; --s:#b3760f; --s-soft:#f9f0dc; --o:#2f8f57; --o-soft:#e6f3ea;
+  }
+  :root[data-theme="dark"]{
+    --bg:#0e1116; --surface:#161b22; --surface-2:#1d232c; --ink:#e7ebf1;
+    --muted:#9aa4b2; --faint:#6b7684; --line:#262d38; --line-strong:#333c49;
+    --accent:#7ea0e8; --accent-2:#8fb0f2; --accent-soft:#182233;
+    --c:#f2695c; --c-soft:#2a1715; --s:#e6a748; --s-soft:#271e10; --o:#57bd85; --o-soft:#122217;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    line-height:1.7;-webkit-font-smoothing:antialiased;font-size:16px;letter-spacing:-0.003em;}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 24px 96px;}
+  header.doc{padding:56px 0 34px;border-bottom:1px solid var(--line);margin-bottom:40px;}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);font-weight:600;display:flex;gap:10px;align-items:center;margin-bottom:20px;}
+  .eyebrow::before{content:"";width:26px;height:2px;background:var(--accent);border-radius:2px;}
+  h1.title{font-size:clamp(28px,4.6vw,44px);line-height:1.12;margin:0 0 14px;font-weight:800;
+    letter-spacing:-0.02em;text-wrap:balance;}
+  .lede{font-size:clamp(16px,2.1vw,19px);color:var(--muted);margin:0 0 22px;max-width:64ch;}
+  .lede b{color:var(--ink);font-weight:600;}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;}
+  .chip{font-size:12px;font-family:var(--mono);color:var(--muted);background:var(--surface);
+    border:1px solid var(--line);border-radius:999px;padding:5px 12px;}
+  .chip b{color:var(--ink);font-weight:600;}
+  section{margin:52px 0;scroll-margin-top:20px;}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:22px;}
+  .sec-num{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--accent);
+    border:1px solid var(--line-strong);border-radius:7px;padding:3px 9px;flex:none;line-height:1.3;}
+  h2{font-size:clamp(21px,3vw,27px);margin:0;font-weight:750;letter-spacing:-0.015em;line-height:1.25;}
+  h3{font-size:17px;margin:30px 0 12px;font-weight:700;letter-spacing:-0.01em;}
+  p{margin:0 0 15px;max-width:72ch;}
+  ul.plain{margin:0 0 15px;padding-left:20px;} ul.plain li{margin:5px 0;color:var(--muted);}
+  ul.plain li b{color:var(--ink);font-weight:600;}
+  ol.plain{margin:0 0 15px;padding-left:22px;} ol.plain li{margin:6px 0;color:var(--muted);}
+  ol.plain li b{color:var(--ink);font-weight:600;}
+  .tldr{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--accent);
+    border-radius:12px;padding:22px 24px;box-shadow:var(--shadow);}
+  .tldr .k{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);font-weight:700;margin-bottom:10px;}
+  .tldr p{margin:0;font-size:17px;color:var(--ink);max-width:none;}
+  .tldr b{color:var(--accent-2);}
+  .twrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);margin:16px 0;}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:640px;background:var(--surface);}
+  th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--line);vertical-align:top;}
+  thead th{background:var(--surface-2);font-size:12px;letter-spacing:.03em;color:var(--muted);
+    text-transform:uppercase;font-weight:700;white-space:nowrap;}
+  tbody tr:last-child td{border-bottom:none;}
+  td.mono,.mono-cell{font-family:var(--mono);font-size:13px;white-space:nowrap;}
+  code.inl{font-family:var(--mono);font-size:.9em;background:var(--surface-2);border:1px solid var(--line);
+    border-radius:5px;padding:1px 6px;}
+  pre{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 20px;
+    overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.65;box-shadow:var(--shadow);color:var(--ink);}
+  pre .cm{color:var(--o);} pre .kw{color:var(--accent-2);font-weight:600;} pre .hi{color:var(--c);font-weight:600;}
+  .note{border:1px solid var(--line);background:var(--surface-2);border-radius:12px;padding:16px 18px;
+    font-size:14.5px;display:flex;gap:12px;align-items:flex-start;margin:16px 0;}
+  .note .badge{font-family:var(--mono);font-size:10.5px;font-weight:800;letter-spacing:.06em;
+    padding:3px 8px;border-radius:6px;flex:none;text-transform:uppercase;white-space:nowrap;}
+  .note.safe .badge{color:var(--o);background:var(--o-soft);border:1px solid color-mix(in srgb,var(--o) 35%,transparent);}
+  .note.warn .badge{color:var(--s);background:var(--s-soft);border:1px solid color-mix(in srgb,var(--s) 35%,transparent);}
+  .note.bad .badge{color:var(--c);background:var(--c-soft);border:1px solid color-mix(in srgb,var(--c) 35%,transparent);}
+  .note.info .badge{color:var(--accent-2);background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent-2) 35%,transparent);}
+  .note p{margin:0;color:var(--muted);max-width:none;}
+  .note b{color:var(--ink);}
+  .x{color:var(--c);font-weight:700}
+  .ok{color:var(--o);font-weight:700}
+  .wn{color:var(--s);font-weight:700}
+  .src{font-family:var(--mono);font-size:12px;color:var(--faint);}
+  .fig{background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);
+    padding:18px;margin:16px 0;overflow-x:auto;}
+  .fig svg{display:block;min-width:680px;width:100%;height:auto;}
+  .fig text{font-family:var(--sans);fill:var(--ink);font-size:13px;}
+  .fig .t-mono{font-family:var(--mono);font-size:11.5px;fill:var(--muted);}
+  .fig .t-h{font-weight:700;font-size:14px;}
+  .fig .box{fill:var(--surface-2);stroke:var(--line-strong);}
+  .fig .box-a{fill:var(--accent-soft);stroke:var(--accent-2);}
+  .fig .ln{stroke:var(--muted);stroke-width:1.4;fill:none;}
+  .fig .ln-d{stroke:var(--faint);stroke-width:1.2;fill:none;stroke-dasharray:5 4;}
+  .fig .ah{fill:var(--muted);}
+  footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);
+    font-size:13px;color:var(--faint);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;
+    font-family:var(--mono);letter-spacing:.02em;}
+  @media print{ body{background:#fff;} .tldr,pre,.twrap,.fig{box-shadow:none;} }
+  .warn{color:var(--s);font-weight:700}
+</style>
+
+
+<div class="wrap">
+
+  <header class="doc">
+    <div class="eyebrow">구조 설계 · Rust Document Parser Library</div>
+    <h1 class="title">Rust 문서파서를 독립 프로젝트로 떼어 내기<br>— <code class="inl">D:\Project\DocParse-rust</code> · <code class="inl">docparse.dll / libdocparse.so</code></h1>
+    <p class="lede">지금 문서 → 본문 추출 코드는 MpowerClassify 저장소 <b>안에</b> 있다. 이것을 <b>별도 프로젝트(별도 git 저장소)</b> <code class="inl">D:\Project\DocParse-rust</code> 로 옮기고,
+    거기서 <b>Windows 용 <code class="inl">docparse.dll</code> 과 Linux 용 <code class="inl">libdocparse.so</code></b> 를 만든다.
+    MpowerClassify 의 <b>Rust 판과 Python 판은 둘 다 이 라이브러리 파일을 실행 중에 불러서(load) 쓴다.</b> 소스는 더 이상 MpowerClassify 에 두지 않는다.
+    <b>추출 결과는 한 글자도 달라지면 안 된다.</b></p>
+    <div class="meta">
+      <span class="chip"><b>대상</b> Rust 판 · Python 판</span>
+      <span class="chip"><b>새 프로젝트</b> D:\Project\DocParse-rust</span>
+      <span class="chip"><b>산출물</b> docparse.dll · libdocparse.so · docparse.h · docparse.py</span>
+      <span class="chip"><b>Rust 판 동작</b> 바뀌지 않음</span>
+      <span class="chip"><b>Python 판 동작</b> 추출 결과 바뀜(평가셋 확인 후 전환)</span>
+      <span class="chip"><b>상태</b> 구현 · 검증 완료 (개정 2) — Python 기본값 전환은 2편</span>
+      <span class="chip"><b>작성일</b> 2026-11-10</span>
+    </div>
+  </header>
+
+  <div class="tldr">
+    <div class="k">한 줄 요약</div>
+    <p>추출 파일 11개(약 7,200줄, 압축 해제 포함)를 <code class="inl">D:\Project\DocParse-rust</code> 저장소로 옮긴다. 그 프로젝트는
+    <b>C 함수 방식(C ABI)으로 함수 11개를 내보내는 공유 라이브러리</b>를 Windows·Linux 두 벌로 만들어 <b>배포 묶음</b>(zip·tgz)으로 낸다.
+    MpowerClassify 는 그 묶음을 <code class="inl">third_party/docparse/</code> 에 버전을 고정해 받아 두고,
+    Rust 판은 <code class="inl">libloading</code> 으로, Python 판은 <code class="inl">ctypes</code> 로 <b>같은 파일 하나</b>를 불러 쓴다.
+    옵션과 결과는 UTF-8 JSON 으로 주고받는다. 전역 상태 4가지(모드·상한·부분추출 메모·로그 파일)를 끊는 일은 앞 판과 같다.
+    Rust 판은 분리 전후 <b>본문 sha256 이 전부 같아야</b> 끝나고, Python 판은 평가셋으로 판정 차이를 확인한 뒤 기본값을 바꾼다.</p>
+  </div>
+
+  <div class="note info"><span class="badge">개정</span>
+    <p>앞 판은 "같은 저장소 안의 작업 공간(<code class="inl">Rust/crates/docparse</code>)에 두고 Rust 판은 소스째 링크, Python 판은 PyO3 모듈(2편), C 진입점은 보류(3편)" 였다.
+    이번 판은 <b>① 별도 프로젝트 폴더·저장소로 완전히 떼고 ② C 진입점 DLL/.so 를 유일한 공개 형태로 삼아 ③ Rust·Python 둘 다 그것을 불러 쓰는</b> 방향으로 바꾼다.
+    그래서 3편(C 진입점)의 내용은 이 문서 §5 로 들어오고, 2편의 PyO3 모듈(<code class="inl">docparse-py</code>)은 만들지 않는다(§7). 2편에서 Python 쪽 엔진 표·폴백·정제 흐름을 어떻게 바꿀지는 그대로 유효하다.</p></div>
+
+  <!-- 1 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>왜 하나 · 왜 이 방식인가</h2></div>
+    <ul class="plain">
+      <li><b>다른 프로젝트에서 쓰기</b> — 지금은 extract.rs 를 가져가도 <code class="inl">crate::limits</code>·<code class="inl">crate::errlog</code>·<code class="inl">linfo!</code> 같은 이 프로그램 전용 모듈이 따라와야 한다. 별도 저장소에 두면 "MpowerClassify 를 몰라도 빌드·시험되는" 상태가 강제된다.</li>
+      <li><b>한 파서를 두 판이 같이 쓰기</b> — Python <code class="inl">extract/</code> 3,084줄과 Rust 추출 쪽이 같은 일을 두 벌로 한다. 한 DLL 을 두 판이 불러 쓰면 고칠 곳이 하나가 된다.</li>
+      <li><b>파서만 따로 고쳐 배포</b> — 파서 버그를 고치면 DLL 만 바꿔 넣으면 된다. Rust 실행파일·Python 패키지를 다시 빌드하지 않아도 된다(함수 모양이 같은 한, §5-4).</li>
+    </ul>
+    <h3>Rust 판도 "불러 쓰기" 로 하는 이유</h3>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>방식</th><th>좋은 점</th><th>나쁜 점</th><th>판단</th></tr></thead>
+        <tbody>
+          <tr><td>Rust 판은 소스째 링크(<code class="inl">docparse = { git = … }</code>), Python 은 DLL</td><td>Rust 판은 실행파일 하나 그대로. JSON 변환 없음</td><td>두 판이 <b>다른 빌드</b>를 쓰게 되어 "Rust 판에선 되는데 Python 판에선 다르다" 가 다시 생길 수 있음. 빌드서버가 DocParse-rust 저장소도 받아야 함</td><td>쓰지 않음</td></tr>
+          <tr><td class="ok"><b>둘 다 같은 DLL/.so 를 불러 씀</b></td><td><b>바이트 단위로 같은 파서</b>. 파서만 교체 배포 가능. MpowerClassify 빌드에 DocParse-rust 소스가 필요 없음</td><td>배포본에 파일 하나가 늘어남(pdfium 처럼). 호출마다 JSON 변환(문서 파싱 대비 무시할 만함)</td><td class="ok">채택</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>옮길 것 — 지금 무엇이 어디에 묶여 있나</h2></div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>파일</th><th>줄</th><th>역할</th><th>다른 모듈 참조</th><th>옮김</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">extract.rs</td><td>1,951</td><td>형식별 추출 본체(pdf·OOXML·hwpx·html·텍스트), 정제(clean_text), 사이냅 폴백 사슬</td><td>detect·limits·synap·errlog·linfo!·office_legacy·xls·xlsdate·hwp5·html_entities</td><td class="ok">옮김</td></tr>
+          <tr><td class="mono">detect.rs</td><td>158</td><td>내용으로 형식 감지(<code class="inl">Fmt</code>)</td><td>ole</td><td class="ok">옮김</td></tr>
+          <tr><td class="mono">ole.rs</td><td>267</td><td>OLE/CFB 읽기</td><td>없음</td><td class="ok">옮김</td></tr>
+          <tr><td class="mono">office_legacy.rs</td><td>256</td><td>doc·ppt</td><td>ole</td><td class="ok">옮김</td></tr>
+          <tr><td class="mono">hwp5.rs</td><td>196</td><td>hwp(5.0)</td><td>ole</td><td class="ok">옮김</td></tr>
+          <tr><td class="mono">xls.rs</td><td>562</td><td>xls(BIFF)</td><td>ole·xlsdate</td><td class="ok">옮김</td></tr>
+          <tr><td class="mono">xlsdate.rs</td><td>255</td><td>엑셀 날짜 서식</td><td>없음</td><td class="ok">옮김</td></tr>
+          <tr><td class="mono">html_entities.rs</td><td>2,150</td><td>HTML 엔티티 표</td><td>없음</td><td class="ok">옮김</td></tr>
+          <tr><td class="mono">synap.rs</td><td>314</td><td>사이냅(snf_exe) 외부 실행</td><td>없음</td><td class="ok">옮김 (기능 <code class="inl">synap</code>)</td></tr>
+          <tr><td class="mono">limits.rs</td><td>516</td><td>크기·시간·페이지 상한, 부분추출 메모</td><td>detect, <b>전역 OnceLock·thread_local</b></td><td class="warn">나눠서 옮김(§4)</td></tr>
+          <tr><td class="mono">archive.rs</td><td>1,314</td><td>zip·tar·gz·bz2·xz·7z·rar 압축 풀기 → 내부 파일 목록(<code class="inl">expand_paths</code>)</td><td>detect·limits(압축 상한 2개)뿐</td><td class="ok">옮김 (기능 <code class="inl">archive</code>)</td></tr>
+          <tr><td class="mono">errlog.rs · log.rs</td><td>—</td><td>로그 파일 기록</td><td>axes·decrypt·errcodes</td><td>남김 (라이브러리는 로그 콜백만, §5-3)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>추출을 부르는 곳은 <code class="inl">main.rs</code> 세 군데(분류 루프 2038행 부근, <code class="inl">--text-only</code> 3835행 부근, 1617행 부근), 압축 펼치기 세 군데(1990·3321·3672행 부근)와 상주 서버(<code class="inl">daemon/</code>)다.
+    부른 직후 <code class="inl">limits::notes_take()</code>·<code class="inl">notes_take_layout()</code> 로 메모를 꺼낸다.</p>
+    <div class="note warn"><span class="badge">현재 진행분</span>
+      <p>앞 판대로 <code class="inl">Rust/crates/docparse</code>·<code class="inl">crates/docparse-py</code> 로 옮기는 작업이 커밋 전 상태로 진행되어 있다(브랜치 <code class="inl">feat/docparse-crate</code>).
+      이 작업은 버리지 않는다. <b>전역 끊기(§4)는 그대로 쓰고</b>, 그 결과물을 DocParse-rust 저장소의 <code class="inl">crates/docparse</code> 로 옮겨 시작점으로 삼는다(§8-2).
+      <code class="inl">docparse-py</code>(PyO3)는 이번 방식에선 쓰지 않으므로 옮기지 않는다.</p></div>
+  </section>
+
+  <!-- 3 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>목표 구조</h2></div>
+    <h3>3-1. 새 프로젝트 <code class="inl">D:\Project\DocParse-rust</code></h3>
+<pre>D:\Project\DocParse-rust\          <span class="cm">← 독립 git 저장소. MpowerClassify 를 전혀 모른다</span>
+  Cargo.toml                       <span class="cm">← [workspace] members = ["crates/docparse", "crates/docparse-ffi"]</span>
+  Cargo.lock                       <span class="cm">← 저장소에 넣는다(라이브러리 산출물을 재현 가능하게)</span>
+  crates/docparse/                 <span class="cm">← 본체(rlib). Rust 로 쓰는 공개 API (§4·§5-1)</span>
+    src/lib.rs  extract.rs  detect.rs  ole.rs  office_legacy.rs  hwp5.rs  xls.rs  xlsdate.rs
+    src/html_entities.rs  clean.rs  limits.rs  synap.rs  archive.rs
+    tests/                         <span class="cm">← 형식별 단위 시험(extract.rs 에서 옮김) + 시험 문서</span>
+  crates/docparse-ffi/             <span class="cm">← C 진입점. crate-type = ["cdylib"] → docparse.dll / libdocparse.so</span>
+    src/lib.rs                     <span class="cm">← extern "C" 함수 11개, JSON 변환, catch_unwind (§5)</span>
+    build.rs                       <span class="cm">← 버전에 git 해시(DOCPARSE_GIT) 새기기, Linux RPATH=$ORIGIN</span>
+    include/docparse.h             <span class="cm">← 손으로 쓴 헤더(옵션·결과 JSON 모양 주석 포함). 함수 모양을 바꾸면 같이 고친다</span>
+  bindings/python/docparse.py      <span class="cm">← ctypes 감싸개 한 파일(표준 라이브러리만 씀). 배포 묶음에 같이 넣는다</span>
+  bindings/rust/docparse_dyn.rs    <span class="cm">← libloading 감싸개 정본. MpowerClassify 가 복사해 쓴다 (§6-1)</span>
+  scripts/
+    win-build.sh                   <span class="cm">← 이 PC 에서 시험·빌드·불러 보기 → dist/…windows-x64.zip</span>
+    linux-build.sh                 <span class="cm">← 빌드서버(CentOS 7)로 소스 올려 시험·빌드, RPATH·glibc 확인 → dist/…linux-x64.tgz</span>
+    package.py                     <span class="cm">← 배포 묶음 만들기(lib·include·python·rust·VERSION·SHA256SUMS)</span>
+    server.env(.sample)            <span class="cm">← 빌드서버 접속·폴더 설정(server.env 는 .gitignore)</span>
+  third_party/pdfium/{windows-x64,linux-x64}/   <span class="cm">← pdfium 정본(지금 MpowerClassify dist-onedir 의 것 그대로)</span>
+  dist/                            <span class="cm">← 배포 묶음(.gitignore)</span>
+  README.md  CHANGELOG.md</pre>
+
+    <h3>3-2. 배포 묶음 — 이 프로젝트가 밖으로 내는 것</h3>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>묶음 안</th><th>docparse-&lt;버전&gt;-windows-x64.zip</th><th>docparse-&lt;버전&gt;-linux-x64.tgz</th></tr></thead>
+        <tbody>
+          <tr><td>라이브러리</td><td class="mono">lib/docparse.dll</td><td class="mono">lib/libdocparse.so</td></tr>
+          <tr><td>pdfium (같이 둠)</td><td class="mono">lib/pdfium.dll</td><td class="mono">lib/libpdfium.so</td></tr>
+          <tr><td>헤더</td><td colspan="2" class="mono">include/docparse.h</td></tr>
+          <tr><td>Python 감싸개</td><td colspan="2" class="mono">python/docparse.py</td></tr>
+          <tr><td>Rust 감싸개</td><td colspan="2" class="mono">rust/docparse_dyn.rs</td></tr>
+          <tr><td>버전·확인값</td><td colspan="2" class="mono">VERSION (예: 0.1.0+git.abc1234) · SHA256SUMS · CHANGELOG.md</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul class="plain">
+      <li><b>Linux 는 빌드서버(CentOS 7, glibc 2.17)</b>에서 만든다. 그보다 새 리눅스에서도 돈다. 지금 MpowerClassify 의 <code class="inl">scripts/build/linux-build.sh</code> 방식을 그대로 가져온다.</li>
+      <li><b>사이냅 실행파일(snf_exe)은 묶음에 넣지 않는다.</b> 라이브러리는 경로만 받아 실행한다. 지금처럼 MpowerClassify 배포본이 갖고 있는다.</li>
+      <li>32비트·ARM·macOS 는 이번 범위가 아니다.</li>
+    </ul>
+
+    <h3>3-3. MpowerClassify 쪽</h3>
+<pre>D:\Project\MpowerClassify\
+  third_party/docparse/                 <span class="cm">← 배포 묶음을 풀어 둔 곳. 버전을 고정한다</span>
+    VERSION                             <span class="cm">← "0.1.0+git.abc1234" — 무엇을 쓰는지 한눈에</span>
+    windows-x64/docparse.dll  pdfium.dll
+    linux-x64/libdocparse.so  libpdfium.so
+    include/docparse.h
+  scripts/build/update-docparse.sh      <span class="cm">← DocParse-rust/dist 의 묶음을 받아 위 폴더를 갈아끼우고 SHA256 확인</span>
+  Rust/
+    Cargo.toml                          <span class="cm">← workspace·crates 제거. 의존 추가: libloading · serde_json(이미 있음)</span>
+    src/docparse_dyn.rs                 <span class="cm">← DocParse-rust 의 bindings/rust 정본 복사 (§6-1)</span>
+    build.rs                            <span class="cm">← pdfium 처럼 third_party 의 dll/so 를 exe 옆으로 복사(개발 빌드용)</span>
+  src/csoclassify/extract/
+    _docparse.py                        <span class="cm">← 배포 묶음의 python/docparse.py 복사 (§6-2)</span>
+    rust_engine.py                      <span class="cm">← _docparse 를 TextExtractor 로 감쌈(2편 §4 그대로)</span></pre>
+    <div class="note info"><span class="badge">판단 · 왜 소스가 아니라 묶음을 받아 두나</span>
+      <p>MpowerClassify 빌드서버에 Rust 문서파서 소스·의존 크레이트를 올릴 필요가 없어진다. 빌드 시간이 짧아지고, "어느 파서로 뽑았나" 가 <code class="inl">VERSION</code> 한 줄로 고정된다.
+      dll/so 는 합쳐 수십 MB 수준이라 저장소에 그대로 넣는다. 커지면 그때 git LFS 를 검토한다.</p></div>
+  </section>
+
+  <!-- 4 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>끊어야 할 전역 연결 4가지</h2></div>
+    <p>DLL 로 내보내면 한 프로세스(예: Python 인터프리터)가 여러 스레드에서 서로 다른 옵션으로 부를 수 있어야 한다. 그래서 아래 4가지는 <b>반드시</b> 끊는다(앞 판과 같은 내용, 진행분에서 이미 대부분 끊었다).</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>#</th><th>지금</th><th>문제</th><th>바꾼 뒤</th></tr></thead>
+        <tbody>
+          <tr><td>A</td><td><code class="inl">extract::set_mode()</code> 가 <code class="inl">OnceLock</code> 에 모드를 한 번 새김</td><td>한 프로세스에서 두 모드를 못 씀</td><td>옵션 JSON 의 <code class="inl">engine</code> 으로 매번 넘김</td></tr>
+          <tr><td>B</td><td><code class="inl">limits::set_overrides()</code> 의 전역 상한. 환경변수(<code class="inl">CSOCLASSIFY_MIN_TEXT_LEN</code> 등)도 직접 읽음</td><td>라이브러리가 이 프로그램의 환경변수 이름을 앎</td><td>옵션 JSON 의 <code class="inl">limits</code>. 환경변수 읽기는 MpowerClassify 쪽으로</td></tr>
+          <tr><td>C</td><td>'부분추출'·'스캔 페이지' 표식을 <code class="inl">thread_local</code> 메모에 적고 <code class="inl">notes_take()</code> 로 꺼냄</td><td>DLL 경계 너머로는 꺼낼 길이 없음</td><td>결과 JSON 의 <code class="inl">partial</code>·<code class="inl">layout</code></td></tr>
+          <tr><td>D</td><td><code class="inl">linfo!</code>·<code class="inl">errlog::err()</code> 로 이 프로그램 로그 파일에 직접 씀</td><td>errlog 가 axes·decrypt·errcodes 까지 끌고 옴</td><td>본체는 표준 <code class="inl">log</code> 크레이트로 남기고, ffi 가 <b>로그 콜백</b>(§5-3)으로 부른 쪽에 넘김</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>limits.rs 나누기</h3>
+    <ul class="plain">
+      <li><b>라이브러리로</b> — <code class="inl">ParserDeadline</code>, PDF 쪽수 상한, <code class="inl">check_size_limit</code>, <code class="inl">truncate_text</code>, <code class="inl">human_bytes</code>, 압축 상한(<code class="inl">max_archive_bytes</code>·<code class="inl">max_archive_members</code> → <code class="inl">ArchiveOptions</code>).</li>
+      <li><b>MpowerClassify 에 남김</b> — 상한값을 CLI 인자·환경변수에서 읽어 옵션을 채우는 부분.</li>
+      <li><b>글자 수 상한(truncate)</b> 은 분류 쪽 정책이다. MpowerClassify 가 결과 본문에 직접 적용한다. decrypt.rs 가 쓰는 함수(크기 표시 등)는 MpowerClassify 쪽에 작은 사본을 둔다 — DLL 의 내부 함수를 이것 때문에 내보내지 않는다.</li>
+    </ul>
+    <div class="note warn"><span class="badge">주의 · D</span>
+      <p>로그 문장은 운영 로그를 읽는 도구·사람이 기대는 형식이다(<code class="inl">추출 engine=… file=… chars=…</code>, <code class="inl">[PDF 부분추출] …</code>).
+      <b>문장을 그대로 유지</b>하고 레벨도 맞춘다(info → info, errlog → warn + target <code class="inl">"docparse::errlog"</code>).
+      MpowerClassify 의 콜백은 이 target 이 오면 errlog 파일에도 쓴다.</p></div>
+    <h3>4-2. pdfium 찾는 위치 — DLL 이 되면 반드시 고쳐야 한다</h3>
+    <p>지금 <code class="inl">pdfium_lib_path()</code> 는 <code class="inl">std::env::current_exe()</code> 옆을 찾는다. DLL 을 Python 이 불러 쓰면 current_exe 는 <b>python.exe</b> 라서 pdfium 을 못 찾고,
+    PDF 가 <b>오류 없이 전부 빈 본문</b>으로 떨어진다(build.rs 주석에 적힌 바로 그 '조용한 고장').</p>
+    <ul class="plain">
+      <li>찾는 순서: <b>① 옵션 <code class="inl">pdfium_lib</code> → ② docparse DLL/.so 자신이 있는 폴더 → ③ 실행파일 옆 → ④ 시스템</b>.</li>
+      <li>② 는 Windows <code class="inl">GetModuleHandleExW</code>(FROM_ADDRESS) 와 <code class="inl">GetModuleFileNameW</code>, Linux <code class="inl">dladdr</code> 로 구한다.</li>
+      <li>pdfium 을 끝내 못 붙였을 때의 결과는 <b>분리 전과 같게 둔다</b>(그 PDF 는 추출 실패). 분리 작업에서 결과를 바꾸지 않기 위해서다 — 분명한 오류 문장으로 바꾸는 일은 DocParse-rust 에서 따로 한다.</li>
+    </ul>
+  </section>
+
+  <!-- 5 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h2>라이브러리의 모양</h2></div>
+    <h3>5-1. 본체 <code class="inl">docparse</code> (Rust API — ffi 가 쓰고, DocParse-rust 시험이 쓴다)</h3>
+<pre><span class="kw">pub use</span> detect::{detect_format, Fmt};
+<span class="kw">pub enum</span>  Engine { Builtin, SynapFallback(PathBuf), SynapOnly(PathBuf) }
+<span class="kw">pub struct</span> Limits { parser_timeout, max_pdf_pages, max_file_bytes, max_file_bytes_text, snf_timeout, min_text_len }
+<span class="kw">pub struct</span> ExtractOptions { engine, limits, pdfium_lib: Option&lt;PathBuf&gt;, clean: bool, label: Option&lt;String&gt; }
+<span class="kw">pub struct</span> Extracted { text, engine: &amp;'static str, fmt, partial: Option&lt;Partial&gt;, layout: Option&lt;Layout&gt; }
+<span class="kw">pub enum</span>  ExtractError { SizeLimit{size, limit, text_kind}, Unsupported(Fmt), Failed(String) }
+<span class="kw">pub fn</span> extract(path, &amp;ExtractOptions) -&gt; Result&lt;Extracted, ExtractError&gt;;
+<span class="kw">pub fn</span> extract_as(path, fmt, &amp;ExtractOptions) -&gt; Result&lt;Extracted, ExtractError&gt;;
+<span class="kw">pub fn</span> clean_text(raw: &amp;str) -&gt; String;
+<span class="kw">pub mod</span> archive { ArchiveOptions{max_depth, max_bytes, max_members}, Job{src,label,origin}, ExpandStats,
+                   archive_type, expand_paths(paths, tmp_root, &amp;opts, &amp;mut stats) -&gt; Vec&lt;Job&gt;, split_volume_hint }</pre>
+    <p>필드 뜻·기본값은 앞 판과 같다. <code class="inl">extract</code> 가 맨 앞에서 크기 상한을 검사하고 <code class="inl">SizeLimit</code> 으로 알린다(부른 쪽이 빠뜨리지 않게).</p>
+
+    <h3>5-2. C 진입점 <code class="inl">docparse-ffi</code> — 함수 11개</h3>
+<pre><span class="cm">/* docparse.h (요약) — 문자열은 전부 널 종료 UTF-8. 경로도 UTF-8 (Windows 에서 CP949 로 바꾸지 않는다) */</span>
+<span class="kw">#define</span> DOCPARSE_ABI_VERSION 1
+<span class="kw">typedef enum</span> { DP_OK=0, DP_ERR_ARG=1, DP_ERR_NOT_FOUND=2, DP_ERR_SIZE_LIMIT=3,
+               DP_ERR_UNSUPPORTED=4, DP_ERR_FAILED=5, DP_ERR_PANIC=99 } dp_status;
+
+uint32_t    docparse_abi_version(<span class="kw">void</span>);                         <span class="cm">/* 1) 헤더·감싸개와 DLL 이 맞는지 */</span>
+<span class="kw">const char</span>* docparse_version(<span class="kw">void</span>);                             <span class="cm">/* 2) "0.1.0+abc1234" — 해제하지 않음 */</span>
+dp_status   docparse_detect(<span class="kw">const char</span>* path, <span class="kw">const char</span>** out_fmt);  <span class="cm">/* 3) "pdf"·"hwp"·…·"unknown" — 해제하지 않음 */</span>
+dp_status   docparse_extract(<span class="kw">const char</span>* path, <span class="kw">const char</span>* opts_json, <span class="kw">char</span>** out_json);  <span class="cm">/* 4) */</span>
+dp_status   docparse_check_size(<span class="kw">const char</span>* path, <span class="kw">const char</span>* fmt,
+                                <span class="kw">const char</span>* opts_json, <span class="kw">char</span>** out_json);      <span class="cm">/* 5) 크기 상한 검사만 */</span>
+dp_status   docparse_expand(<span class="kw">const char</span>* paths_json, <span class="kw">const char</span>* tmp_root,
+                            <span class="kw">const char</span>* opts_json, <span class="kw">char</span>** out_json);          <span class="cm">/* 6) 압축 펼치기 */</span>
+dp_status   docparse_split_volume_hint(<span class="kw">const char</span>* name, <span class="kw">const char</span>* path, <span class="kw">char</span>** out_json); <span class="cm">/* 7) */</span>
+dp_status   docparse_clean_text(<span class="kw">const char</span>* text, <span class="kw">char</span>** out_text);    <span class="cm">/* 8) 6단계 정제 */</span>
+<span class="kw">int</span>         docparse_scan_pdf_verdict(uint64_t pages, uint64_t scan_pages, uint64_t body_chars); <span class="cm">/* 9) */</span>
+<span class="kw">void</span>        docparse_free(<span class="kw">char</span>* p);                              <span class="cm">/* 10) 이 DLL 이 준 char* 만. NULL 이면 무시 */</span>
+<span class="kw">typedef void</span> (*dp_log_fn)(<span class="kw">int</span> level, <span class="kw">const char</span>* target, <span class="kw">const char</span>* site,
+                          <span class="kw">const char</span>* msg, <span class="kw">void</span>* user);          <span class="cm">/* site = "모듈:줄" */</span>
+<span class="kw">void</span>        docparse_set_logger(dp_log_fn fn, <span class="kw">int</span> max_level, <span class="kw">void</span>* user);  <span class="cm">/* 11) 등록 안 하면 로그를 버림 */</span></pre>
+    <div class="note info"><span class="badge">구현 · 7개 → 11개</span>
+      <p>MpowerClassify 가 추출 말고도 라이브러리 안 판단을 쓰는 자리가 넷 있었다 — 크기 상한을 <b>분할 압축 조각 판정보다 먼저</b> 보는 자리(check_size),
+      분할 조각 안내(split_volume_hint), 6단계 정제(clean_text), 스캔 PDF 판정(scan_pdf_verdict). 이것들을 MpowerClassify 에 사본으로 두면 "한 파서" 가 깨지므로 함수로 더했다.
+      글자 수 자르기(truncate_text)만 분류 쪽 정책이라 MpowerClassify 에 둔다. 로그 콜백에는 분리 전 로그의 "모듈:줄" 자리를 채우려고 <code class="inl">site</code> 를 더했다.</p></div>
+    <p>추출 옵션 JSON (빠진 키는 기본값, 모르는 키는 무시):</p>
+<pre>{ <span class="hi">"clean"</span>: true, <span class="hi">"engine"</span>: "builtin" | "synap_fallback" | "synap_only", <span class="hi">"synap_exe"</span>: null,
+  <span class="hi">"pdfium_lib"</span>: null, <span class="hi">"label"</span>: null, <span class="hi">"fmt"</span>: null,              <span class="cm">// fmt 를 주면 감지를 건너뜀(= extract_as)</span>
+  <span class="hi">"limits"</span>: { "parser_timeout_secs": 60, "max_pdf_pages": null, "max_file_bytes": null,
+              "max_file_bytes_text": null, "snf_timeout_secs": 60, "min_text_len": 20 } }</pre>
+    <p>결과 JSON:</p>
+<pre><span class="cm">// DP_OK</span>
+{ "text": "…", "engine": "docx", "fmt": "docx",
+  "partial": null | {"reason":"시간 상한","unit":"pages","read":120,"total":800},
+  "layout":  null | {"pages":800,"scan_pages":3} }
+<span class="cm">// DP_ERR_*</span>
+{ "error": { "kind": "size_limit", "message": "328.8MB &gt; 200.0MB 초과", "size": 344768512, "limit": 209715200 } }
+<span class="cm">// docparse_expand</span>
+{ "jobs": [ {"src":"C:/tmp/x/0001.docx","label":"D:/a.zip/보고서.docx","origin":"D:/a.zip"} ],
+  "stats": { "unexpanded": [ {"path":…,"reason":…,"kind":"limit"} ], "unsupported": [], "partial": [] } }</pre>
+    <div class="note info"><span class="badge">판단 · 왜 JSON</span>
+      <p>C 구조체로 넘기면 필드 하나 더할 때마다 Rust 감싸개·Python 감싸개의 구조체 선언을 같이 고쳐야 하고, 어긋나면 오류 없이 엉뚱한 값을 읽는다.
+      JSON 은 새 키를 더해도 옛 감싸개가 깨지지 않는다. 문서 한 건 파싱에 비하면 변환 비용은 무시할 만하다.</p></div>
+
+    <h3>5-3. 안전 규칙</h3>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>규칙</th><th>왜</th><th>어떻게</th></tr></thead>
+        <tbody>
+          <tr><td>패닉이 경계 밖으로 새지 않는다</td><td>Rust 패닉이 C·Python 쪽으로 넘어가면 프로세스가 정의되지 않은 상태가 된다</td><td>모든 함수를 <code class="inl">catch_unwind</code> 로 감싸 <code class="inl">DP_ERR_PANIC</code> + 메시지. Cargo 프로필은 <code class="inl">panic = "unwind"</code> 유지</td></tr>
+          <tr><td>NULL·잘못된 UTF-8 은 오류</td><td>부른 쪽 실수로 죽지 않게</td><td>모든 포인터 검사 → <code class="inl">DP_ERR_ARG</code></td></tr>
+          <tr><td>전역 상태 없음</td><td>여러 스레드에서 동시에 부를 수 있어야</td><td>§4 로 성립. 로거 등록만 전역이고 원자적으로 바꾼다</td></tr>
+          <tr><td>할당한 쪽이 해제</td><td>할당기가 다르면 죽는다</td><td><code class="inl">docparse_free</code> 로만 해제</td></tr>
+          <tr><td>로그 콜백은 아무 스레드에서나 온다</td><td>추출을 부른 작업 스레드에서 그대로 부른다</td><td>콜백은 짧게, 스레드 안전하게. 콜백 안에서 <code class="inl">docparse_*</code> 를 다시 부르지 않는다(헤더에 명시)</td></tr>
+          <tr><td>사이냅 자식 프로세스 정리</td><td>DLL 안에서 띄운 snf_exe 가 시간 초과 때 남으면 안 된다</td><td>지금 synap.rs 의 종료 처리 그대로. 부른 쪽 Ctrl+C 처리와는 무관하게 시간 상한으로 끝난다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>5-4. 버전 관리</h3>
+    <ul class="plain">
+      <li><b>ABI 버전</b>은 함수 모양이 바뀔 때만 올린다(함수를 지우거나 인자를 바꿀 때). 감싸개는 불러온 직후 <code class="inl">docparse_abi_version()</code> 을 자기 값과 비교해 <b>다르면 시작을 멈춘다</b>.</li>
+      <li>새 기능은 새 JSON 키나 새 함수로 더한다. 그러면 ABI 를 올리지 않고 DLL 만 바꿔 넣을 수 있다.</li>
+      <li><b>라이브러리 버전</b>(<code class="inl">docparse_version()</code>)은 MpowerClassify 가 라이브러리를 처음 불러올 때 일반 로그에 한 줄 남긴다(<code class="inl">문서파서 docparse=0.1.0+abc1234 lib=…</code>, Python 판은 <code class="inl">실행 자체파서=rust docparse=… lib=…</code>). 분류 레코드에는 넣지 않는다 — 레코드 모양을 바꾸면 두 판 교차 검증과 소비 쪽이 같이 바뀌어야 하므로, 필요해지면 따로 정한다.</li>
+      <li>파서 동작이 바뀌는 수정(결과 본문이 달라지는 것)은 DocParse-rust 의 <code class="inl">CHANGELOG.md</code> 에 반드시 적는다. MpowerClassify 는 버전을 올릴 때 그것을 보고 평가셋을 다시 돌릴지 정한다.</li>
+    </ul>
+  </section>
+
+  <!-- 6 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">06</span><h2>MpowerClassify 에서 불러 쓰기</h2></div>
+    <h3>6-1. Rust 판 — <code class="inl">libloading</code></h3>
+<pre><span class="cm">// Rust/src/docparse_dyn.rs (정본은 DocParse-rust/bindings/rust — 복사해 쓴다)</span>
+<span class="kw">pub struct</span> DocParse { _lib: libloading::Library, extract: ExtractFn, expand: ExpandFn, free: FreeFn, … }
+
+<span class="kw">impl</span> DocParse {
+    <span class="cm">/// 찾는 순서: --docparse-lib 인자 → CSO_DOCPARSE 환경변수 → exe 옆 → 실패(분명한 메시지로 종료)</span>
+    <span class="kw">pub fn</span> find_and_load(explicit: Option&lt;&amp;Path&gt;, env_var: &amp;str) -&gt; Result&lt;Self, String&gt;;   <span class="cm">// ABI 버전 확인 포함</span>
+    <span class="kw">pub fn</span> version(&amp;self) -&gt; &amp;str;
+    <span class="kw">pub fn</span> extract(&amp;self, path: &amp;Path, opts: &amp;ExtractOpts) -&gt; Result&lt;Extracted, ExtractError&gt;;
+    <span class="kw">pub fn</span> expand(&amp;self, paths: &amp;[PathBuf], tmp_root: &amp;Path, opts: &amp;ArchiveOpts) -&gt; Expanded;
+    <span class="kw">pub fn</span> set_logger(&amp;self, …);   <span class="cm">// 콜백에서 linfo!/errlog 로 지금 문장 그대로 기록</span>
+}
+<span class="cm">// ExtractOpts·Extracted·ExtractError 는 serde 로 JSON 과 맞춘 MpowerClassify 쪽 구조체.
+// 지금 main.rs 의 호출 모양(§6-3)을 그대로 받도록 이름을 맞춘다.</span></pre>
+    <ul class="plain">
+      <li><b>한 번만 불러 들고 다닌다</b> — <code class="inl">src/docparse.rs</code> 가 처음 쓸 때 불러 전역(<code class="inl">OnceLock</code>)에 둔다. 문서를 읽지 않는 명령(<code class="inl">--set-grade</code>·<code class="inl">--propagate</code> 등)은 라이브러리 없이도 돈다.
+      이 모듈이 예전 <code class="inl">docparse</code> 크레이트와 같은 이름의 함수·타입(<code class="inl">detect::detect_format</code>·<code class="inl">extract_as</code>·<code class="inl">archive::expand_paths</code> …)을 내주므로 main.rs 의 호출부는 거의 그대로다.</li>
+      <li><b>실행 중에는 내리지 않는다</b> — 프로세스가 끝날 때까지 Library 를 쥐고 있는다(로그 콜백이 아무 때나 오므로).</li>
+      <li><b>Linux</b> — 실행파일은 이미 <code class="inl">RPATH=$ORIGIN</code> 을 쓰지만, libloading 은 <b>절대경로</b>로 연다(exe 옆 경로를 직접 만든다). <code class="inl">libdocparse.so</code> 도 <code class="inl">$ORIGIN</code> 을 새겨 옆의 libpdfium 을 찾게 한다(§4-2 와 이중 안전).</li>
+      <li><b>배포본</b> — Windows <code class="inl">MpowerClassify-rs.exe · docparse.dll · pdfium.dll · …</code>, Linux 도 같은 모양. 실행파일 하나 → 파일 하나가 더 붙는 것이 유일한 변화다.</li>
+    </ul>
+
+    <h3>6-2. Python 판 — <code class="inl">ctypes</code></h3>
+<pre><span class="cm"># src/csoclassify/extract/_docparse.py  (정본은 DocParse-rust/bindings/python/docparse.py)</span>
+<span class="kw">import</span> ctypes, json, os, sys
+
+<span class="kw">class</span> DocParse:
+    <span class="kw">def</span> __init__(self, lib_path=None):        <span class="cm"># 인자 → CSO_DOCPARSE → 패키지 폴더/lib → 실행파일 옆</span>
+        self._dll = ctypes.CDLL(path)            <span class="cm"># CDLL 은 호출 동안 GIL 을 놓는다 → 스레드 병렬 그대로</span>
+        <span class="kw">if</span> self._dll.docparse_abi_version() != ABI_VERSION: <span class="kw">raise</span> RuntimeError(…)
+    <span class="kw">def</span> extract(self, path, **opts) -&gt; dict:  <span class="cm"># 성공: {"text","engine","fmt","partial","layout"}</span>
+        …                                        <span class="cm"># 실패: kind 에 따라 SizeLimitError / UnsupportedError / ExtractError</span>
+        <span class="kw">finally</span>: self._dll.docparse_free(out)
+    <span class="kw">def</span> expand(self, paths, tmp_root, **opts) -&gt; dict: …
+    <span class="kw">def</span> set_logger(self, fn): …                 <span class="cm"># CFUNCTYPE 객체를 self 에 붙잡아 둔다(GC 되면 죽음)</span></pre>
+    <ul class="plain">
+      <li><b>PyO3 를 쓰지 않는 이유</b> — PyO3 모듈(<code class="inl">.pyd</code>)은 별도 빌드물이라 Rust 판과 "같은 바이너리" 가 아니게 되고, maturin·abi3 빌드가 하나 더 생긴다. ctypes 는 표준 라이브러리라 의존이 없고, 이 프로젝트는 이미 V10 개인정보 엔진(<code class="inl">mpiisl.dll</code>)을 같은 방식으로 쓴다.</li>
+      <li><b>GIL</b> — <code class="inl">ctypes.CDLL</code> 호출은 GIL 을 놓으므로 추출 중에 다른 파이썬 스레드가 돈다. 로그 콜백이 올 때는 ctypes 가 GIL 을 다시 잡아 준다.</li>
+      <li><b>Windows 경로</b> — 인자는 <code class="inl">path.encode("utf-8")</code> 로 넘긴다(<code class="inl">c_char_p</code>). <code class="inl">c_wchar_p</code> 를 쓰지 않는다.</li>
+      <li><b>엔진 연결</b> — 2편 §4 대로 <code class="inl">RustEngine(TextExtractor)</code> 이 <code class="inl">clean=False</code> 로 원시 텍스트를 받고, 정제·사이냅 폴백·<code class="inl">notes</code> 기록은 Python 쪽이 지금처럼 한다. <code class="inl">--extractor py</code> 로 옛 파이썬 파서를 고를 수 있게 남긴 채 평가셋으로 판정 차이를 본 뒤 기본값을 바꾼다.</li>
+      <li><b>PyInstaller 배포</b> — <code class="inl">docparse.dll</code>/<code class="inl">libdocparse.so</code> 를 <code class="inl">binaries</code> 로 넣어 pdfium 과 같은 폴더에 둔다. 찾는 순서의 "실행파일 옆" 이 이것을 잡는다.</li>
+    </ul>
+
+    <h3>6-3. main.rs 쪽 바뀌는 모습</h3>
+<pre><span class="cm">// 지금</span>
+<span class="kw">let</span> limits_hit = limits::check_size_limit(path, fmt);
+… extract::extract_text_with(path, fmt, extract::mode(), &amp;job.label) …
+<span class="kw">let</span> partial = limits::notes_take();
+<span class="kw">let</span> layout  = limits::notes_take_layout();
+
+<span class="cm">// 바꾼 뒤 — docparse 는 src/docparse.rs(라이브러리 창구). 호출 모양은 분리 전 크레이트와 같다</span>
+<span class="kw">match</span> <span class="hi">docparse::extract_as</span>(path, fmt, &amp;extractcfg::options(&amp;shown)) {
+    Ok(x)  =&gt; { text = x.text; partial = x.partial; layout = x.layout; }
+    Err(ExtractError::SizeLimit{..}) =&gt; { <span class="cm">/* 지금 limits_hit 경로 그대로 */</span> }
+    Err(e) =&gt; { <span class="cm">/* 지금 추출실패 경로 그대로 */</span> }
+}</pre>
+  </section>
+
+  <!-- 7 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">07</span><h2>앞 판·2편·3편과의 관계</h2></div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>문서</th><th>이번 개정 뒤</th></tr></thead>
+        <tbody>
+          <tr><td>1편(이 문서) 앞 판 — 같은 저장소 작업 공간</td><td>§4 전역 끊기·§5-1 Rust API 는 그대로. 위치만 DocParse-rust 로, 링크 방식만 DLL 로</td></tr>
+          <tr><td>2편 Python 연동(PyO3)</td><td><b>연결 수단만 ctypes 로 바뀐다</b>. <code class="inl">docparse-py</code> 크레이트·maturin·abi3 는 없앤다. 엔진 표 교체·폴백·정제·평가셋 전환 절차는 그대로 유효</td></tr>
+          <tr><td>3편 C 진입점(보류)</td><td><b>보류 해제, 본 경로가 된다</b>. 함수 7개·JSON·안전 규칙을 §5 로 옮겼다. 다른 언어(C#·Java) 예제는 쓸 프로젝트가 생길 때 더한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 8 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">08</span><h2>작업 순서</h2></div>
+    <ol class="plain">
+      <li><b>기준 결과 떠 두기</b> — 분리 <b>전</b> MpowerClassify-rs(master)로 평가셋 두 벌(1,000건)·<code class="inl">D:\sample</code>·압축 시험 문서를 <code class="inl">--text-only</code> 로 추출해 본문·sha256 을 저장한다. 분류 레코드 JSONL·로그도 같이 저장한다. Python 판도 같은 입력으로 원시 텍스트를 떠 둔다(2편 비교용).</li>
+      <li><b>DocParse-rust 저장소 만들기</b> — <code class="inl">git init</code>, workspace·<code class="inl">Cargo.lock</code>(MpowerClassify 것을 그대로 가져와 크레이트 버전을 맞춘다). 진행분 <code class="inl">Rust/crates/docparse</code> 를 그대로 복사해 <code class="inl">crates/docparse</code> 로. 의존 크레이트 버전은 MpowerClassify 의 <code class="inl">Cargo.lock</code> 과 같게 맞춘다(결과 동일의 전제). 이력을 살리고 싶으면 <code class="inl">git subtree split</code> 으로 뽑아 온다(선택).</li>
+      <li><b>본체 마무리</b> — §4 의 남은 전역 끊기, §4-2 pdfium 찾는 위치. <code class="inl">cargo test -p docparse</code> 가 MpowerClassify 없이 돌게 한다.</li>
+      <li><b>docparse-ffi</b> — 함수 11개, JSON, <code class="inl">catch_unwind</code>, 헤더.</li>
+      <li><b>감싸개 정본 2개</b> — <code class="inl">bindings/rust/docparse_dyn.rs</code>, <code class="inl">bindings/python/docparse.py</code>. DocParse-rust 안에서 각각으로 시험 문서를 뽑아 본체 직접 호출 결과와 같은지 본다.</li>
+      <li><b>빌드 스크립트</b> — <code class="inl">win-build.sh</code>(이 PC), <code class="inl">linux-build.sh</code>(빌드서버 CentOS 7). 배포 묶음 2개를 <code class="inl">dist/</code> 에.</li>
+      <li><b>MpowerClassify Rust 판 전환</b> — <code class="inl">third_party/docparse/</code> 에 묶음 풀기, <code class="inl">docparse_dyn.rs</code> 넣기, 추출 3곳·압축 3곳·상주 서버 호출을 바꾸기, 로그 콜백 연결. <code class="inl">Rust/crates/</code> 와 workspace 설정 지우기. build.rs 가 dll/so 를 exe 옆으로 복사.</li>
+      <li><b>비교(Rust 판)</b> — 1번 결과와 본문 sha256·레코드(ts 제외)·추출 로그 줄이 <b>전부 같아야</b> 다음으로 간다.</li>
+      <li><b>MpowerClassify 빌드·배포 스크립트</b> — <code class="inl">linux-build.sh</code>·<code class="inl">linux-remote.sh</code>: <code class="inl">crates</code> 대신 <code class="inl">third_party/docparse/linux-x64</code> 를 올리고 dist 에 넣는다. <code class="inl">win-deploy.sh</code>: dll 을 배포 폴더에. 빌드서버에서 빌드 → 배포본으로 sample 다시 비교.</li>
+      <li><b>Python 판 전환</b> — <code class="inl">_docparse.py</code>·<code class="inl">rust_engine.py</code>, 2편 절차대로 <code class="inl">--extractor py</code> 와 나란히 평가셋 비교 → 기본값 전환 → 옛 파서·<code class="inl">olefile</code>·<code class="inl">xlrd</code>·<code class="inl">pypdfium2</code> 제거.</li>
+    </ol>
+    <div class="note info"><span class="badge">작업량</span>
+      <p>Rust 판까지(1~9) 3~4일: 본체는 진행분이 있어 짧고, ffi·감싸개 2개·빌드 스크립트가 새로 늘어난다. Python 판 전환(10)은 평가셋 차이 정리에 따라 2~3일. 형식별 파서 로직은 <b>손대지 않는다</b>.</p></div>
+  </section>
+
+  <!-- 9 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">09</span><h2>검증 기준</h2></div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>항목</th><th>통과 기준</th></tr></thead>
+        <tbody>
+          <tr><td>본문(Rust 판)</td><td>평가셋 1,000건 + sample — 분리 전 실행파일 vs DLL 을 부르는 실행파일의 <code class="inl">--text-only</code> 본문 sha256 <b>전부 일치</b></td></tr>
+          <tr><td>본문(Python ↔ Rust)</td><td>같은 문서를 ctypes 감싸개(<code class="inl">clean=True</code>)로 뽑은 본문 = Rust 판 본문 (sha256 전부 일치) — "한 파서" 의 증명</td></tr>
+          <tr><td>분류 레코드</td><td>Rust 판 레코드 JSONL — ts 를 빼고 전부 일치</td></tr>
+          <tr><td>부분추출·스캔 표식</td><td>대형 PDF·시간 상한 문서에서 <code class="inl">partial</code>·<code class="inl">layout</code> 이 같음</td></tr>
+          <tr><td>압축</td><td>zip·tar·gz·bz2·xz·7z·rar, 중첩·분할볼륨·상한 초과·손상에서 jobs(label·origin)·stats 가 같음</td></tr>
+          <tr><td>사이냅 모드</td><td><code class="inl">tests/cli_synap.rs</code> 통과, <code class="inl">--synap-fallback</code>·<code class="inl">--synap-only</code> 로 sample 비교</td></tr>
+          <tr><td>로그</td><td>추출 관련 로그 줄(<code class="inl">추출 engine=</code>, <code class="inl">추출 폴백</code>, <code class="inl">[PDF 부분추출]</code> 등)이 같음</td></tr>
+          <tr><td>pdfium 찾기</td><td>Python 에서 불렀을 때(현재 폴더·실행파일이 다른 곳) PDF 가 정상 추출됨. pdfium 을 치웠을 때 빈 본문이 아니라 분명한 오류</td></tr>
+          <tr><td>오류 코드</td><td>없는 파일 → 2, 크기 상한 → 3, 이미지 → 4, 깨진 파일 → 5, NULL 인자 → 1, ABI 불일치 → 감싸개가 시작을 멈춤</td></tr>
+          <tr><td>패닉</td><td>시험용 패닉 빌드에서 <code class="inl">DP_ERR_PANIC</code> 을 받고 부른 프로세스(Rust·Python 모두)는 살아 있음</td></tr>
+          <tr><td>병렬·메모리</td><td>스레드 8개 동시 호출 결과 = 단일 스레드. 1만 건 반복 후 메모리가 늘지 않음(Linux valgrind)</td></tr>
+          <tr><td>한글 경로</td><td>Windows·Linux 모두 한글·공백·260자 초과 경로 성공(Rust·Python 둘 다)</td></tr>
+          <tr><td>라이브러리 단독</td><td>DocParse-rust 에서 <code class="inl">cargo test --workspace</code>, <code class="inl">--no-default-features</code> 빌드가 MpowerClassify 없이 돈다</td></tr>
+          <tr><td>배포본</td><td>Windows·Linux 배포본에 <code class="inl">docparse.dll</code>/<code class="inl">libdocparse.so</code> 가 들어가고, 새 PC(개발 도구 없음)에서 바로 돈다</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 10 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">10</span><h2>이번에 하지 않는 것</h2></div>
+    <ul class="plain">
+      <li><b>복호화(decrypt.rs)</b> — 엠파워 연동 전용이라 범용 라이브러리에 넣지 않는다. MpowerClassify 에 남는다.</li>
+      <li><b>파서 동작 개선</b> — 분리와 섞으면 결과 차이의 원인을 가릴 수 없다. DocParse-rust 에서 분리 뒤 따로, CHANGELOG 에 적고 한다.</li>
+      <li><b>crates.io·PyPI 공개</b> — 배포 묶음(zip·tgz)으로 충분하다. 다른 프로젝트가 생기면 그때 정한다.</li>
+      <li><b>C#·Java 예제, 32비트·ARM·macOS</b> — 쓸 곳이 생기면 더한다.</li>
+    </ul>
+  </section>
+
+  <!-- 11 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">11</span><h2>위험과 대응</h2></div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>위험</th><th>대응</th></tr></thead>
+        <tbody>
+          <tr><td>pdfium 을 python.exe 옆에서 찾아 PDF 가 조용히 빈 본문</td><td>§4-2: DLL 자신의 폴더를 먼저 찾고, 못 붙이면 분명한 오류. §9 에서 시험</td></tr>
+          <tr><td>엉뚱한 버전 DLL 을 집어 옴(PATH 의 다른 docparse.dll 등)</td><td>이름으로 찾지 않고 <b>절대경로</b>로 연다. ABI 버전 확인, 시작 로그에 <code class="inl">docparse_version()</code> 과 실제 경로를 남긴다</td></tr>
+          <tr><td>두 저장소의 Rust·크레이트 버전이 달라 결과가 미묘하게 바뀜</td><td><code class="inl">Cargo.lock</code> 을 맞추고 시작(툴체인은 두 프로젝트 모두 같은 PC·같은 빌드서버의 것을 쓴다). §9 sha256 비교가 최종 관문</td></tr>
+          <tr><td>옮기다 상한·폴백 기본값이 하나 바뀜</td><td>옵션 기본값을 지금 상수에서 그대로 만들고 시험으로 하나하나 고정</td></tr>
+          <tr><td>로그 문장이 바뀌어 운영 도구가 못 읽음</td><td>문장 그대로 옮기고 콜백으로 같은 파일에. §9 에서 로그 줄 비교</td></tr>
+          <tr><td>Python 콜백 객체가 GC 되어 DLL 이 죽은 포인터를 부름</td><td>감싸개가 CFUNCTYPE 객체를 인스턴스에 붙잡아 둔다. 감싸개를 모듈 단위 하나(싱글턴)로 쓴다</td></tr>
+          <tr><td>DLL 안 패닉이 프로세스를 죽임</td><td><code class="inl">catch_unwind</code> + <code class="inl">panic="unwind"</code>. 패닉 시험(§9)</td></tr>
+          <tr><td>배포본에 dll/so 를 빼먹음 → 시작 실패</td><td>시작할 때 바로 불러서 없으면 즉시 분명한 메시지로 끝난다(문서마다 조용히 실패하지 않는다). 배포 스크립트에 존재 확인</td></tr>
+          <tr><td>CentOS 7 빌드 의존(glibc 2.17)</td><td>지금 MpowerClassify 를 빌드하는 그 서버·그 툴체인을 그대로 쓴다</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 12 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">12</span><h2>구현 결과 (2026-11-10)</h2></div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>항목</th><th>결과</th></tr></thead>
+        <tbody>
+          <tr><td>본문(Rust 판)</td><td class="ok">분리 전 master 실행파일 vs DLL 을 부르는 실행파일 — <code class="inl">D:\분류함</code> 4,128개 파일(압축 안 포함 4,941건) · <code class="inl">D:\sample</code> 40건의 <code class="inl">--text-only</code> 출력이 <b>바이트 단위로 같음</b>(122.9MB). 오류 출력(stderr)도 같음</td></tr>
+          <tr><td>사이냅 모드</td><td class="ok"><code class="inl">--synap-fallback</code>·<code class="inl">--synap-only</code> 로 sample 본문 같음, 추출 로그 줄(<code class="inl">추출 engine=</code> 등 41줄) 같음</td></tr>
+          <tr><td>분류 레코드</td><td class="ok">분류함 5,660줄·sample 42줄 — 다른 것은 실행 시각(<code class="inl">run.started_at</code>)과 총 소요시간(<code class="inl">summary.elapsed_total_ms</code>)뿐</td></tr>
+          <tr><td>본문(Python ↔ Rust)</td><td class="ok">ctypes 감싸개 <code class="inl">extract(clean=True)</code> = Rust 판 본문 — sample 40건 · 분류함 3,709건 전부 같음(압축 안 1,232건은 경로가 가상이라 이 비교에서 제외, 위 Rust 판 비교에는 포함)</td></tr>
+          <tr><td>시험</td><td class="ok">DocParse-rust <code class="inl">cargo test --workspace</code>(Windows·빌드서버) · MpowerClassify Rust <code class="inl">cargo test</code> 전부 통과 · Python <code class="inl">pytest</code> 통과(스캔 PDF 판정 시험은 DocParse-rust 소스와 DLL 로 보도록 고침)</td></tr>
+          <tr><td>Linux</td><td class="ok">빌드서버(CentOS 7)에서 <code class="inl">libdocparse.so</code> 빌드 — RPATH=$ORIGIN, 요구 glibc 최고 2.15(≤ 2.17)</td></tr>
+          <tr><td>배포 묶음</td><td><code class="inl">docparse-0.1.0-nogit-windows-x64.zip</code>·<code class="inl">…-linux-x64.tgz</code> → <code class="inl">third_party/docparse/</code>. DocParse-rust 저장소에 첫 커밋을 한 뒤 다시 빌드하면 버전에 git 해시가 붙는다</td></tr>
+          <tr><td>남은 일</td><td>Linux 배포본을 새 스크립트로 실제 빌드해 보기(<code class="inl">linux-build.sh</code>·<code class="inl">win-deploy.sh</code> 는 고쳤지만 이번에 돌리지 않음) · Python 판 기본값을 rust 로 바꾸는 평가셋 비교(2편 §5-2)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <span>MpowerClassify · Rust 문서파서 독립 프로젝트 분리 설계 (1편 · 개정 2)</span>
+    <span>2026-11-10</span>
+  </footer>
+</div>
+</body>
+</html>

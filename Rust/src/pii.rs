@@ -409,9 +409,13 @@ fn run_shape(s: &str) -> Vec<usize> {
 fn detect_all_passes(text: &str, wanted: &HashSet<String>) -> (Vec<Det>, String) {
     let (norm, map) = normalize_with_map(text);
     let mut dets = kept_dets_raw(&norm, wanted);
+    // [의도적 차이 I] 표 머리줄 문맥 계좌 — 원문 전체에서 한 번 찾아, 다른 검출과
+    // 함께 마지막에 한 번만 겹침 해소한다(파이썬 판 _kopii_scan 의 extra 와 같은 자리).
+    let table = if wanted.contains("ACCOUNT") { det_account_table(text) } else { Vec::new() };
 
     if norm == text {
         // 바뀐 게 없으면 좌표도 그대로다.
+        dets.extend(table);
         return (resolve_overlaps(dets), norm);
     }
 
@@ -425,6 +429,15 @@ fn detect_all_passes(text: &str, wanted: &HashSet<String>) -> (Vec<Det>, String)
     if run_shape(text) != run_shape(&norm) {
         dets.extend(kept_dets_raw(text, wanted));
     }
+    // [중요][의도적 차이 G] 숫자 닮은꼴 되돌리기(O→0·S→5·G→6)가 여권 접두를 지워
+    // "O48832568" 이 "048832568" 이 된다 → S·O·G 여권을 하나도 못 잡았다(실측 0/21).
+    // ko-pii 1.22 detect.py 처럼 여권만 '글자를 접지 않은 본문'으로 한 번 더 본다.
+    // 1.15.2 를 옮긴 이 판엔 접기만 끄는 정규화가 없어 원문을 쓴다(좌표 변환 불필요).
+    // 파이썬 판 rules._detect_subset 과 같은 차례(재검사 뒤, 표 계좌 앞)다.
+    if wanted.contains("PASSPORT") {
+        dets.extend(det_passport(text));
+    }
+    dets.extend(table);
     (resolve_overlaps(dets), text.to_string())
 }
 
@@ -534,6 +547,13 @@ static RE_EMAIL: Lazy<Regex> = Lazy::new(|| Regex::new(
 ).unwrap());
 // 여권(ko-pii passport.py): 대문자 prefix 화이트리스트(2자 우선) + 8자리.
 static RE_PASSPORT: Lazy<Regex> = Lazy::new(|| Regex::new(r"(PP|PM|PS|PO|PD|PR|PT|M|S|G|O|D|R|T)([0-9]{8})").unwrap());
+// [의도적 차이 G] 2021년~ 차세대 전자여권(영문1+숫자3+영문1+숫자4). ko-pii 1.22 의 _MODERN_FORMAT 과 같고,
+// 파이썬 판 rules._PASSPORT_MODERN_RE 와 글자까지 같다(경계는 det_passport 의 영숫자 경계 검사).
+static RE_PASSPORT_MODERN: Lazy<Regex> = Lazy::new(|| Regex::new(r"[MSROD][0-9]{3}[A-Z][0-9]{4}").unwrap());
+// [의도적 차이 I] 표 머리줄 문맥 계좌 — 칸 값 모양 / 머리줄 판정(4자리 이상 숫자가 있으면 머리줄 아님).
+// 파이썬 판 rules._ACCT_CELL_RE · _DIGITS4_RE 와 같다.
+static RE_ACCT_CELL: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[0-9]+(?:[ \-][0-9]+){0,4}$").unwrap());
+static RE_DIGITS4: Lazy<Regex> = Lazy::new(|| Regex::new(r"[0-9]{4}").unwrap());
 // URL(ko-pii url.py 와 1:1). (?i) 는 원본의 re.IGNORECASE — HTTPS:// 도 잡는다.
 // 제외 문자에 백틱·닫는 괄호/대괄호/중괄호가 들어가는 것이 중요하다. 빠뜨리면
 // "자료(https://…)를" 에서 ")를" 까지 URL 로 먹어 값이 오염된다.
@@ -1063,6 +1083,18 @@ fn det_passport(text: &str) -> Vec<Det> {
         if text[st..en].ends_with("00000000") { continue; }
         out.push(Det { start: st, end: en, risk: R_CRIT, conf: 0.9, label: "PASSPORT" });
     }
+    // [중요][의도적 차이 G] 신형 여권 형식을 옛 형식 뒤에 덧붙인다.
+    //=> ko-pii 1.15.2 원문 passport.py 는 `(PP|PM|…|M|S|G|O|D|R|T)([0-9]{8})` 하나뿐이라
+    //   2021년부터 나오는 M123A4567 모양을 놓친다. ko-pii 1.22 가 같은 형식
+    //   (`[MSROD][0-9]{3}[A-Z][0-9]{4}`)을 더했으므로 그대로 따라, ko-pii 를 올려도
+    //   결과가 바뀌지 않게 한다. 파이썬 판 rules._passport_detect 와 같은 차례다.
+    for (st, en) in find_bounded(&RE_PASSPORT_MODERN, text, |st, en| {
+        let before_ok = st == 0 || !b[st - 1].is_ascii_alphanumeric();
+        let after_ok = en >= b.len() || !b[en].is_ascii_alphanumeric();
+        before_ok && after_ok
+    }) {
+        out.push(Det { start: st, end: en, risk: R_CRIT, conf: 0.9, label: "PASSPORT" });
+    }
     out
 }
 
@@ -1163,6 +1195,8 @@ fn det_ipv4(text: &str) -> Vec<Det> {
         if is_reserved_ipv4(&oct) { continue; }
         let left = left_window(text, st, 12);
         if RE_IP_CTX_LEFT.is_match(&left) { continue; }
+        // ko-pii 원본의 영문 줄임 갈래(v·ver·Sec·Ch·Fig·App) — RE_IP_CTX_LEFT 로 합칠 때 빠졌던 것.
+        if ip_abbr_ctx(&left) { continue; }
         let right = right_window(text, en, 8);
         if RE_IP_CTX_RIGHT.is_match(&right) { continue; }
         out.push(Det { start: st, end: en, risk: R_MED, conf: 1.0, label: "IP" });
@@ -1184,6 +1218,38 @@ static RE_IP_CTX_LEFT: Lazy<Regex> = Lazy::new(|| Regex::new(
 static RE_IP_CTX_RIGHT: Lazy<Regex> = Lazy::new(|| Regex::new(
     r"(?i)^\s*(?:버전|버젼|version|빌드|build|릴리[스즈])"
 ).unwrap());
+// ko-pii ip.py 의 _VERSION_CTX `(?<![A-Za-z])(?:[vV]\.?|ver\.?|…)\s*$` 와
+// _SECTION_CTX `(?<![A-Za-z])(?:[Ss]ec|[Cc]h|[Ff]ig|[Aa]pp)\.?\s*$` 의 '영문 줄임' 갈래.
+// 앞의 (?<![A-Za-z]) 는 Rust regex 가 못 쓰므로 ip_abbr_ctx 가 시작 위치마다 코드로 본다.
+static RE_IP_ABBR_TAIL: Lazy<Regex> = Lazy::new(|| Regex::new(
+    r"^(?:[vV]\.?|ver\.?|(?:[Ss]ec|[Cc]h|[Ff]ig|[Aa]pp)\.?)\s*$"
+).unwrap());
+
+//------------------------------------------------------------------
+// IP 왼쪽 문맥 — 영문 줄임 판번호·항목번호 (ko-pii 원본과 같게)
+//=> ko-pii 는 "v9.4.5.85"·"ver 1.2.3.4"·"Fig. 3.1.2.4" 처럼 판번호·항목번호의 영문 줄임이
+//   바로 앞에 오면 IP 로 보지 않는다. 의도적 차이 B 용 RE_IP_CTX_LEFT 로 문맥 정규식을
+//   합칠 때 이 갈래가 빠져, Rust 판만 이런 값을 IP 로 잡았다(2026-11-05 V10 비교 시험에서
+//   "프로그램 v9.4.5.85" 등 8건). 일부러 만든 차이가 아니라 옮겨 적다 생긴 누락이다.
+//    1) 왼쪽 창(12글자)의 글자 위치마다
+//    2) 그 앞 글자가 영문이 아니고(창 맨 앞이면 통과 — 파이썬 lookbehind 와 같음)
+//    3) 거기서 끝까지가 RE_IP_ABBR_TAIL 에 맞으면 판번호 문맥
+//
+// -in: left = IP 앞 12글자 (left_window)
+//
+// -out: bool = 판번호·항목번호 문맥이면 true
+// -out: error = 예외 없음
+//------------------------------------------------------------------
+fn ip_abbr_ctx(left: &str) -> bool {
+    let mut prev: Option<char> = None;
+    for (i, c) in left.char_indices() {
+        if !prev.map_or(false, |p| p.is_ascii_alphabetic()) && RE_IP_ABBR_TAIL.is_match(&left[i..]) {
+            return true;
+        }
+        prev = Some(c);
+    }
+    false
+}
 
 // ---- 문자 유틸 ----
 fn is_hangul(c: char) -> bool { ('\u{AC00}'..='\u{D7A3}').contains(&c) }
@@ -1696,9 +1762,86 @@ fn det_account(text: &str) -> Vec<Det> {
     collect(&RE_ACCT_KW, &mut spans, false);
     collect(&RE_ACCT_BANK_BEFORE, &mut spans, false);
     collect(&RE_ACCT_BANK_AFTER, &mut spans, true);
+    // [중요][의도적 차이 H] 값이 줄바꿈을 넘으면 첫 줄바꿈 앞에서 자른다.
+    //=> ko-pii 원문은 숫자 사이 구분자 `[\s\-]` 에 줄바꿈까지 넣어, 계좌 다음 줄의 첫
+    //   숫자를 붙여 "3333-76-8211051\r\n62" 를 한 값으로 낸다(1.22.17 도 같음). 값이 틀려
+    //   진짜 계좌를 놓치고, 다음 줄 차량번호 같은 것도 겹침 해소에서 밀어낸다.
+    //   겹침 검사(seen)는 원문처럼 자르기 전 자리로 끝낸 뒤 여기서 자른다 —
+    //   파이썬 판 rules._guarded_account_detect 가 ko-pii 결과를 뒤에서 자르는 것과 같은 차례.
+    let spans: Vec<(usize, usize)> = spans.into_iter().filter_map(|(s, e)| {
+        let raw = &text[s..e];
+        match raw.find(|c| c == '\r' || c == '\n') {
+            None => Some((s, e)),
+            Some(cut) => {
+                let kept = raw[..cut].trim_end();
+                // 자른 값이 계좌 조건(구분자 뺀 10~16자리 숫자)을 못 채우면 버린다
+                match clean_digits(kept) {
+                    Some(n) if (10..=16).contains(&n) => Some((s, s + kept.len())),
+                    _ => None,
+                }
+            }
+        }
+    }).collect();
+    let mut spans = spans;
     spans.sort();
     spans.dedup();
     spans.into_iter().map(|(s, e)| Det { start: s, end: e, risk: R_HIGH, conf: 0.9, label: "ACCOUNT" }).collect()
+}
+
+//------------------------------------------------------------------
+// 표 머리줄 문맥으로 계좌번호 찾기 [중요][의도적 차이 I]
+//=> ko-pii 는 값 바로 앞에 "계좌"·은행명이 있어야 계좌로 본다. 엑셀·DB 에서 내보낸
+//   표(TSV·CSV)는 머리줄에만 "계좌번호"가 있어 통째로 놓친다(비교 시험 2026-11-05:
+//   표 안 계좌 0/20). 머리줄의 같은 칸에 "계좌"가 있으면 그 칸 값을 계좌 문맥으로 본다.
+//    1) 줄마다 구분자 — 탭이 있으면 탭, 없고 쉼표가 있으면 쉼표, 둘 다 없으면 표 아님
+//    2) 머리줄 = 칸 2개 이상, 어느 칸에 "계좌", 4자리 이상 숫자가 어디에도 없는 줄
+//    3) 머리줄 아래 구분자·칸 수가 같은 줄이 이어지는 동안 "계좌" 칸 값이
+//       숫자(공백·하이픈 구분 최대 5묶음)이고 숫자만 10~16자리면 계좌
+//    4) 구분자·칸 수가 바뀌거나 빈 줄이면 표가 끝난 것으로 본다
+//   파이썬 판 rules._table_account_detect 와 같은 규칙이다. 원문 기준 바이트 좌표.
+//
+// -in: text = 원문 본문
+//
+// -out: dets = 표 문맥 계좌 검출 목록
+// -out: error = 예외 없음 ("계좌" 낱말이 없으면 빈 목록)
+//------------------------------------------------------------------
+fn det_account_table(text: &str) -> Vec<Det> {
+    let mut out = Vec::new();
+    if text.is_empty() || !text.contains("계좌") { return out; }
+    // (구분자, 칸 수, "계좌" 칸 번호들)
+    let mut header: Option<(char, usize, Vec<usize>)> = None;
+    let mut pos = 0usize;
+    for raw_line in text.split('\n') {
+        let line_start = pos;
+        pos += raw_line.len() + 1;
+        let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+        let d = if line.contains('\t') { '\t' } else if line.contains(',') { ',' } else { header = None; continue };
+        let cells: Vec<&str> = line.split(d).collect();
+        // 머리줄이면 "계좌" 칸 번호를 기억하고 다음 줄로
+        if cells.len() >= 2 && cells.iter().any(|c| c.contains("계좌"))
+            && !cells.iter().any(|c| RE_DIGITS4.is_match(c)) {
+            let cols = cells.iter().enumerate().filter(|(_, c)| c.contains("계좌")).map(|(i, _)| i).collect();
+            header = Some((d, cells.len(), cols));
+            continue;
+        }
+        let cols = match &header {
+            Some((hd, n, cols)) if *hd == d && *n == cells.len() => cols.clone(),
+            _ => { header = None; continue; }
+        };
+        let mut offs = Vec::with_capacity(cells.len());
+        let mut off = 0usize;
+        for c in &cells { offs.push(off); off += c.len() + 1; }
+        for i in cols {
+            let c = cells[i];
+            let val = c.trim_matches(' ');
+            if val.is_empty() || !RE_ACCT_CELL.is_match(val) { continue; }
+            let n = val.bytes().filter(|b| b.is_ascii_digit()).count();
+            if !(10..=16).contains(&n) { continue; }
+            let s = line_start + offs[i] + (c.len() - c.trim_start_matches(' ').len());
+            out.push(Det { start: s, end: s + val.len(), risk: R_HIGH, conf: 0.9, label: "ACCOUNT" });
+        }
+    }
+    out
 }
 
 // ================= 공통 문맥/경계 헬퍼 (신규 검출기 6종 공용) =================
@@ -2046,6 +2189,83 @@ mod tests {
         assert_eq!(count("주소는 경기도 부천시 원미구 중동 1153 입니다.", "ADDRESS"), 1);
         assert_eq!(count("원미구 중동 1153", "ADDRESS"), 1);
         assert_eq!(count("분당구 정자동 100", "ADDRESS"), 1);
+    }
+
+    /// 편의 함수 — 여러 라벨을 켜고 (라벨, 값) 목록을 문서 순서로 낸다.
+    fn vals(text: &str, labels: &[&str]) -> Vec<(String, String)> {
+        let want: HashSet<String> = labels.iter().map(|s| s.to_string()).collect();
+        pii_records(text, &want).into_iter().map(|(l, v, _, _)| (l.to_string(), v)).collect()
+    }
+
+    //--------------------------------------------------------------
+    // [중요] ko-pii 와 의도적으로 다른 동작 — 여권 접두 S·O·G · 신형 여권 (차이 G)
+    //=> ko-pii 1.15.2 는 숫자 닮은꼴 되돌리기(O→0·S→5·G→6)가 여권 접두를 지워
+    //   S·O·G 여권을 못 잡고(실측 0/21), 신형 여권(M123A4567)은 규칙에 없다.
+    //   ko-pii 1.22 가 둘 다 고친 동작에 맞췄다. 파이썬 판
+    //   tests/test_rules.py::test_passport_prefix_and_modern 과 같은 시험 벡터다.
+    //
+    // -in: 없음
+    //
+    // -out: 없음
+    // -out: error = 동작이 바뀌면 assert 실패
+    //--------------------------------------------------------------
+    #[test]
+    fn 여권_접두_SOG와_신형을_잡는다() {
+        let p = |t: &str| vals(t, &["PASSPORT"]);
+        let one = |v: &str| vec![("PASSPORT".to_string(), v.to_string())];
+        assert_eq!(p("여권번호: O48832568"), one("O48832568"));
+        assert_eq!(p("여권번호: S83855542"), one("S83855542"));
+        assert_eq!(p("여권번호: G34612926"), one("G34612926"));
+        assert_eq!(p("여권번호: M123A4567"), one("M123A4567"));
+        assert_eq!(p("여권번호: M12345678"), one("M12345678"));
+        assert_eq!(p("여권번호 PS87654321 소지."), one("PS87654321"));
+        // 소문자 접두 · 영숫자에 붙은 것은 여권으로 보지 않는다(그대로)
+        assert!(p("여권번호: m12345678").is_empty());
+        assert!(p("모델 AM123A4567B").is_empty());
+    }
+
+    //--------------------------------------------------------------
+    // [중요] ko-pii 와 의도적으로 다른 동작 — 계좌가 줄바꿈을 넘지 않는다 (차이 H)
+    //=> ko-pii 는 숫자 사이 구분자로 줄바꿈도 받아 다음 줄 첫 숫자를 붙여 낸다
+    //   ("3333-76-8211051\r\n62"). 첫 줄바꿈 앞에서 자르고, 자른 값이 10자리가 안
+    //   되면 버린다. 파이썬 판 tests/test_rules.py::test_account_no_line_cross 와 같은 벡터.
+    //
+    // -in: 없음
+    //
+    // -out: 없음
+    // -out: error = 동작이 바뀌면 assert 실패
+    //--------------------------------------------------------------
+    #[test]
+    fn 계좌가_줄바꿈을_넘지_않는다() {
+        let v = vals("계좌번호: 3333-76-8211051\r\n62우 2183 차량", &["ACCOUNT", "VEHICLE"]);
+        assert_eq!(v, vec![("ACCOUNT".to_string(), "3333-76-8211051".to_string()),
+                           ("VEHICLE".to_string(), "62우 2183".to_string())]);
+        assert_eq!(count("계좌번호: 110-123-\n456789", "ACCOUNT"), 0);
+        assert_eq!(count("계좌번호: 110-123-456789", "ACCOUNT"), 1);
+    }
+
+    //--------------------------------------------------------------
+    // [중요] ko-pii 와 의도적으로 다른 동작 — 표 머리줄 문맥 계좌 (차이 I)
+    //=> 머리줄에만 "계좌번호"가 있는 TSV·CSV 표의 같은 칸 값을 계좌로 본다.
+    //   구분자·칸 수가 바뀌거나 빈 줄이 나오면 표가 끝난 것으로 본다.
+    //   파이썬 판 tests/test_rules.py::test_account_table_header 와 같은 벡터.
+    //
+    // -in: 없음
+    //
+    // -out: 없음
+    // -out: error = 동작이 바뀌면 assert 실패
+    //--------------------------------------------------------------
+    #[test]
+    fn 계좌_표_머리줄_문맥() {
+        let v = vals("성명\t계좌번호\t연락처\r\n홍길동\t110-123-456789\t010-2345-6789", &["ACCOUNT", "PHONE"]);
+        assert_eq!(v, vec![("ACCOUNT".to_string(), "110-123-456789".to_string()),
+                           ("PHONE".to_string(), "010-2345-6789".to_string())]);
+        assert_eq!(count("성명,계좌번호\r\n김철수,3333-12-1234567", "ACCOUNT"), 1);
+        // 머리줄에 "계좌"가 없음 · 칸 수가 다름 · 빈 줄로 끊김 · 자릿수 모자람 → 계좌 아님
+        assert_eq!(count("성명\t번호\r\n홍길동\t110-123-456789", "ACCOUNT"), 0);
+        assert_eq!(count("성명\t계좌번호\r\n홍길동\t110-123-456789\t추가", "ACCOUNT"), 0);
+        assert_eq!(count("성명\t계좌번호\r\n\r\n홍길동\t110-123-456789", "ACCOUNT"), 0);
+        assert_eq!(count("성명\t계좌번호\r\n홍길동\t12-345", "ACCOUNT"), 0);
     }
 
     //--------------------------------------------------------------

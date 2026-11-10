@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>docparse C 진입점</title>
+</head>
+<body>
+<style>
+  :root{
+    --bg:#f4f6f9; --surface:#ffffff; --surface-2:#eef1f6; --ink:#191d24;
+    --muted:#58616e; --faint:#8b94a2; --line:#dde2ea; --line-strong:#c7cfda;
+    --accent:#26437e; --accent-2:#365fb0; --accent-soft:#e7edf7;
+    --c:#cf3b2e; --c-soft:#fbeceb; --s:#b3760f; --s-soft:#f9f0dc; --o:#2f8f57; --o-soft:#e6f3ea;
+    --shadow:0 1px 2px rgba(20,30,50,.04), 0 8px 24px rgba(20,30,50,.06);
+    --sans:"Pretendard Variable",Pretendard,"Malgun Gothic","맑은 고딕",-apple-system,"Apple SD Gothic Neo",system-ui,sans-serif;
+    --mono:ui-monospace,"Cascadia Code","Cascadia Mono",Consolas,"D2Coding",monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0e1116; --surface:#161b22; --surface-2:#1d232c; --ink:#e7ebf1;
+      --muted:#9aa4b2; --faint:#6b7684; --line:#262d38; --line-strong:#333c49;
+      --accent:#7ea0e8; --accent-2:#8fb0f2; --accent-soft:#182233;
+      --c:#f2695c; --c-soft:#2a1715; --s:#e6a748; --s-soft:#271e10; --o:#57bd85; --o-soft:#122217;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#f4f6f9; --surface:#ffffff; --surface-2:#eef1f6; --ink:#191d24;
+    --muted:#58616e; --faint:#8b94a2; --line:#dde2ea; --line-strong:#c7cfda;
+    --accent:#26437e; --accent-2:#365fb0; --accent-soft:#e7edf7;
+    --c:#cf3b2e; --c-soft:#fbeceb; --s:#b3760f; --s-soft:#f9f0dc; --o:#2f8f57; --o-soft:#e6f3ea;
+  }
+  :root[data-theme="dark"]{
+    --bg:#0e1116; --surface:#161b22; --surface-2:#1d232c; --ink:#e7ebf1;
+    --muted:#9aa4b2; --faint:#6b7684; --line:#262d38; --line-strong:#333c49;
+    --accent:#7ea0e8; --accent-2:#8fb0f2; --accent-soft:#182233;
+    --c:#f2695c; --c-soft:#2a1715; --s:#e6a748; --s-soft:#271e10; --o:#57bd85; --o-soft:#122217;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    line-height:1.7;-webkit-font-smoothing:antialiased;font-size:16px;letter-spacing:-0.003em;}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 24px 96px;}
+  header.doc{padding:56px 0 34px;border-bottom:1px solid var(--line);margin-bottom:40px;}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);font-weight:600;display:flex;gap:10px;align-items:center;margin-bottom:20px;}
+  .eyebrow::before{content:"";width:26px;height:2px;background:var(--accent);border-radius:2px;}
+  h1.title{font-size:clamp(28px,4.6vw,44px);line-height:1.12;margin:0 0 14px;font-weight:800;
+    letter-spacing:-0.02em;text-wrap:balance;}
+  .lede{font-size:clamp(16px,2.1vw,19px);color:var(--muted);margin:0 0 22px;max-width:64ch;}
+  .lede b{color:var(--ink);font-weight:600;}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;}
+  .chip{font-size:12px;font-family:var(--mono);color:var(--muted);background:var(--surface);
+    border:1px solid var(--line);border-radius:999px;padding:5px 12px;}
+  .chip b{color:var(--ink);font-weight:600;}
+  section{margin:52px 0;scroll-margin-top:20px;}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:22px;}
+  .sec-num{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--accent);
+    border:1px solid var(--line-strong);border-radius:7px;padding:3px 9px;flex:none;line-height:1.3;}
+  h2{font-size:clamp(21px,3vw,27px);margin:0;font-weight:750;letter-spacing:-0.015em;line-height:1.25;}
+  h3{font-size:17px;margin:30px 0 12px;font-weight:700;letter-spacing:-0.01em;}
+  p{margin:0 0 15px;max-width:72ch;}
+  ul.plain{margin:0 0 15px;padding-left:20px;} ul.plain li{margin:5px 0;color:var(--muted);}
+  ul.plain li b{color:var(--ink);font-weight:600;}
+  ol.plain{margin:0 0 15px;padding-left:22px;} ol.plain li{margin:6px 0;color:var(--muted);}
+  ol.plain li b{color:var(--ink);font-weight:600;}
+  .tldr{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--accent);
+    border-radius:12px;padding:22px 24px;box-shadow:var(--shadow);}
+  .tldr .k{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);font-weight:700;margin-bottom:10px;}
+  .tldr p{margin:0;font-size:17px;color:var(--ink);max-width:none;}
+  .tldr b{color:var(--accent-2);}
+  .twrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);margin:16px 0;}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:640px;background:var(--surface);}
+  th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--line);vertical-align:top;}
+  thead th{background:var(--surface-2);font-size:12px;letter-spacing:.03em;color:var(--muted);
+    text-transform:uppercase;font-weight:700;white-space:nowrap;}
+  tbody tr:last-child td{border-bottom:none;}
+  td.mono,.mono-cell{font-family:var(--mono);font-size:13px;white-space:nowrap;}
+  code.inl{font-family:var(--mono);font-size:.9em;background:var(--surface-2);border:1px solid var(--line);
+    border-radius:5px;padding:1px 6px;}
+  pre{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 20px;
+    overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.65;box-shadow:var(--shadow);color:var(--ink);}
+  pre .cm{color:var(--o);} pre .kw{color:var(--accent-2);font-weight:600;} pre .hi{color:var(--c);font-weight:600;}
+  .note{border:1px solid var(--line);background:var(--surface-2);border-radius:12px;padding:16px 18px;
+    font-size:14.5px;display:flex;gap:12px;align-items:flex-start;margin:16px 0;}
+  .note .badge{font-family:var(--mono);font-size:10.5px;font-weight:800;letter-spacing:.06em;
+    padding:3px 8px;border-radius:6px;flex:none;text-transform:uppercase;white-space:nowrap;}
+  .note.safe .badge{color:var(--o);background:var(--o-soft);border:1px solid color-mix(in srgb,var(--o) 35%,transparent);}
+  .note.warn .badge{color:var(--s);background:var(--s-soft);border:1px solid color-mix(in srgb,var(--s) 35%,transparent);}
+  .note.bad .badge{color:var(--c);background:var(--c-soft);border:1px solid color-mix(in srgb,var(--c) 35%,transparent);}
+  .note.info .badge{color:var(--accent-2);background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent-2) 35%,transparent);}
+  .note p{margin:0;color:var(--muted);max-width:none;}
+  .note b{color:var(--ink);}
+  .x{color:var(--c);font-weight:700}
+  .ok{color:var(--o);font-weight:700}
+  .wn{color:var(--s);font-weight:700}
+  .src{font-family:var(--mono);font-size:12px;color:var(--faint);}
+  .fig{background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);
+    padding:18px;margin:16px 0;overflow-x:auto;}
+  .fig svg{display:block;min-width:680px;width:100%;height:auto;}
+  .fig text{font-family:var(--sans);fill:var(--ink);font-size:13px;}
+  .fig .t-mono{font-family:var(--mono);font-size:11.5px;fill:var(--muted);}
+  .fig .t-h{font-weight:700;font-size:14px;}
+  .fig .box{fill:var(--surface-2);stroke:var(--line-strong);}
+  .fig .box-a{fill:var(--accent-soft);stroke:var(--accent-2);}
+  .fig .ln{stroke:var(--muted);stroke-width:1.4;fill:none;}
+  .fig .ln-d{stroke:var(--faint);stroke-width:1.2;fill:none;stroke-dasharray:5 4;}
+  .fig .ah{fill:var(--muted);}
+  footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);
+    font-size:13px;color:var(--faint);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;
+    font-family:var(--mono);letter-spacing:.02em;}
+  @media print{ body{background:#fff;} .tldr,pre,.twrap,.fig{box-shadow:none;} }
+  .warn{color:var(--s);font-weight:700}
+</style>
+
+
+<div class="wrap">
+
+  <header class="doc">
+    <div class="eyebrow">구조 설계 · C ABI for docparse</div>
+    <h1 class="title">다른 언어에서 Rust 문서파서 쓰기<br>— <code class="inl">docparse</code> C 진입점(DLL / .so)</h1>
+    <p class="lede">1편 개정 2 로 문서파서는 별도 프로젝트 <code class="inl">D:\Project\DocParse-rust</code> 가 되었고, <b>C 언어 방식의 함수</b>를 내보내는 공유 라이브러리
+    (Windows <code class="inl">docparse.dll</code>, Linux <code class="inl">libdocparse.so</code>)와 헤더(<code class="inl">docparse.h</code>)가 <b>유일한 공개 형태</b>가 되었다.
+    MpowerClassify 의 Rust 판·Python 판도 이것을 불러 쓴다. 이 문서는 C·C++·C#·Java·Go 같은 <b>다른 언어 프로젝트</b>가 같은 라이브러리를 쓰는 법과, 그때 남은 일을 적는다.</p>
+    <div class="meta">
+      <span class="chip"><b>대상</b> Rust 판 라이브러리</span>
+      <span class="chip"><b>선행</b> 1편 (라이브러리 분리) 완료</span>
+      <span class="chip"><b>크레이트</b> DocParse-rust/crates/docparse-ffi</span>
+      <span class="chip"><b>바뀌는 동작</b> 없음 (새 산출물만 생긴다)</span>
+      <span class="chip"><b>상태</b> C 진입점 구현됨(1편 §5) · 다른 언어 예제만 보류 (개정 2)</span>
+      <span class="chip"><b>작성일</b> 2026-11-10</span>
+    </div>
+  </header>
+
+  <div class="tldr">
+    <div class="k">한 줄 요약</div>
+    <p><code class="inl">docparse</code> 위에 <b>얇은 C 감싸개 크레이트</b> <code class="inl">docparse-ffi</code> 를 둔다. 함수는 11개다(처음 판 7개 + MpowerClassify 가 쓰는 판단 4개).
+    옵션과 결과는 <b>UTF-8 JSON 문자열</b>로 주고받아서, 구조체 모양을 언어마다 맞추는 수고와 버전이 오를 때 깨지는 위험을 없앤다.
+    라이브러리가 만든 문자열은 반드시 <code class="inl">docparse_free</code> 로 돌려받는다. Rust 패닉은 경계 밖으로 새지 않게 막아 <b>오류 코드</b>로 바꾼다.
+    MpowerClassify 배포본에도 들어간다(두 판이 불러 쓴다). 남은 일은 C#·Java 등 <b>다른 언어 예제</b>뿐이고, 쓸 프로젝트가 생길 때 한다.</p>
+  </div>
+
+  <div class="note info"><span class="badge">개정 2 · 1편으로 흡수</span>
+    <p>이 문서의 함수·JSON 모양·안전 규칙은 <b>1편 §5 로 옮겨 구현했다</b>(정본은 DocParse-rust 의 <code class="inl">crates/docparse-ffi/include/docparse.h</code>). 처음 판과 달라진 점:
+    ① 위치가 MpowerClassify <code class="inl">Rust/crates</code> → <b>DocParse-rust 저장소</b>, ② 함수 7개 → <b>11개</b>(check_size·split_volume_hint·clean_text·scan_pdf_verdict),
+    ③ 로그 콜백에 <code class="inl">site</code>("모듈:줄") 인자 추가, ④ 헤더는 cbindgen 대신 손으로 쓴 것(옵션·결과 JSON 모양을 주석으로 담기 위해), ⑤ 정적 링크용(.lib/.a)은 만들지 않음,
+    ⑥ 배포 묶음 이름은 <code class="inl">docparse-&lt;버전&gt;-&lt;플랫폼&gt;</code> 이고 Python·Rust 감싸개 정본을 함께 넣는다. 아래 §2·§3·§7·§10 을 그에 맞게 고쳤다.</p></div>
+
+  <!-- 1 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>왜 C 방식인가</h2></div>
+    <p>언어마다 서로의 함수를 직접 부를 수는 없다. 거의 모든 언어가 공통으로 부를 수 있는 형식이 <b>C 함수 호출 규약(C ABI)</b>이다.
+    Rust 함수를 <code class="inl">extern "C"</code> 로 내보내면 각 언어의 표준 연결 수단으로 부를 수 있다.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>언어</th><th>부르는 수단</th><th>추가 도구</th></tr></thead>
+        <tbody>
+          <tr><td>C / C++</td><td><code class="inl">#include "docparse.h"</code> + 링크</td><td>없음</td></tr>
+          <tr><td>C# (.NET)</td><td><code class="inl">[DllImport("docparse")]</code> (P/Invoke)</td><td>없음</td></tr>
+          <tr><td>Java</td><td>JNA 또는 Java 22+ FFM(Panama)</td><td>JNA 라이브러리(선택)</td></tr>
+          <tr><td>Go</td><td>cgo</td><td>C 컴파일러</td></tr>
+          <tr><td>Node.js</td><td>koffi · ffi-napi</td><td>npm 패키지</td></tr>
+          <tr><td>그 밖</td><td>C 라이브러리를 부를 수 있는 언어면 모두</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Rust 의 <code class="inl">String</code>·<code class="inl">Result</code>·<code class="inl">Vec</code> 는 C 쪽에서 모양을 모르므로 그대로 넘길 수 없다. 그래서 경계에서는 <b>C 문자열(널 종료 UTF-8)과 정수 코드</b>만 쓴다.</p>
+  </section>
+
+  <!-- 2 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>구조</h2></div>
+<pre>D:\Project\DocParse-rust\
+  crates/docparse/          <span class="cm">← 본체(1편)</span>
+  crates/docparse-ffi/      <span class="cm">← C 진입점 — 구현됨</span>
+    Cargo.toml              <span class="cm">  crate-type = ["cdylib"], lib 이름 docparse, 의존: docparse · serde_json · log</span>
+    src/lib.rs              <span class="cm">  extern "C" 함수 11개 (§3) + 단위 시험</span>
+    include/docparse.h      <span class="cm">  손으로 쓴 헤더(옵션·결과 JSON 모양 주석 포함)</span>
+    examples/               <span class="cm">  c/ · csharp/ · java/ 최소 호출 예제 — <b>남은 일</b>(쓸 프로젝트가 생길 때)</span>
+  bindings/python/docparse.py   <span class="cm">← ctypes 감싸개(MpowerClassify Python 판이 쓴다)</span>
+  bindings/rust/docparse_dyn.rs <span class="cm">← libloading 감싸개(MpowerClassify Rust 판이 쓴다)</span></pre>
+    <div class="note info"><span class="badge">판단</span>
+      <p>감싸개를 별도 크레이트로 둔다. <code class="inl">docparse</code> 본체에 <code class="inl">extern "C"</code> 를 섞으면, Rust 사용자도 쓰지 않는 C 함수와 <code class="inl">unsafe</code> 코드를 같이 끌고 가야 한다.
+      Python·Rust 감싸개도 이 C 진입점 위에 얹었다 — 모든 언어가 같은 바이너리를 부른다.</p></div>
+  </section>
+
+  <!-- 3 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>내보내는 함수</h2></div>
+<pre><span class="cm">/* docparse.h (요약) — 정본: DocParse-rust/crates/docparse-ffi/include/docparse.h */</span>
+<span class="kw">#define</span> DOCPARSE_ABI_VERSION 1
+
+<span class="kw">typedef enum</span> {
+    DP_OK = 0,
+    DP_ERR_ARG = 1,          <span class="cm">/* 인자 오류: NULL·잘못된 UTF-8·JSON 파싱 실패 */</span>
+    DP_ERR_NOT_FOUND = 2,    <span class="cm">/* 파일 없음 */</span>
+    DP_ERR_SIZE_LIMIT = 3,   <span class="cm">/* 크기 상한 초과 — 깨진 파일과 구분 */</span>
+    DP_ERR_UNSUPPORTED = 4,  <span class="cm">/* 지원하지 않는 형식(이미지 등) */</span>
+    DP_ERR_FAILED = 5,       <span class="cm">/* 파싱 실패(깨진 파일·암호 등) */</span>
+    DP_ERR_PANIC = 99,       <span class="cm">/* 라이브러리 내부 오류 — 버그. 메시지 첨부 */</span>
+} dp_status;
+
+uint32_t    docparse_abi_version(<span class="kw">void</span>);                       <span class="cm">/* 1) == DOCPARSE_ABI_VERSION 이어야 함 */</span>
+<span class="kw">const char</span>* docparse_version(<span class="kw">void</span>);                           <span class="cm">/* 2) "0.1.0+abc1234" — 해제하지 않음 */</span>
+<span class="kw">int</span>  docparse_detect(<span class="kw">const char</span>* path, <span class="kw">const char</span>** out_fmt);    <span class="cm">/* 3) "pdf"·…·"unknown" — 해제하지 않음 */</span>
+<span class="kw">int</span>  docparse_extract(<span class="kw">const char</span>* path, <span class="kw">const char</span>* opts_json, <span class="kw">char</span>** out_json);       <span class="cm">/* 4) 본문 추출 */</span>
+<span class="kw">int</span>  docparse_check_size(<span class="kw">const char</span>* path, <span class="kw">const char</span>* fmt, <span class="kw">const char</span>* opts_json, <span class="kw">char</span>** out_json); <span class="cm">/* 5) */</span>
+<span class="kw">int</span>  docparse_expand(<span class="kw">const char</span>* paths_json, <span class="kw">const char</span>* tmp_root,
+                     <span class="kw">const char</span>* opts_json, <span class="kw">char</span>** out_json);                      <span class="cm">/* 6) 압축 펼치기 */</span>
+<span class="kw">int</span>  docparse_split_volume_hint(<span class="kw">const char</span>* name, <span class="kw">const char</span>* path, <span class="kw">char</span>** out_json);  <span class="cm">/* 7) */</span>
+<span class="kw">int</span>  docparse_clean_text(<span class="kw">const char</span>* text, <span class="kw">char</span>** out_text);            <span class="cm">/* 8) 6단계 정제 */</span>
+<span class="kw">int</span>  docparse_scan_pdf_verdict(uint64_t pages, uint64_t scan_pages, uint64_t body_chars); <span class="cm">/* 9) 1·0 */</span>
+<span class="kw">void</span> docparse_free(<span class="kw">char</span>* p);                                      <span class="cm">/* 10) 이 라이브러리가 준 char* 만 */</span>
+<span class="kw">typedef void</span> (*dp_log_fn)(<span class="kw">int</span> level, <span class="kw">const char</span>* target, <span class="kw">const char</span>* site,
+                          <span class="kw">const char</span>* msg, <span class="kw">void</span>* user);
+<span class="kw">void</span> docparse_set_logger(dp_log_fn fn, <span class="kw">int</span> max_level, <span class="kw">void</span>* user);   <span class="cm">/* 11) 등록 안 하면 로그를 버린다 */</span></pre>
+    <ul class="plain">
+      <li><b>문자열은 모두 UTF-8</b>이다. 경로도 마찬가지다. Windows 에서 한글 경로를 넘길 때 시스템 코드페이지(CP949)로 바꾸지 말고 UTF-8 로 넘긴다. C# 은 <code class="inl">UTF8</code> 마샬링을 지정한다(§6).</li>
+      <li><b>반환 코드와 JSON 을 둘 다 준다</b>. 코드만 보고 성공·실패를 가른다. 자세한 사유는 JSON 의 <code class="inl">error</code> 에 있다.</li>
+      <li><b>해제는 반드시 <code class="inl">docparse_free</code></b> 로 한다. C 의 <code class="inl">free()</code> 로 지우면 안 된다. 메모리를 할당한 쪽(Rust)과 지우는 쪽의 할당기가 달라 프로그램이 죽을 수 있다.</li>
+    </ul>
+  </section>
+
+  <!-- 4 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>JSON 모양</h2></div>
+    <h3>4-1. 추출 옵션 (<code class="inl">opts_json</code>, NULL 이면 기본값)</h3>
+<pre>{
+  <span class="hi">"clean"</span>: <span class="kw">true</span>,                    <span class="cm">// 6단계 정제까지(기본 true). false = 원시 텍스트</span>
+  <span class="hi">"engine"</span>: <span class="hi">"builtin"</span>,              <span class="cm">// "builtin" | "synap_fallback" | "synap_only"</span>
+  <span class="hi">"synap_exe"</span>: <span class="kw">null</span>,               <span class="cm">// engine 이 synap_* 일 때 snf_exe 경로</span>
+  <span class="hi">"pdfium_lib"</span>: <span class="kw">null</span>,              <span class="cm">// null = DLL 옆 → 시스템 순으로 찾기</span>
+  <span class="hi">"limits"</span>: {
+    <span class="hi">"parser_timeout_secs"</span>: 60, <span class="hi">"max_pdf_pages"</span>: <span class="kw">null</span>,
+    <span class="hi">"max_file_bytes"</span>: <span class="kw">null</span>, <span class="hi">"max_file_bytes_text"</span>: <span class="kw">null</span>,
+    <span class="hi">"snf_timeout_secs"</span>: 60, <span class="hi">"min_text_len"</span>: 20
+  }
+}</pre>
+    <p>빠진 키는 1편 <code class="inl">ExtractOptions::default()</code> 값을 쓴다. 모르는 키는 무시한다. 그래야 새 버전 옵션을 넣은 호출이 옛 DLL 에서도 깨지지 않는다.</p>
+
+    <h3>4-2. 추출 결과 (<code class="inl">out_json</code>)</h3>
+<pre><span class="cm">// 성공 (DP_OK)</span>
+{ <span class="hi">"text"</span>: <span class="hi">"…본문…"</span>, <span class="hi">"engine"</span>: <span class="hi">"docx"</span>, <span class="hi">"fmt"</span>: <span class="hi">"docx"</span>,
+  <span class="hi">"partial"</span>: <span class="kw">null</span>,                                  <span class="cm">// 또는 {"reason":"시간 상한","unit":"pages","read":120,"total":800}</span>
+  <span class="hi">"layout"</span>:  <span class="kw">null</span> }                                 <span class="cm">// 또는 {"pages":800,"scan_pages":3}</span>
+
+<span class="cm">// 실패 (DP_ERR_*)</span>
+{ <span class="hi">"error"</span>: { <span class="hi">"kind"</span>: <span class="hi">"size_limit"</span>, <span class="hi">"message"</span>: <span class="hi">"328.8MB &gt; 200.0MB 초과"</span>,
+             <span class="hi">"size"</span>: 344768512, <span class="hi">"limit"</span>: 209715200 } }</pre>
+
+    <h3>4-3. 압축 펼치기 결과</h3>
+<pre>{ <span class="hi">"jobs"</span>: [ { <span class="hi">"src"</span>: <span class="hi">"C:/tmp/x/0001.docx"</span>, <span class="hi">"label"</span>: <span class="hi">"D:/a.zip/보고서.docx"</span>, <span class="hi">"origin"</span>: <span class="hi">"D:/a.zip"</span> } ],
+  <span class="hi">"stats"</span>: { <span class="hi">"unexpanded"</span>: [ { <span class="hi">"path"</span>: …, <span class="hi">"reason"</span>: …, <span class="hi">"kind"</span>: <span class="hi">"limit"</span> } ],
+             <span class="hi">"unsupported"</span>: [], <span class="hi">"partial"</span>: [] } }</pre>
+    <div class="note info"><span class="badge">판단 · 왜 JSON</span>
+      <p>C 구조체로 넘기면 빠르지만, 필드 하나를 더할 때마다 모든 언어의 구조체 선언을 같이 고쳐야 한다. 순서나 크기가 어긋나면 <b>오류 없이 엉뚱한 값</b>을 읽는다.
+      문서 한 건 파싱에 비하면 JSON 만들고 읽는 비용은 무시할 만하다. 그리고 모든 언어에 JSON 파서가 있다.</p></div>
+  </section>
+
+  <!-- 5 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h2>안전 규칙</h2></div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>규칙</th><th>왜</th><th>어떻게</th></tr></thead>
+        <tbody>
+          <tr><td>패닉이 경계 밖으로 새지 않는다</td><td>Rust 패닉이 C 쪽으로 넘어가면 프로그램 전체가 정의되지 않은 상태가 된다</td><td>모든 함수 본체를 <code class="inl">catch_unwind</code> 로 감싸 <code class="inl">DP_ERR_PANIC</code> + 메시지로 바꾼다</td></tr>
+          <tr><td>NULL·잘못된 UTF-8 은 오류</td><td>C 쪽 실수로 죽지 않게</td><td>모든 포인터 인자를 검사 → <code class="inl">DP_ERR_ARG</code></td></tr>
+          <tr><td>전역 상태 없음</td><td>여러 스레드에서 동시에 부를 수 있어야 한다</td><td>1편에서 전역을 없앴으므로 그대로 성립. 로거 등록만 전역이고, 그것도 원자적으로 바꾼다</td></tr>
+          <tr><td>할당한 쪽이 해제한다</td><td>할당기가 다르면 죽는다</td><td><code class="inl">docparse_free</code> 하나로만 해제</td></tr>
+          <tr><td>콜백 안에서 다시 부르지 않는다</td><td>로그 콜백에서 <code class="inl">docparse_*</code> 를 부르면 꼬일 수 있다</td><td>헤더 주석에 명시</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 6 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">06</span><h2>호출 예시</h2></div>
+    <h3>C</h3>
+<pre><span class="kw">char</span>* out = NULL;
+dp_status st = docparse_extract(<span class="hi">"D:/문서/보고서.hwp"</span>, NULL, &amp;out);   <span class="cm">/* UTF-8 소스 파일 기준 */</span>
+<span class="kw">if</span> (st == DP_OK) { <span class="cm">/* out 의 JSON 에서 "text" 를 읽는다 */</span> }
+<span class="kw">else</span>             { <span class="cm">/* out 의 "error" 를 읽는다 */</span> }
+docparse_free(out);</pre>
+    <h3>C#</h3>
+<pre>[DllImport(<span class="hi">"docparse"</span>, CallingConvention = CallingConvention.Cdecl)]
+<span class="kw">static extern int</span> docparse_extract(
+    [MarshalAs(UnmanagedType.LPUTF8Str)] <span class="kw">string</span> path,
+    [MarshalAs(UnmanagedType.LPUTF8Str)] <span class="kw">string</span>? optsJson,
+    <span class="kw">out</span> IntPtr outJson);
+[DllImport(<span class="hi">"docparse"</span>)] <span class="kw">static extern void</span> docparse_free(IntPtr p);
+
+<span class="kw">int</span> st = docparse_extract(path, <span class="kw">null</span>, <span class="kw">out var</span> p);
+<span class="kw">try</span>   { <span class="kw">var</span> json = Marshal.PtrToStringUTF8(p); <span class="cm">/* System.Text.Json 으로 읽기 */</span> }
+<span class="kw">finally</span> { docparse_free(p); }</pre>
+    <h3>Java (JNA)</h3>
+<pre><span class="kw">interface</span> DocParse <span class="kw">extends</span> Library {
+    DocParse I = Native.load(<span class="hi">"docparse"</span>, DocParse.<span class="kw">class</span>,
+                             Map.of(Library.OPTION_STRING_ENCODING, <span class="hi">"UTF-8"</span>));
+    <span class="kw">int</span>  docparse_extract(String path, String opts, PointerByReference out);
+    <span class="kw">void</span> docparse_free(Pointer p);
+}</pre>
+  </section>
+
+  <!-- 7 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">07</span><h2>만들어지는 파일</h2></div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>종류</th><th>Windows (x86_64-pc-windows-msvc)</th><th>Linux (빌드서버, CentOS 7)</th></tr></thead>
+        <tbody>
+          <tr><td>실행 중 불러 쓰는 라이브러리</td><td class="mono">docparse.dll</td><td class="mono">libdocparse.so</td></tr>
+          <tr><td>링크용 가져오기 파일</td><td class="mono">docparse.dll.lib</td><td>— (.so 에 직접 링크)</td></tr>
+          <tr><td>헤더</td><td colspan="2" class="mono">docparse.h (공통)</td></tr>
+          <tr><td>옆에 같이 둘 것</td><td class="mono">pdfium.dll</td><td class="mono">libpdfium.so</td></tr>
+          <tr><td>사이냅 엔진을 쓸 때</td><td class="mono">snf_exe.exe</td><td class="mono">snf_exe</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul class="plain">
+      <li><b>배포 묶음</b>: <code class="inl">docparse-&lt;버전&gt;-windows-x64.zip</code> · <code class="inl">docparse-&lt;버전&gt;-linux-x64.tgz</code>(DocParse-rust <code class="inl">scripts/win-build.sh</code>·<code class="inl">linux-build.sh</code>). 안에 <code class="inl">lib/</code>(라이브러리+pdfium), <code class="inl">include/</code>, <code class="inl">python/</code>·<code class="inl">rust/</code> 감싸개, <code class="inl">VERSION</code>·<code class="inl">SHA256SUMS</code>·<code class="inl">CHANGELOG.md</code>·<code class="inl">README.md</code>.</li>
+      <li><b>Linux</b>: 빌드서버(CentOS 7, glibc 2.17)에서 빌드하면 그보다 새 리눅스에서도 대부분 돈다. Rust 판 실행파일처럼 <code class="inl">RPATH=$ORIGIN</code> 을 새겨 넣어, 옆에 둔 libpdfium 을 찾게 한다.</li>
+      <li><b>정적 링크용(.lib/.a)은 만들지 않는다</b> — 정적으로 넣으면 "같은 바이너리를 바꿔 끼운다"는 장점이 사라진다. C/C++ 도 실행 중 불러 쓰거나 가져오기 파일(.dll.lib)로 링크한다.</li>
+      <li><b>32비트·ARM</b>은 이번 범위가 아니다. pdfium 바이너리도 같은 대상으로 따로 구해야 해서, 요청이 생기면 따로 한다.</li>
+    </ul>
+  </section>
+
+  <!-- 8 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">08</span><h2>버전 관리</h2></div>
+    <ul class="plain">
+      <li><b>ABI 버전</b>(<code class="inl">DOCPARSE_ABI_VERSION</code>)은 함수 모양이 바뀔 때만 올린다. 함수를 지우거나 인자를 바꾸는 경우다. 쓰는 쪽은 시작할 때 <code class="inl">docparse_abi_version()</code> 과 헤더 값을 비교해, 다르면 멈춘다.</li>
+      <li><b>새 기능은 새 함수나 JSON 키로</b> 더한다. 이렇게 하면 ABI 버전을 올리지 않아도 된다.</li>
+      <li><b>라이브러리 버전</b>(<code class="inl">docparse_version()</code>)은 크레이트 버전에 git 해시를 붙인 것이다. 결과를 저장하는 프로그램은 이 값을 같이 남겨, 어떤 파서로 뽑았는지 추적할 수 있게 한다.</li>
+    </ul>
+  </section>
+
+  <!-- 9 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">09</span><h2>검증 기준</h2></div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>항목</th><th>통과 기준</th></tr></thead>
+        <tbody>
+          <tr><td>결과 동일</td><td>평가셋·sample 을 C 예제로 추출한 본문 = Rust 판 <code class="inl">--text-only</code> 본문 (sha256 전부 일치)</td></tr>
+          <tr><td>오류 코드</td><td>없는 파일 → 2, 크기 상한 → 3, 이미지 → 4, 깨진 파일 → 5, NULL 인자 → 1</td></tr>
+          <tr><td>패닉</td><td>시험용으로 일부러 패닉을 내는 빌드에서 <code class="inl">DP_ERR_PANIC</code> 을 받고, 부른 프로그램은 살아 있음</td></tr>
+          <tr><td>메모리</td><td>1만 건 반복 추출 후 메모리가 늘지 않음. Linux 는 valgrind, Windows 는 작업 관리자로 확인</td></tr>
+          <tr><td>병렬</td><td>스레드 8개 동시 호출 결과가 단일 스레드와 같음</td></tr>
+          <tr><td>한글 경로</td><td>Windows·Linux 모두 한글·공백·긴 경로(260자 초과) 파일 추출 성공</td></tr>
+          <tr><td>언어별</td><td>C·C#·Java 예제가 Windows·Linux 에서 빌드되고 같은 결과</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 10 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">10</span><h2>작업량과 시작 시점</h2></div>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>단계</th><th>내용</th><th>예상</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>docparse-ffi 크레이트 · 함수 11개 · 헤더</td><td><span class="ok">완료</span>(1편)</td></tr>
+          <tr><td>2</td><td>C·C#·Java 예제 + 언어별 검증(§9)</td><td>1일 — 보류</td></tr>
+          <tr><td>3</td><td>Windows·Linux 배포 묶음 스크립트(DocParse-rust <code class="inl">scripts/</code>)</td><td><span class="ok">완료</span>(1편)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note warn"><span class="badge">보류 · 예제만</span>
+      <p>C 진입점 자체는 MpowerClassify 두 판이 쓰므로 이미 만들어 검증했다. 남은 것은 <b>Rust·Python 이 아닌 언어의 예제와 그 언어로 하는 검증</b>뿐이다.
+      실제로 쓸 프로젝트가 정해지면 그 언어 예제부터 <code class="inl">crates/docparse-ffi/examples/</code> 에 더한다.</p></div>
+  </section>
+
+  <footer>
+    <span>MpowerClassify · docparse C 진입점 설계 (3편 · 개정 2)</span>
+    <span>2026-11-10</span>
+  </footer>
+</div>
+</body>
+</html>

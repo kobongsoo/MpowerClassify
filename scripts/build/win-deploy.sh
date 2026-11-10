@@ -55,9 +55,24 @@ $stray
        (모델을 여기 두면 -y 가 지웁니다. 옮긴 뒤 다시 실행하세요)"
     fi
 
+    # 문서파서 라이브러리(Rust 문서파서, --extractor rust) — 설계: plan/Rust-문서파서-라이브러리분리-설계-20261110.html §6-2
+    # 별도 프로젝트(DocParse-rust)가 만든 docparse.dll 을 third_party/docparse 에 받아 두고, spec 이 묶는다.
+    local with_docparse=""
+    if [ -f third_party/docparse/windows-x64/docparse.dll ]; then
+        with_docparse=1
+        echo "  docparse $(cat third_party/docparse/VERSION 2>/dev/null || echo '?')"
+    else
+        echo "  [경고] third_party/docparse/windows-x64/docparse.dll 이 없어 문서파서 없이 만듭니다 — 배포본에서 --extractor rust 를 쓸 수 없습니다"
+    fi
+
     python -m PyInstaller -y build/csoclassify.spec >/dev/null 2>&1 \
         || die "PyInstaller 빌드 실패 — 'python -m PyInstaller build/csoclassify.spec' 로 로그를 보세요"
     [ -f dist/MpowerClassify/MpowerClassify.exe ] || die "빌드 결과에 실행본체가 없습니다"
+    # 라이브러리를 넣었는데 배포본에 빠졌으면 멈춘다 — 빠진 채 나가면 --extractor rust 가 1017 로 멈춘다.
+    if [ -n "$with_docparse" ]; then
+        [ -f dist/MpowerClassify/_internal/docparse.dll ] \
+            || die "배포본에 docparse.dll 이 없습니다 — build/csoclassify.spec 의 binaries 를 보세요"
+    fi
     [ -d dist/MpowerClassify/_internal ] || die "빌드 결과에 _internal 이 없습니다"
 
     step "윈도우 · 파이썬 배포 폴더 갈아 끼우기"
@@ -94,7 +109,10 @@ $stray
 build_rust() {
     step "윈도우 · Rust 빌드"
     command -v cargo >/dev/null || die "cargo 를 찾을 수 없습니다"
-    ( cd Rust && cargo test  >/dev/null 2>&1 ) || die "cargo test 실패 — 'cd Rust && cargo test' 로 보세요"
+    # 문서파서(docparse.dll)는 별도 프로젝트 산출물이다 — 받아 둔 것이 없으면 시험·실행 모두 1017 로 멈춘다.
+    [ -f third_party/docparse/windows-x64/docparse.dll ] \
+        || die "third_party/docparse/windows-x64/docparse.dll 이 없습니다 (scripts/build/update-docparse.sh 로 받으세요)"
+    ( cd Rust && cargo test >/dev/null 2>&1 ) || die "cargo test 실패 — 'cd Rust && cargo test' 로 보세요"
     ( cd Rust && cargo build --release >/dev/null 2>&1 ) || die "cargo build --release 실패"
     [ -f Rust/target/release/MpowerClassify-rs.exe ] || die "빌드 결과에 실행파일이 없습니다"
 
@@ -105,6 +123,8 @@ build_rust() {
             || die "실행파일 백업 실패"
     fi
     cp Rust/target/release/MpowerClassify-rs.exe "$RS_DIST/" || die "실행파일 복사 실패"
+    # 문서파서 라이브러리는 실행파일 옆에 둔다(없으면 문서를 읽기 전에 1017 로 멈춘다).
+    cp third_party/docparse/windows-x64/docparse.dll "$RS_DIST/" || die "docparse.dll 복사 실패"
     ( cd "$RS_DIST" && ./MpowerClassify-rs.exe --version >/dev/null 2>&1 ) \
         || die "갈아 끼운 배포본이 실행되지 않습니다"
     echo "  실행파일 $(ls -la "$RS_DIST/MpowerClassify-rs.exe" | awk '{print $5}') B"
