@@ -15,7 +15,7 @@
 #   단순 치환으로 옮길 수 없고, 실제 문서에도 사실상 안 나온다.
 #
 # 쓰는 법:
-#   python scripts/gen_html_entities.py      # Rust/src/html_entities.rs 를 다시 만든다
+#   python scripts/gen_html_entities.py      # Rust/crates/docparse/src/html_entities.rs 를 다시 만든다
 #------------------------------------------------------------------
 
 import io
@@ -24,7 +24,7 @@ import sys
 from html.entities import html5
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                   "..", "Rust", "src", "html_entities.rs")
+                   "..", "Rust", "crates", "docparse", "src", "html_entities.rs")
 
 HEAD = '''//! HTML 이름 엔티티 표 — **기계로 만든 파일이다. 손으로 고치지 말 것.**
 //!

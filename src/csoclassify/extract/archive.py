@@ -188,6 +188,10 @@ def _zip_is_split_volume(path):
 # -out: error = 없음
 #------------------------------------------------------------------
 def split_volume_hint(name, path=None):
+    # --extractor rust 면 압축 판단도 Rust(docparse)가 한다 — 본문 파서와 한 스위치다.
+    if config.EXTRACTOR == "rust":
+        from . import rust_engine
+        return rust_engine.split_volume_hint(name, path)
     base = os.path.basename(str(name or "")).lower()
     # 7z·zip·tar 분할: 이름.7z.001 · 이름.zip.002 · 이름.tar.gz.0001 …
     if re.search(r"\.(7z|zip|tar|tgz|tar\.gz|tar\.bz2|tar\.xz|rar)\.\d{2,}$", base):
@@ -486,10 +490,18 @@ def _extract_members(src, atype, label, tmp_root, seqbox, budget=None):
 # -in: stats    = 결과 보고용 dict(선택). 주면 해제 상한(G4)에 걸려 펼치지 못한
 #                 압축을 stats["unexpanded"] 에 [{path, reason}] 로 담아 준다.
 #
+#   [--extractor rust] config.EXTRACTOR 가 "rust" 면 이 파이썬 해제 본체 대신 Rust
+#   (docparse.expand_paths)로 펼친다. 반환 모양은 같으므로 부르는 쪽은 그대로다.
+#   설계: plan/Python-문서파서-Rust연동-설계-20261110.html §4-4
+#
 # -out: list[tuple(str,str,str|None)] = (읽기용 실제경로, 표시·신호용 경로, 최상위압축경로 또는 None)
 # -out: error = 없음(개별 압축 실패는 그 압축만 원본 1건으로 폴백)
 #------------------------------------------------------------------
 def expand_paths(paths, tmp_root, *, max_depth=3, stats=None):
+    # 본문 파서와 같은 스위치로 압축 해제기도 고른다(rust = docparse, py = 아래 본체).
+    if config.EXTRACTOR == "rust":
+        from . import rust_engine
+        return rust_engine.expand_paths(paths, tmp_root, max_depth=max_depth, stats=stats, log=log)
     jobs = []
     # 상한에 걸려 펼치지 못한 압축을 여기 모아 호출부에 알린다. 로그만 남기면
     # 결과를 보는 사람에게 안 닿는다 — 내부 문서 수백 건이 통째로 빠졌는데

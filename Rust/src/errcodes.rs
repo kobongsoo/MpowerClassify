@@ -48,6 +48,9 @@ pub const ERRORS: &[(&str, i64, i32)] = &[
     // 사이냅(snf_exe) 모드를 골랐는데 실행파일이 없거나 실행할 수 없다
     // (설계: plan/Rust-사이냅추출기-옵션-설계-20261019.html §6). 놓아 주면 되므로 3 이다.
     ("synap_missing", 1016, 3),
+    // 파이썬 판이 --extractor rust 를 골랐는데 docparse 모듈을 못 불러왔다(배포 누락).
+    // 이 판은 늘 docparse 를 정적으로 품어 내지 않지만, 두 판의 표를 같게 둔다.
+    ("extractor_missing", 1017, 3),
     // ── 2000 정책 파일(규칙셋 · 분류체계) ────────────────────────────
     ("rules_missing", 2001, 3),
     ("rules_invalid", 2002, 4),

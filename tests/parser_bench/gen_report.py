@@ -103,8 +103,10 @@ def chart(rows):
 #------------------------------------------------------------------
 # 보고서 HTML 만들어 저장
 #=> 집계값을 표·차트·결론 문장으로 엮어 하나의 HTML 문서로 쓴다.
-#    1) 결론 → 방법 → 이번에 고친 것 → 시간 → 성공률 → 일치도 → 남은 격차 → 판정 → 권고
-#    2) 수치는 전부 pure_stats.json 에서 읽어 손으로 적지 않는다
+#    1) 결론 → 방법 → 이번에 고친 것 → 시간 → 성공률 → 일치도 → 남은 격차 → 판정
+#       → 표본 밖 포맷(빈칸) → 권고
+#    2) 측정 수치는 전부 pure_stats.json 에서 읽어 손으로 적지 않는다
+#       (단 9장 '표본 밖 포맷' 은 측정이 아니라 조사 결과라 고정 문장이다)
 #
 # -in: 없음
 #
@@ -663,7 +665,56 @@ TSV·JSON 이 지난 표에서 '자체판이 더 빠름'으로 찍혔던 것은 
 {vrows}
 </table>
 
-<h2><span class="num">09</span>권고</h2>
+<h2><span class="num">09</span>표본 밖 포맷 — 사이냅 제거 시 빈칸</h2>
+<p class="lead">위 15개 확장자는 표본으로 확인했다. 대중 문서 포맷 중 <b>표본에 없거나 자체 파서가
+아예 다루지 않는 것</b>을 따로 모았다. 사이냅을 빼면 이 파일들은 사이냅 폴백이 없으므로
+'미분류 + 로그' 가 된다. <small style="color:var(--muted)">(2026-11-05 추가 · 코드·공개 자료 조사이며 실측 아님)</small></p>
+
+<table>
+<tr><th style="width:190px">포맷</th><th style="width:120px">상태</th><th>내용</th><th style="width:230px">대안</th></tr>
+<tr><td class="nm">한셀 .cell (2014 이후)<br>한쇼 .show</td>
+  <td><span class="pill amber">미확인</span></td>
+  <td class="note">신형은 OOXML(zip) 이라고 알려져 있다(나무위키). 그렇다면 내용 감지
+  (<code>xl/workbook.xml</code> · <code>ppt/presentation.xml</code>)에서 xlsx/pptx 로 잡혀
+  자체 파서가 그대로 읽어야 한다. <b>D:\분류함 표본 0건이라 실제 확인은 못 했다.</b></td>
+  <td class="note">실파일 몇 건으로 확인만 하면 된다</td></tr>
+<tr><td class="nm">구형 한셀 .cell (2010)<br>.nxl · 한쇼 .hpt</td>
+  <td><span class="pill red">미지원</span></td>
+  <td class="note">한셀 2010 고유 구조. 확장자는 같지만 OOXML 이 아니다.</td>
+  <td class="note">오픈소스 파서가 사실상 없다(openhanji 는 cell·show 를 내세우나 실제 구현은 HWPX 뿐).
+  LibreOffice 지원 여부도 확인 못 함</td></tr>
+<tr><td class="nm">아래아한글 HWP 3.x</td>
+  <td><span class="pill red">미지원</span></td>
+  <td class="note">한글 3.0(1995) ~ 97 · 815(1998) 의 형식. 한글 2002(2001 출시)부터는 HWP 5.0 이다.
+  확장자는 같은 .hwp 지만 OLE 가 아니라 <code>HWP Document File V3.00</code> 문자열로 시작해서
+  내용으로는 구분된다. 25년 넘은 보관 문서라 비중은 작을 것으로 본다.</td>
+  <td class="note">LibreOffice HWP 필터가 구형 HWP 를 읽는다. 다만 수백 MB 설치본에 문서마다 별도
+  프로세스라 단일 exe 배포와 맞지 않는다</td></tr>
+<tr><td class="nm">암호 걸린 문서</td>
+  <td><span class="pill red">미지원</span></td>
+  <td class="note">비밀번호 없이는 사이냅도 열지 못한다. 사이냅을 빼도 잃는 것이 없다.</td>
+  <td class="note">—</td></tr>
+<tr><td class="nm">rtf</td>
+  <td><span class="pill amber">사이냅 의존</span></td>
+  <td class="note">자체 파서가 없어 지금은 <code>--synap-fallback</code> 일 때 사이냅으로 바로 넘긴다.</td>
+  <td class="note">글자만 뽑는 수준이면 직접 구현이 쉽다(반나절 규모)</td></tr>
+<tr><td class="nm">스캔(이미지) PDF</td>
+  <td><span class="pill green">차이 없음</span></td>
+  <td class="note">표본 PDF 45건 중 9건 — 양쪽 다 실패. 사이냅도 OCR 을 하지 않는다.</td>
+  <td class="note">별도 OCR 트랙(Tesseract · PaddleOCR) — 10장 ⑥</td></tr>
+</table>
+
+<div class="box">
+  <h4>정리</h4>
+  <p>사이냅을 빼서 실제로 <b>잃는 것은 HWP 3.x · 구형 한셀(2010) · rtf 세 가지</b>뿐이다.
+  rtf 는 직접 만들면 되고, 나머지 둘은 오래된 보관 문서다. 결정에 필요한 것은 두 가지다.</p>
+  <p>① 한쇼·한셀 신형 실파일로 xlsx/pptx 경로가 실제로 읽히는지 확인한다.<br>
+  ② 고객 표본에서 HWP 3.x(파일 첫머리 <code>HWP Document File V3</code>) · 구형 .cell 비율을 센다.
+  거의 없으면 '미분류 + 로그' 로 두고, 의미 있게 있으면 그 포맷만 <code>--synap-fallback</code>
+  또는 LibreOffice 로 넘기는 선택지를 남긴다.</p>
+</div>
+
+<h2><span class="num">10</span>권고</h2>
 <ol>
   <li><b>사이냅 제거를 진행해도 된다.</b> 순수 파서 기준으로 재현율 {recall:.1f}%,
       <b>15개 확장자 전부가 대체 가능</b>이다(TSV·JSON 을 막던 텍스트 크기 상한은

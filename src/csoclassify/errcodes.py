@@ -52,6 +52,10 @@ ERRORS = {
     # 사이냅(snf_exe)을 명시해 골랐는데(--synap-fallback · --synap-only) 실행파일이 없거나
     # 실행할 수 없다(설계: plan/Rust-사이냅추출기-옵션-설계-20261019.html §6). 놓아 주면 되므로 3.
     "synap_missing":            (1016, 3),
+    # --extractor rust(또는 CSOCLASSIFY_EXTRACTOR=rust)를 골랐는데 docparse 라이브러리(Rust 문서파서 docparse.dll/.so)를
+    # 불러오지 못했다 — 배포 누락이다. 조용히 파이썬 파서로 넘어가면 판정이 몰래 바뀌므로 멈춘다
+    # (설계: plan/Python-문서파서-Rust연동-설계-20261110.html §4-3). 모듈을 넣으면 되므로 3.
+    "extractor_missing":        (1017, 3),
     # ── 2000 정책 파일(규칙셋 · 분류체계) ─────────────────────────
     "rules_missing":            (2001, 3),
     "rules_invalid":            (2002, 4),

@@ -5,6 +5,25 @@ CSOClassify(Python)의 **추출 + 규칙 분류 + 임베딩 전파(Signal B)** �
 pdfium)은 바이너리에 넣지 않고 **exe 옆 외부 파일로 런타임 로딩**(pdfium 방식)해 바이너리는 작게 유지.
 기존 Python 소스는 건드리지 않고 이 폴더에만 포팅했다.
 
+## 문서파서 (docparse.dll / libdocparse.so)
+
+문서 → 본문 추출(+ 압축 해제, 사이냅 외부 추출기 옵션)은 별도 프로젝트 **`D:\Project\DocParse-rust`** 가
+만든 공유 라이브러리를 **실행 중에 불러 쓴다**(`src/docparse.rs` → `src/docparse_dyn.rs`, libloading).
+파이썬 판(`--extractor rust`)도 같은 파일을 ctypes 로 불러 쓰므로 두 판이 바이트 단위로 같은 파서를 쓴다.
+
+| 자리 | 내용 |
+|---|---|
+| `../third_party/docparse/<windows-x64\|linux-x64>/` | 버전을 고정해 받아 둔 라이브러리 + pdfium (`VERSION`) |
+| `src/docparse.rs` | 예전 `docparse` 크레이트와 같은 이름의 함수·타입을 내주는 창구(부르는 쪽 코드는 그대로) |
+| `src/docparse_dyn.rs` | DocParse-rust `bindings/rust` 정본의 사본 — 직접 고치지 말고 묶음으로 갈아 끼운다 |
+| `build.rs` | 빌드할 때 라이브러리를 exe 옆(`target/<프로파일>`)으로 복사 |
+
+- 찾는 순서: `--docparse-lib` → 환경변수 `CSO_DOCPARSE` → exe 옆. 못 찾으면 문서를 읽기 전에 **1017 extractor_missing**.
+- 배포본에는 `docparse.dll`(Linux `libdocparse.so`)을 exe 옆에 둔다(`scripts/build/win-deploy.sh`·`linux-remote.sh` 가 넣는다).
+- 새 판 받기: DocParse-rust 에서 `scripts/win-build.sh`·`scripts/linux-build.sh` → 이 저장소에서
+  `bash scripts/build/update-docparse.sh` (SHA256 확인 후 `third_party/` 와 감싸개 사본을 갈아 끼운다).
+- 설계: `plan/Rust-문서파서-라이브러리분리-설계-20261110.html` (개정 2).
+
 ## 분류 모드 (원본과 동일)
 
 | 모드 | 동작 | parity(실측) |
@@ -41,7 +60,7 @@ pdfium)은 바이너리에 넣지 않고 **exe 옆 외부 파일로 런타임 �
 - 레코드/신호 JSON 이 Python 과 동일 스키마
 
 **추출(PoC 지원)** — text · html(태그제거) · docx · xlsx · pptx · hwpx (zip+XML) · **pdf(pdfium-render)**
-**압축 확장** — zip · tar(+gz/bz2/xz) · gz · bz2 · xz · 7z · rar (`src/archive.rs`)
+**압축 확장** — zip · tar(+gz/bz2/xz) · gz · bz2 · xz · 7z · rar (DocParse-rust `crates/docparse/src/archive.rs`)
 - docx/pptx 는 **문단 인식**(런 이어붙임)으로 Python 과 동일 — 런 경계로 값이 갈라지는 오탐 방지.
 - pptx 는 슬라이드 본문에 더해 **발표자 노트**(`ppt/notesSlides/`)도 읽음 — 노트에 단가·설계
   상세가 적히는 일이 잦아, 본문만 읽으면 그 문서의 등급이 내려앉는다.
@@ -296,7 +315,7 @@ copy dist-onedir\windows\pdfium.dll  target\release\
   캐시 워밍 영향). 200회 개별 호출은 1회만 쟀다. **배수(7배)와 대소 관계는 견고하지만 초 단위
   절대값은 ±30% 로 보라.**
 - ~~**압축 확장**: 후속(현재 압축파일은 추출 스킵).~~ → **2026-09-04 해소.**
-  `src/archive.rs` 로 포팅했다. 압축 1건을 내부 문서 N건으로 펼쳐 **파일별로 등급**을
+  (지금은 DocParse-rust `crates/docparse/src/archive.rs`) 로 포팅했다. 압축 1건을 내부 문서 N건으로 펼쳐 **파일별로 등급**을
   내고, 압축 자체에는 내부 최고 위험을 매긴 집계 레코드(`archive: true`)를 덧붙인다.
   지원: **zip · tar · tar.gz · tar.bz2 · tar.xz · gz · bz2 · xz · 7z**
   (새 의존은 전부 순수 Rust — `tar`·`bzip2-rs`·`lzma-rs`·`sevenz-rust2`. C 라이브러리를

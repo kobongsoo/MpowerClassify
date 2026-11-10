@@ -36,15 +36,37 @@ __all__ = [
 #   snf 는 폴백 전용이라 snf_exe 가 없으면 snf=None 으로 두고, 전용 파서가 실패한
 #   파일만 미분류로 처리한다(크래시하지 않음).
 #
-# -in: hybrid = True 면 하이브리드 라우팅 사용(기본 False=현행 사이냅 단독)
+#    3) 형식별 파서는 extractor(없으면 config.EXTRACTOR)로 고른다
+#       "py"   = 지금 파이썬 파서들 / "rust" = docparse(Rust 판과 같은 파서) — 감지도 Rust
+#       설계: plan/Python-문서파서-Rust연동-설계-20261110.html §4-2·§4-3
+#
+# -in: hybrid    = True 면 하이브리드 라우팅 사용(기본 False=현행 사이냅 단독)
+# -in: extractor = "py" | "rust" (None 이면 config.EXTRACTOR)
 #
 # -out: TextExtractor = 사용할 추출기 인스턴스
-# -out: error = 기본 모드에서 snf_exe 를 못 찾으면 ExtractError(하이브리드는 snf 없이도 동작)
+# -out: error = 기본 모드에서 snf_exe 를 못 찾으면 ExtractError(하이브리드는 snf 없이도 동작).
+#               rust 를 골랐는데 docparse 모듈이 없으면 ExtractError(보통은 cli 가 시작할 때 1017 로 먼저 멈춘다)
 #------------------------------------------------------------------
-def build_extractor(*, hybrid=False):
+def build_extractor(*, hybrid=False, extractor=None):
     # 기본(플래그 없음): 지금까지와 완전히 동일하게 사이냅 단독(snf 없으면 여기서 에러).
     if not hybrid:
         return SynapExeExtractor()
+    from .. import config
+    which = (extractor or config.EXTRACTOR or "py").lower()
+    # snf 는 폴백 전용 — 없으면(미설치) None 으로 두고 전용 파서 실패분만 미분류.
+    try:
+        snf = SynapExeExtractor()
+    except ExtractError:
+        snf = None
+    if which == "rust":
+        # Rust 문서파서: 형식별 엔진 표 전부를 docparse 로, 감지도 docparse 로 한다 —
+        # 감지가 다르면 같은 파서를 써도 다른 엔진으로 가기 때문이다.
+        from . import rust_engine
+        ok, why = rust_engine.available()
+        if not ok:
+            raise ExtractError(why)
+        return HybridExtractor(engines=rust_engine.engines(), snf=snf,
+                               detector=rust_engine.detect_format)
     # 하이브리드: 감지타입 → 포맷별 전용 파서 표.
     engines = {
         "pdf":  PdfiumExtractor(),
@@ -59,9 +81,4 @@ def build_extractor(*, hybrid=False):
         "html": HtmlTextExtractor(),
         "text": PlainTextExtractor(),
     }
-    # snf 는 폴백 전용 — 없으면(미설치) None 으로 두고 전용 파서 실패분만 미분류.
-    try:
-        snf = SynapExeExtractor()
-    except ExtractError:
-        snf = None
     return HybridExtractor(engines=engines, snf=snf)

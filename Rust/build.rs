@@ -1,4 +1,4 @@
-//! 빌드 스크립트 — pdfium 동적 라이브러리를 실행파일 옆으로 자동 복사한다.
+//! 빌드 스크립트 — pdfium 과 docparse(문서파서) 동적 라이브러리를 실행파일 옆으로 자동 복사한다.
 //!
 //! [왜 필요한가] `extract.rs::pdfium_lib_path()` 의 탐색 순서는
 //! `CSO_PDFIUM` 환경변수 → **exe 옆** → 시스템이다. 개발 빌드(`target/debug`)에는
@@ -85,39 +85,108 @@ fn already_same(src: &Path, dst: &Path) -> bool {
     }
 }
 
-fn main() {
-    let Some((name, sources)) = lib_name_and_sources() else {
-        // 지원 목록에 없는 OS — 조용히 넘어간다(CSO_PDFIUM 으로 지정하면 된다).
-        return;
+//------------------------------------------------------------------
+// 이 대상 OS 에서 쓸 docparse 라이브러리 파일 이름과 원본 후보들
+//=> 문서파서는 별도 프로젝트(DocParse-rust)가 만든 배포 묶음을 저장소의
+//   third_party/docparse/<os>-x64/ 에 풀어 둔 것이 정본이다. 빌드서버에는 Rust/ 아래에
+//   third_party/ 가 같이 올라가므로 두 자리를 다 본다.
+//
+// -in: 없음(cargo 가 주는 CARGO_CFG_TARGET_OS 를 읽는다)
+//
+// -out: Option<(&'static str, Vec<PathBuf>)> = (파일명, 원본 후보 경로들)
+//                                              지원하지 않는 OS 면 None
+// -out: error = 없음
+//------------------------------------------------------------------
+fn docparse_name_and_sources() -> Option<(&'static str, Vec<PathBuf>)> {
+    let root = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").ok()?);
+    let os = std::env::var("CARGO_CFG_TARGET_OS").ok()?;
+    let (name, sub) = match os.as_str() {
+        "windows" => ("docparse.dll", "windows-x64"),
+        "linux" => ("libdocparse.so", "linux-x64"),
+        _ => return None,
     };
+    let rel = format!("third_party/docparse/{}/{}", sub, name);
+    Some((name, vec![root.join("..").join(&rel), root.join(&rel)]))
+}
 
+//------------------------------------------------------------------
+// 내용까지 같은 파일인가
+//=> docparse 라이브러리는 고친 판이 같은 크기일 수 있어 크기만으로는 못 가른다.
+//   몇 MB 라 통째로 비교해도 빌드 시간에 영향이 없다.
+//
+// -in: src = 원본 경로
+// -in: dst = 목적지 경로
+//
+// -out: bool = true 면 복사할 필요 없음
+// -out: error = 없음(못 읽으면 false = 복사한다)
+//------------------------------------------------------------------
+fn same_bytes(src: &Path, dst: &Path) -> bool {
+    match (std::fs::read(src), std::fs::read(dst)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+//------------------------------------------------------------------
+// 원본 하나를 exe 옆으로 복사
+//=> 후보 중 처음 있는 파일을 골라, 이미 같은 파일이 있으면 건너뛴다.
+//   복사가 막혀도(실행 중인 프로그램이 물고 있음) 빌드는 깨지 않는다.
+//
+// -in: name     = 목적지 파일명
+// -in: sources  = 원본 후보들
+// -in: exe_dir  = 실행파일 폴더
+// -in: same     = 같은 파일인지 보는 함수
+// -in: missing  = 원본이 없을 때 남길 경고 문장
+//
+// -out: 없음
+// -out: error = 없음(실패는 cargo:warning)
+//------------------------------------------------------------------
+fn copy_beside(name: &str, sources: &[PathBuf], exe_dir: &Path, same: fn(&Path, &Path) -> bool, missing: &str) {
     // 정본이 바뀌면 이 스크립트를 다시 돌려 복사본을 갱신한다.
-    for src in &sources {
+    for src in sources {
         println!("cargo:rerun-if-changed={}", src.display());
     }
-    // 환경변수로 직접 지정해 쓰는 사람도 있어, 그 값이 바뀌면 다시 판단하게 한다.
-    println!("cargo:rerun-if-env-changed=CSO_PDFIUM");
-
-    let Some(exe_dir) = exe_dir_from_out_dir() else {
-        println!("cargo:warning=빌드 산출 폴더를 알 수 없어 {name} 복사를 건너뜁니다");
-        return;
-    };
-
     let Some(src) = sources.iter().find(|p| p.is_file()) else {
-        // 배포본을 안 받은 작업 트리 — 빌드는 되게 두고, 왜 PDF 가 안 읽히는지만 알린다.
-        println!("cargo:warning={name} 원본을 찾지 못했습니다 — PDF 추출이 비활성됩니다. \
-                  CSO_PDFIUM 환경변수로 직접 지정하거나 배포본(dist-onedir)을 받으세요");
+        println!("cargo:warning={}", missing);
         return;
     };
-
     let dst = exe_dir.join(name);
-    if already_same(src, &dst) {
+    if same(src, &dst) {
         return;
     }
-
     if let Err(e) = std::fs::copy(src, &dst) {
         // 실행 중인 바이너리가 DLL 을 물고 있으면 윈도우에서 복사가 막힌다.
-        // 이미 놓여 있던 파일이 그대로 쓰이므로 빌드를 깰 이유는 없다.
         println!("cargo:warning={name} 복사 실패({e}) — 이미 있는 파일을 그대로 씁니다");
+    }
+}
+
+//------------------------------------------------------------------
+// 빌드 진입점
+//=> pdfium 과 docparse 라이브러리를 exe 옆(target/<프로파일>)으로 복사한다.
+//
+// -in: 없음
+//
+// -out: 없음
+// -out: error = 없음(원본이 없거나 복사가 막히면 경고만)
+//------------------------------------------------------------------
+fn main() {
+    // 환경변수로 직접 지정해 쓰는 사람도 있어, 그 값이 바뀌면 다시 판단하게 한다.
+    println!("cargo:rerun-if-env-changed=CSO_PDFIUM");
+    println!("cargo:rerun-if-env-changed=CSO_DOCPARSE");
+
+    let Some(exe_dir) = exe_dir_from_out_dir() else {
+        println!("cargo:warning=빌드 산출 폴더를 알 수 없어 pdfium·docparse 복사를 건너뜁니다");
+        return;
+    };
+
+    if let Some((name, sources)) = lib_name_and_sources() {
+        // 배포본을 안 받은 작업 트리 — 빌드는 되게 두고, 왜 PDF 가 안 읽히는지만 알린다.
+        copy_beside(name, &sources, &exe_dir, already_same,
+                    &format!("{name} 원본을 찾지 못했습니다 — PDF 추출이 비활성됩니다.                               CSO_PDFIUM 환경변수로 직접 지정하거나 배포본(dist-onedir)을 받으세요"));
+    }
+    if let Some((name, sources)) = docparse_name_and_sources() {
+        // 문서파서가 없으면 실행하자마자 1017 로 멈춘다 — 빌드 때 미리 알린다.
+        copy_beside(name, &sources, &exe_dir, same_bytes,
+                    &format!("{name} 원본(third_party/docparse)을 찾지 못했습니다 — 실행하면                               1017 extractor_missing 으로 멈춥니다. CSO_DOCPARSE 로 직접 지정하세요"));
     }
 }
