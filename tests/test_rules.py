@@ -765,6 +765,41 @@ def test_keyword_term_min_count_discipline(rs):
     assert R.scan_text("가", one).grade == "C"
 
 
+#------------------------------------------------------------------
+# 영문 약어 규칙어는 단어로만 센다 (2026-11-18)
+#=> 'NDA' 가 'Standard' 속 'nda' 에, 'MOU' 가 'mouse' 에 걸리던 오탐을 막는다.
+#   Rust 판 rules.rs ascii_word_boundary_tests 와 같은 사례다.
+#    1) _glued_spans: 영문 단어 속 매치만 구간으로 낸다, 한글 규칙어는 늘 빈 목록
+#    2) 키워드: Standard → legal_contract 없음 / 'NDA', 'NDA체결', '(MOU)' → 있음
+#    3) 파일명: 파일명 규칙어가 영문 약어면 단어로 쓴 이름에만 걸린다
+#
+# -in: rs = 실제 cso_rule.yaml 로 만든 RuleSet 픽스처
+#
+# -out: 없음
+# -out: error = 실패 시 AssertionError
+#------------------------------------------------------------------
+def test_ascii_term_word_boundary(rs):
+    from csoclassify.classify import context as C
+    assert R._glued_spans("standard nda", "nda") == [(3, 6)]
+    assert R._glued_spans("nda체결 (nda) nda_계약", "nda") == []
+    assert R._glued_spans("산전과 산후", "전과") == []
+    assert len(R._glued_spans("xdna검사", "dna검사")) == 1
+
+    # 규칙이 걸렸나(시험 안에서만 쓰는 짧은 도우미)
+    has = lambda text: any(h.rule_id == "legal_contract" for h in R.scan_text(text, rs).hits)
+    assert not has("Standard\n개발자의 개발 과정을 표준화한다.")
+    assert has("상호 NDA 를 체결한다.")
+    assert has("NDA체결 후 자료를 준다.")
+    assert not has("Click the mouse. A famous place.")
+    assert has("업무협약(MOU) 체결")
+
+    term = next((t for r in rs.keyword_rules for t in (getattr(r, "filename", ()) or ())
+                 if t.isascii() and t.isalnum() and len(t) >= 3), None)
+    if term:
+        assert C.scan_filename(f"{term}_자료.pdf", rs).hits
+        assert not C.scan_filename(f"x{term}x_자료.pdf", rs).hits
+
+
 #==================================================================
 # 결합식별성(L1-combo) 테스트
 #=> _combo_hits 가 PII '조합'을 만나면 상향 히트를 내되(all_of / of+min_types),
