@@ -11,9 +11,11 @@ import os
 
 #------------------------------------------------------------------
 # 상태 저장 폴더 경로
-#=> 레지스트리/잠금 파일을 둘 사용자별 폴더를 정해 만든다.
-#    1) 윈도우면 %LOCALAPPDATA%\MpowerClassify
-#    2) 그 외/미설정이면 홈 아래 .csoclassify
+#=> 레지스트리/잠금 파일을 둘 사용자별 폴더를 정해 만든다(Rust 판 registry::state_dir 와 같은 순서).
+#    1) 환경변수 CSOCLASSIFY_STATE_DIR — 그 폴더를 그대로 쓴다
+#       (서버를 띄운 계정과 부르는 계정이 다를 때 한곳으로 모으거나, 시험이 자기 데몬을 따로 둘 때)
+#    2) 윈도우면 %LOCALAPPDATA%\MpowerClassify
+#    3) 그 외/미설정이면 홈 아래 .csoclassify
 #
 # -in: 없음
 #
@@ -21,6 +23,11 @@ import os
 # -out: error = 없음(생성 실패는 상위에서 드러남)
 #------------------------------------------------------------------
 def state_dir():
+    # 직접 정한 폴더가 있으면 그것을 쓴다 — Rust 판과 같은 이름이라 두 판이 같은 데몬 기록을 본다
+    forced = os.environ.get("CSOCLASSIFY_STATE_DIR")
+    if forced:
+        os.makedirs(forced, exist_ok=True)
+        return forced
     base = os.environ.get("LOCALAPPDATA")
     if base:
         d = os.path.join(base, "MpowerClassify")
