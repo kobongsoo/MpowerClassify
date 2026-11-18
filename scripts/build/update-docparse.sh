@@ -5,6 +5,7 @@
 #   설계: plan/Rust-문서파서-라이브러리분리-설계-20261110.html (개정 2) §3-3
 #    1) 묶음을 임시 폴더에 풀고 SHA256SUMS 로 파일이 온전한지 확인
 #    2) lib/* → third_party/docparse/<windows-x64|linux-x64>/ , include/ → third_party/docparse/include/
+#       doc/(언어별 사용 설명서) → third_party/docparse/doc/ (묶음에 있을 때만)
 #    3) VERSION → third_party/docparse/VERSION (두 플랫폼 버전이 다르면 경고)
 #    4) 감싸개 정본을 이 프로젝트 사본으로 갈아 끼움
 #         python/docparse.py   → src/csoclassify/extract/_docparse.py
@@ -59,6 +60,9 @@ def take(bundle):
         try:
             shutil.copytree(os.path.join(root, "lib"), dst, dirs_exist_ok=True)
             shutil.copytree(os.path.join(root, "include"), os.path.join(T, "include"), dirs_exist_ok=True)
+            # 언어별 사용 설명서 — 0.1.0+b9704d2 이전 묶음에는 없다
+            if os.path.isdir(os.path.join(root, "doc")):
+                shutil.copytree(os.path.join(root, "doc"), os.path.join(T, "doc"), dirs_exist_ok=True)
         except (PermissionError, shutil.Error) as e:
             raise SystemExit("덮어쓰지 못했습니다(그 파일을 쓰는 프로그램을 닫고 다시): %s" % e)
         ver = io.open(os.path.join(root, "VERSION"), encoding="utf-8").read().strip()
