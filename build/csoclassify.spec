@@ -46,7 +46,8 @@ hiddenimports = [
     "csoclassify.extract.office_legacy",
     # Rust 문서파서(--extractor rust) — 설계: plan/Rust-문서파서-라이브러리분리-설계-20261110.html §6-2.
     # docparse 는 별도 프로젝트(DocParse-rust)가 만든 공유 라이브러리를 ctypes(_docparse.py)로 부른다.
-    # 라이브러리 파일은 아래 binaries 에 넣는다. 빠지면 그 배포본은 --extractor rust 에서 1017 로 멈춘다.
+    # 라이브러리 파일은 아래 binaries 에 넣는다. 파이썬 판 기본 파서라(2026-11-18~) 빠지면 그 배포본은
+    # 기본 설정에서 1017 로 멈춘다(--extractor py 로만 돌릴 수 있다).
     "csoclassify.extract.rust_engine",
     "csoclassify.extract._docparse",
     # 개인정보 검출 라이브러리(--pii-engine moaipii) — 별도 프로젝트 MoAI-pii 가 만든 moaipii.dll/.so 를
@@ -83,7 +84,7 @@ _dp_path = os.path.join(ROOT, "third_party", "docparse", _dp_sub, _dp_name)
 if os.path.isfile(_dp_path):
     binaries.append((_dp_path, "."))
 else:
-    print("[spec] 경고: 문서파서 라이브러리가 없습니다 — %s (--extractor rust 가 1017 로 멈춘다)" % _dp_path)
+    print("[spec] 경고: 문서파서 라이브러리가 없습니다 — %s (기본 파서라 배포본이 1017 로 멈춘다)" % _dp_path)
 # 개인정보 검출 라이브러리(moaipii.dll / libmoaipii.so) — 저장소 third_party/moaipii/<os>-x64 의 정본을
 # 같은 자리(묶음 최상위)에 둔다. _moaipii.py 는 _MEIPASS 를 찾아본다.
 _mp_name = "moaipii.dll" if os.name == "nt" else "libmoaipii.so"

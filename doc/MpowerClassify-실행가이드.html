@@ -1076,7 +1076,7 @@ cd MpowerClassify &amp;&amp; ./MpowerClassify --dir /data/문서함 --format jso
   <h3>추출 방식</h3>
   <div class="scroll"><table>
     <tr><th>인자</th><th>값</th><th>설명</th></tr>
-    <tr><td><code>--hybridparse</code></td><td>—</td><td><b>내용 감지 → 포맷별 전용 파서</b>로 추출(사이냅 없이): pdf→pypdfium2, hwp→HWP5, hwpx→zip/OWPML, 구형 doc/ppt→자체 olefile 파서, xls→xlrd, 현대 docx/xlsx/pptx→zip/OOXML 직접파싱(stdlib), html→태그제거(stdlib), text→직접읽기. 전용 파서 실패 시 <b>snf 폴백</b>(snf 없으면 그 파일만 미분류). <b>기본값</b>이라 줄 필요가 없습니다(줘도 같습니다). Rust 판은 기본이 자체 파서이고, 사이냅은 <code>--synap-fallback</code> · <code>--synap-only</code> 로 고를 때만 씁니다(2026-10-19). 모든 모드와 병용. 설계·측정: <a href="../plan/CSO_HybridParse.html">CSO_HybridParse.html</a></td></tr>
+    <tr><td><code>--hybridparse</code></td><td>—</td><td><b>내용 감지 → 포맷별 자체 파서</b>로 추출(사이냅 없이). 자체 파서는 기본이 <b>docparse</b>(Rust 판과 같은 문서파서 라이브러리, 2026-11-18~)이고, <code>--extractor py</code> 면 파이썬 파서(pdf→pypdfium2, hwp→HWP5, xls→xlrd 등)입니다. 전용 파서 실패 시 <b>snf 폴백</b>(snf 없으면 그 파일만 미분류). <b>기본값</b>이라 줄 필요가 없습니다(줘도 같습니다). Rust 판은 기본이 자체 파서이고, 사이냅은 <code>--synap-fallback</code> · <code>--synap-only</code> 로 고를 때만 씁니다(2026-10-19). 모든 모드와 병용. 설계·측정: <a href="../plan/CSO_HybridParse.html">CSO_HybridParse.html</a></td></tr>
   </table></div>
   <p class="muted"><b>확장자가 아니라 파일 내용(매직바이트+컨테이너 내부)</b>으로 판별하므로, 확장자가 위장돼도(.txt인데 실제 doc 등) 올바른 파서로 갑니다. 파서들은 전부 <b>순수 파이썬/소형 wheel</b>이라 Windows·Linux(CentOS 7)에 동일 번들됩니다. 구형 HWP 3.x·암호화·스캔(이미지)은 전용 파서가 못 하면 snf 로 폴백(스캔 OCR 은 snf 도 불가). 기본이 이 방식이며, 환경변수 <code>CSOCLASSIFY_HYBRID=0</code> 이나 <code>--synap-only</code> 로 사이냅 단독 추출로 바꿀 수 있습니다(CLI 우선).</p>
 

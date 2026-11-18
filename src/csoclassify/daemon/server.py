@@ -219,7 +219,7 @@ class DaemonServer:
     #   정해 두면 클라이언트의 --hybridparse · --extractor 가 무시된다. 그래서 요청에 실린
     #   설정을 보고 그 조합의 추출기를 쓴다.
     #    1) opts["hybridparse"] — 없으면 False(옛 클라이언트는 사이냅 단독이던 예전 동작 그대로)
-    #    2) opts["extractor"]   — "py" | "rust", 없으면 "py"(옛 클라이언트)
+    #    2) opts["extractor"]   — "py" | "rust", 없으면 이 데몬의 기본(config.EXTRACTOR, 기본 rust)
     #    3) 같은 조합은 한 번 만든 것을 다시 쓴다(사이냅 탐색·라이브러리 로드를 매번 하지 않게)
     #
     # -in: opts = 요청의 처리 옵션 dict
@@ -230,7 +230,8 @@ class DaemonServer:
     #------------------------------------------------------------------
     def _extractor_for(self, opts):
         hybrid = bool(opts.get("hybridparse", False))
-        which = str(opts.get("extractor") or "py").strip().lower()
+        # 옛 클라이언트는 extractor 를 안 싣는다 — 이 데몬의 기본 파서(기본 rust)로 읽는다.
+        which = str(opts.get("extractor") or config.EXTRACTOR or "rust").strip().lower()
         # 사이냅 단독이면 자체 파서를 안 쓰므로 py/rust 를 가르지 않는다(같은 추출기 하나).
         key = (hybrid, which if hybrid else "")
         ex = self._extractors.get(key)

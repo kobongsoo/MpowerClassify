@@ -92,7 +92,8 @@
   <li>spec 이 그 파일을 <b><code>_internal/</code> 에 자동으로</b> 넣습니다(따로 복사할 것 없음)</li>
   <li>리눅스 소스 묶음에 <code>third_party/docparse/linux-x64</code> 를 함께 올립니다</li>
 </ol>
-<span class="def">기본 파서는 아직 <code>py</code>(지금 파이썬 파서)입니다. 라이브러리가 들어 있어도 <code>--extractor rust</code> 를 주기 전에는 쓰지 않습니다.</span></div>
+<b>2026-11-18 — 기본 파서가 <code>rust</code>(docparse)로 바뀌었습니다.</b> 이제 라이브러리 없이 만든 배포본은 기본 설정에서 1017 로 멈추므로, 배포 스크립트가 라이브러리가 없으면 빌드를 멈춥니다.
+<span class="def">파이썬 파서는 <code>--extractor py</code> 로 비교·되돌리기용으로만 남겨 둡니다.</span></div>
 
 <section class="card">
   <h3 style="margin-top:16px">목차</h3>
@@ -178,11 +179,11 @@ README.txt</div>
   <p>문서 → 본문 추출을 하는 파서가 두 벌 있습니다. 실행할 때 <code>--extractor</code> 로 고릅니다.</p>
   <div class="scroll"><table>
     <tr><th>값</th><th>파서</th><th>비고</th></tr>
-    <tr><td><code>py</code> <span class="def">(기본)</span></td><td>지금까지의 파이썬 파서(<code>pypdfium2</code>·<code>olefile</code>·<code>xlrd</code>·자체 HWP5/OOXML 파서 …)</td><td>전환 기간 기본값. 평가셋으로 판정 차이를 확인한 뒤 <code>rust</code> 로 바꿀 예정</td></tr>
-    <tr><td><code>rust</code></td><td><b>Rust 판과 같은 문서파서 라이브러리</b> <code>docparse.dll</code> / <code>libdocparse.so</code></td><td>별도 프로젝트 <code>D:\Project\DocParse-rust</code> 산출물. <b>형식 감지와 압축 펼치기도</b> 같은 라이브러리가 한다</td></tr>
+    <tr><td><code>rust</code> <span class="def">(기본, 2026-11-18~)</span></td><td><b>Rust 판과 같은 문서파서 라이브러리</b> <code>docparse.dll</code> / <code>libdocparse.so</code></td><td>별도 프로젝트 <code>D:\Project\DocParse-rust</code> 산출물. <b>형식 감지와 압축 펼치기도</b> 같은 라이브러리가 한다. 0.2.0 부터 본문 밖 글(PDF 글상자·서식 칸, docx 메모, SmartArt)도 읽는다</td></tr>
+    <tr><td><code>py</code></td><td>지금까지의 파이썬 파서(<code>pypdfium2</code>·<code>olefile</code>·<code>xlrd</code>·자체 HWP5/OOXML 파서 …)</td><td>비교·되돌리기용. 본문 밖 글을 못 읽어 Rust 판과 결과가 갈릴 수 있다</td></tr>
   </table></div>
-<pre><code>MpowerClassify.exe --dir 폴더 --extractor rust          <span class="cmt">:: 이번 실행만</span>
-set CSOCLASSIFY_EXTRACTOR=rust                           <span class="cmt">:: 배치·스크립트 — 환경변수로 (인자가 환경변수보다 앞선다)</span></code></pre>
+<pre><code>MpowerClassify.exe --dir 폴더 --extractor py            <span class="cmt">:: 이번 실행만 파이썬 파서로</span>
+set CSOCLASSIFY_EXTRACTOR=py                             <span class="cmt">:: 배치·스크립트 — 환경변수로 (인자가 환경변수보다 앞선다)</span></code></pre>
   <p class="def"><b>상주 데몬(<code>--embed --daemon</code>)도 같은 설정을 따릅니다</b> <span class="def">2026-11-11</span> — 클라이언트가 고른 <code>--hybridparse</code>·<code>--extractor</code> 를 요청에 실어 보내고, 데몬이 그 조합의 추출기로 읽습니다.
   예전에는 데몬이 사이냅 단독으로 고정돼 두 옵션이 무시됐고, 사이냅이 없는 PC 에서는 데몬이 뜨지 못해 매번 in-process 로 폴백했습니다.
   <b>배포본을 바꾼 뒤에는 떠 있던 데몬을 <code>MpowerClassify --stop</code> 으로 한 번 내리세요</b> — 버전 번호가 같으면 클라이언트가 옛 데몬을 그대로 쓰기 때문입니다.</p>
@@ -206,7 +207,7 @@ set CSOCLASSIFY_EXTRACTOR=rust                           <span class="cmt">:: �
 ⑤ _internal (sys._MEIPASS)           <span class="cmt">배포본은 여기 — spec 이 넣어 둔 자리</span>
 ⑥ 실행파일 옆                        <span class="cmt">exe 옆에 둬도 찾는다</span></code></pre>
   <ul>
-    <li><code>--extractor rust</code> 를 고르면 <b>문서를 읽기 전에</b> 라이브러리를 불러 봅니다. 못 불러오면 조용히 <code>py</code> 로 넘어가지 않고
+    <li><code>rust</code>(기본)면 <b>문서를 읽기 전에</b> 라이브러리를 불러 봅니다. 못 불러오면 조용히 <code>py</code> 로 넘어가지 않고
       <b>종료코드 1017(<code>extractor_missing</code>)</b>로 멈춥니다 — 몰래 파서가 바뀌면 판정이 몰래 바뀌기 때문입니다 → <a href="#trouble">8-⑨</a></li>
     <li>불러오면서 <b>ABI 버전</b>(함수 모양 번호, 지금 <code>1</code>)을 맞춰 봅니다. 다르면 역시 1017 입니다.</li>
     <li>일반 로그(<code>--log</code>)에 고른 파서와 불러온 파일을 한 줄 남깁니다. 배포본 확인 때 이 줄을 봅니다.
@@ -254,7 +255,7 @@ bash scripts/build/update-docparse.sh &lt;묶음.zip&gt; &lt;묶음.tgz&gt;   <s
     <tr><td><code>numpy</code></td><td>벡터 연산·풀링</td></tr>
     <tr><td><code>PyYAML</code></td><td><code>cso_rule.yaml</code> 규칙셋 로드</td></tr>
     <tr><td><code>ko-pii==1.15.2</code></td><td>L1 PII 검출 엔진 <span class="def">(버전 고정 — 검출 결과가 바뀌면 등급이 달라짐)</span></td></tr>
-    <tr><td><code>olefile</code> · <code>pypdfium2</code> · <code>xlrd</code></td><td>하이브리드 추출(<code>--hybridparse</code>) — hwp5/구형 doc·ppt, PDF, 구형 xls <span class="def">(<code>--extractor py</code> 일 때. <code>rust</code> 면 docparse 가 대신하지만 전환 기간이라 그대로 둔다)</span></td></tr>
+    <tr><td><code>olefile</code> · <code>pypdfium2</code> · <code>xlrd</code></td><td>하이브리드 추출(<code>--hybridparse</code>) — hwp5/구형 doc·ppt, PDF, 구형 xls <span class="def">(<code>--extractor py</code> 일 때만 쓴다. 기본 <code>rust</code> 면 docparse 가 대신한다 — 되돌리기용으로 그대로 둔다)</span></td></tr>
     <tr><td><span class="def">(pip 아님)</span> 문서파서 라이브러리</td><td><code>third_party/docparse/&lt;os&gt;-x64/</code> 의 <code>docparse.dll</code> / <code>libdocparse.so</code> — <code>ctypes</code> 로 불러 쓰므로 설치할 패키지가 없다 → <a href="#docparse">1-1</a></td></tr>
     <tr><td><code>py7zr</code> · <code>rarfile</code></td><td>압축파일 확장(7z / rar)</td></tr>
     <tr><td><code>pyinstaller</code></td><td>패키징 도구 <span class="def">(빌드 전용)</span></td></tr>
@@ -309,7 +310,7 @@ pip install -r requirements.txt</code></pre>
 type third_party\docparse\VERSION</code></pre>
     <div class="ok"><code>docparse.dll</code> 이 보이고 VERSION 에 <code>0.1.0+b9704d2</code> 같은 값이 나오면 됩니다.</div>
     <p class="def">없으면 DocParse-rust 에서 받은 묶음을 <code>bash scripts/build/update-docparse.sh</code> 로 먼저 넣으세요(<a href="#docparse">1-1</a>).
-    없어도 빌드는 되지만 <code>[spec] 경고: 문서파서 라이브러리가 없습니다</code> 가 뜨고, 그 배포본은 <code>--extractor rust</code> 에서 1017 로 멈춥니다(기본 <code>py</code> 는 정상).</p>
+    배포 스크립트(<code>win-deploy.sh</code> · <code>linux-build.sh</code>)는 없으면 빌드를 멈춥니다. spec 만 직접 돌리면 <code>[spec] 경고: 문서파서 라이브러리가 없습니다</code> 를 띄우고 만들지만, 그 배포본은 기본 설정에서 1017 로 멈춥니다(<code>--extractor py</code> 로만 돌아감).</p>
   </div>
 
   <div class="step">

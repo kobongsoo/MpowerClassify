@@ -191,8 +191,10 @@ DEFAULT_HYBRID_PARSE = _env_bool("CSOCLASSIFY_HYBRID", True)
 #   · 형식별 본문 파서와 압축 해제를 '한 스위치'로 함께 고른다(조합이 늘지 않게).
 #   · --synap-only · --synap-fallback 과는 독립이다(그쪽은 "사이냅을 언제 쓰나").
 #   · --extractor 가 이 값을 덮어쓴다. 상주 서버·배치는 환경변수 CSOCLASSIFY_EXTRACTOR 로 고른다.
-#   · 전환 기간(2단계까지) 기본은 "py" — 평가셋으로 판정 차이를 확인한 뒤 "rust" 로 바꾼다.
-EXTRACTOR = os.environ.get("CSOCLASSIFY_EXTRACTOR", "py").strip().lower() or "py"
+#   · 기본은 "rust"(2026-11-18 전환) — Rust 판과 같은 파서로 읽어 두 판 본문을 맞춘다.
+#     docparse 0.2.0 부터 본문 밖 글(PDF 글상자·서식 칸, docx 메모, SmartArt)을 읽는데,
+#     파이썬 파서(py)는 이것을 못 읽어 두 판이 갈리기 때문이다. "py" 는 비교·되돌리기용으로 남긴다.
+EXTRACTOR = os.environ.get("CSOCLASSIFY_EXTRACTOR", "rust").strip().lower() or "rust"
 EXTRACTORS = ("py", "rust")
 
 # 개인정보(PII) 검출 엔진 — "kopii"(파이썬 ko-pii + 보강 코드) 또는 "moaipii"(Rust 판과 같은 라이브러리
