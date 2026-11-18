@@ -52,7 +52,7 @@ def build_extractor(*, hybrid=False, extractor=None):
     if not hybrid:
         return SynapExeExtractor()
     from .. import config
-    which = (extractor or config.EXTRACTOR or "py").lower()
+    which = (extractor or config.EXTRACTOR or "rust").lower()
     # snf 는 폴백 전용 — 없으면(미설치) None 으로 두고 전용 파서 실패분만 미분류.
     try:
         snf = SynapExeExtractor()

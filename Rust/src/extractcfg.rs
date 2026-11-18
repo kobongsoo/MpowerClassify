@@ -81,7 +81,7 @@ pub fn options(label: &str) -> ExtractOptions {
 pub fn fail_reason(e: &ExtractError) -> String {
     match e {
         ExtractError::Unsupported(_) => String::new(),
-        ExtractError::Failed(why) => why.clone(),
+        ExtractError::Failed { reason, .. } => reason.clone(),
         // 부른 쪽이 크기 상한을 먼저 보므로 보통은 오지 않는다. 오면 그 사유를 적는다.
         ExtractError::SizeLimit { .. } => e.to_string(),
     }

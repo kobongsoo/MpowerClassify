@@ -307,13 +307,15 @@ pub struct Extracted {
 // 추출 실패 (예전 docparse::ExtractError 와 같은 갈래)
 // -필드: SizeLimit   = 크기 상한 초과(message = 라이브러리가 만든 "크기 상한 초과: …" 문장)
 // -필드: Unsupported = 지원하지 않는 형식
-// -필드: Failed      = 파싱 실패(사유가 빈 문자열이면 '자체 파서가 못 읽음')
+// -필드: Failed      = 파싱 실패. reason 이 빈 문자열이면 '자체 파서가 못 읽음'.
+//                       layout = PDF 파서가 쪽을 잰 뒤 실패했으면 그 구성(docparse 0.2.0~, 사이냅 모드에서
+//                       전 엔진이 실패한 스캔 PDF 를 처리제외로 가르는 재료)
 //------------------------------------------------------------------
 #[derive(Debug, Clone)]
 pub enum ExtractError {
     SizeLimit { size: u64, limit: u64, text_kind: bool, message: String },
     Unsupported(Fmt),
-    Failed(String),
+    Failed { reason: String, layout: Option<Layout> },
 }
 
 impl std::fmt::Display for ExtractError {
@@ -329,7 +331,7 @@ impl std::fmt::Display for ExtractError {
         match self {
             ExtractError::SizeLimit { message, .. } => f.write_str(message),
             ExtractError::Unsupported(fmt) => write!(f, "지원하지 않는 포맷(감지={})", fmt.as_str()),
-            ExtractError::Failed(why) => f.write_str(why),
+            ExtractError::Failed { reason, .. } => f.write_str(reason),
         }
     }
 }
@@ -339,7 +341,7 @@ impl std::error::Error for ExtractError {}
 //------------------------------------------------------------------
 // 형식을 알고 있을 때의 본문 추출
 //=> 라이브러리에 옵션 JSON 을 넘겨 뽑고, 결과를 예전 타입으로 옮긴다.
-//   라이브러리 내부 오류(arg·panic)는 Failed(사유)로 바꿔 '추출 실패' 경로로 보낸다.
+//   라이브러리 내부 오류(arg·panic)는 Failed(사유, layout 없음)로 바꿔 '추출 실패' 경로로 보낸다.
 //
 // -in: path = 파일 경로
 // -in: fmt  = 형식
@@ -360,8 +362,14 @@ pub fn extract_as(path: &Path, fmt: Fmt, opts: &ExtractOptions) -> Result<Extrac
         }),
         Err(E::SizeLimit { size, limit, text_kind, message }) => Err(ExtractError::SizeLimit { size, limit, text_kind, message }),
         Err(E::Unsupported { fmt, .. }) => Err(ExtractError::Unsupported(Fmt(static_fmt(&fmt)))),
-        Err(E::Failed { message }) => Err(ExtractError::Failed(message)),
-        Err(e @ (E::Arg { .. } | E::Panic { .. })) => Err(ExtractError::Failed(format!("문서파서 오류: {}", e))),
+        // 실패에 실린 쪽 구성도 옮긴다 — 부른 쪽이 스캔 PDF 처리제외를 가른다
+        Err(E::Failed { message, layout }) => Err(ExtractError::Failed {
+            reason: message,
+            layout: layout.map(|l| Layout { pages: l.pages, scan_pages: l.scan_pages }),
+        }),
+        Err(e @ (E::Arg { .. } | E::Panic { .. })) => Err(ExtractError::Failed {
+            reason: format!("문서파서 오류: {}", e), layout: None,
+        }),
     }
 }
 

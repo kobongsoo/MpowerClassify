@@ -64,14 +64,15 @@ build_python() {
     # shellcheck disable=SC1091
     . "$CONDA_PROFILE" || die "conda 초기화 스크립트를 찾지 못했습니다: $CONDA_PROFILE"
     conda activate "$CONDA_ENV_NAME" || die "conda 환경을 켜지 못했습니다: $CONDA_ENV_NAME"
-    # 문서파서 라이브러리(Rust 문서파서, --extractor rust) — 설계: plan/Rust-문서파서-라이브러리분리-설계-20261110.html §6-2
+    # 문서파서 라이브러리(Rust 문서파서, 파이썬 판 기본 파서 — --extractor rust) — 설계: plan/Rust-문서파서-라이브러리분리-설계-20261110.html §6-2
     # 별도 프로젝트(DocParse-rust)가 빌드서버에서 만든 libdocparse.so 를 소스 묶음에 실어 왔다. spec 이 묶는다.
     local with_docparse=""
     if [ -f third_party/docparse/linux-x64/libdocparse.so ]; then
         with_docparse=1
         echo "  docparse $(cat third_party/docparse/VERSION 2>/dev/null || echo '?')"
     else
-        echo "  [경고] third_party/docparse/linux-x64/libdocparse.so 가 없어 문서파서 없이 만듭니다 — 배포본에서 --extractor rust 를 쓸 수 없습니다"
+        # 기본 파서가 docparse 라(2026-11-18~) 없으면 그 배포본은 기본 설정에서 1017 로 멈춘다 — 만들지 않는다.
+        die "third_party/docparse/linux-x64/libdocparse.so 이 없습니다 — 파이썬 판 기본 파서라 꼭 있어야 합니다(scripts/build/update-docparse.sh 로 받으세요)"
     fi
     # 개인정보 검출 라이브러리(--pii-engine moaipii) — 별도 프로젝트(MoAI-pii)가 빌드서버에서 만든
     # libmoaipii.so 를 소스 묶음에 실어 왔다. spec 이 묶는다.

@@ -73,7 +73,8 @@ def test_extractor_cached(monkeypatch):
 
 
 #------------------------------------------------------------------
-# 옛 클라이언트(설정 없는 요청)는 예전처럼 사이냅 단독
+# 옛 클라이언트(설정 없는 요청)는 예전처럼 사이냅 단독, 자체 파서는 데몬 기본(rust)
+#=> extractor 를 안 실은 요청은 데몬의 config.EXTRACTOR(기본 rust)를 따른다.
 #
 # -in: monkeypatch = pytest 픽스처
 #
@@ -82,8 +83,10 @@ def test_extractor_cached(monkeypatch):
 #------------------------------------------------------------------
 def test_old_client_defaults_to_synap(monkeypatch):
     calls = _fake_build(monkeypatch)
+    # 환경변수로 바뀐 값이 아니라 기본값을 확인한다
+    monkeypatch.setattr(srv.config, "EXTRACTOR", "rust")
     srv.DaemonServer(spec=None)._extractor_for({})
-    assert calls == [(False, "py")]
+    assert calls == [(False, "rust")]
 
 
 #------------------------------------------------------------------

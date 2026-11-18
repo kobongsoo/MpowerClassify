@@ -306,9 +306,9 @@ def build_parser():
     # 위한 기본값이다(config.DEFAULT_HYBRID_PARSE 주석 참고).
     p.add_argument("--hybridparse", dest="hybridparse", action="store_true",
                    default=config.DEFAULT_HYBRID_PARSE,
-                   help="내용 감지로 포맷별 전용 파서 추출: pdf→pypdfium2, hwp→HWP5, "
-                        "hwpx→zip/OWPML, doc/ppt→자체파서, xls→xlrd, docx/xlsx/pptx→python-*, text→직접읽기. "
-                        "전용 파서 실패 시 snf 폴백(snf 없으면 그 파일만 미분류). "
+                   help="내용 감지로 포맷별 자체 파서 추출(기본 docparse = Rust 판과 같은 파서, "
+                        "--extractor py 면 파이썬 파서). "
+                        "자체 파서 실패 시 snf 폴백(snf 없으면 그 파일만 미분류). "
                         "[기본값이라 따로 줄 필요 없다 — 되돌리려면 --synap-only] "
                         "설계: plan/CSO_HybridParse.html")
     p.add_argument("--synap-only", dest="hybridparse", action="store_false",
@@ -321,7 +321,7 @@ def build_parser():
     # 자체 파서가 누구냐 — 설계: plan/Python-문서파서-Rust연동-설계-20261110.html §4-3
     p.add_argument("--extractor", dest="extractor", choices=config.EXTRACTORS, default=None,
                    help="형식별 자체 파서와 압축 해제기를 고른다: py = 지금 파이썬 파서, "
-                        "rust = docparse 모듈(Rust 판과 같은 파서). 기본은 환경변수 "
+                        "rust = docparse 모듈(Rust 판과 같은 파서, 기본). 기본은 환경변수 "
                         f"CSOCLASSIFY_EXTRACTOR, 없으면 {config.EXTRACTOR}. "
                         "rust 인데 docparse 모듈이 없으면 문서를 읽기 전에 1017 extractor_missing 으로 멈춘다")
     # 개인정보 검출 엔진 — 설계: D:\Project\MoAI-pii\plan\MoAI-pii-개인정보검출-라이브러리분리-설계-20261117.html §7-1
@@ -580,7 +580,7 @@ def make_opts(args):
         "hybridparse": getattr(args, "hybridparse", False),
         # 자체 파서(py/rust). 데몬은 별도 프로세스라 이 실행의 --extractor 를 모른다 —
         # 요청에 실어 보내야 데몬도 같은 파서로 읽는다. check_extractor_args 가 이미 확정한 값이다.
-        "extractor": (getattr(args, "extractor", None) or config.EXTRACTOR or "py").strip().lower(),
+        "extractor": (getattr(args, "extractor", None) or config.EXTRACTOR or "rust").strip().lower(),
         # 글자수 상한(G3). 분류 경로만이 아니라 --embed 경로(pipeline.process_file)와
         # 데몬 경로도 같은 상한을 갖게 해야, 같은 문서를 어느 경로로 넣든 결과가
         # 갈리지 않는다. None 이면 상한 없음(--no-size-limit).
@@ -899,7 +899,7 @@ def check_synap_args(args):
 # -out: error = 예외 없음
 #------------------------------------------------------------------
 def check_extractor_args(args):
-    which = (getattr(args, "extractor", None) or config.EXTRACTOR or "py").strip().lower()
+    which = (getattr(args, "extractor", None) or config.EXTRACTOR or "rust").strip().lower()
     if which not in config.EXTRACTORS:
         return fail_err("bad_args",
                         f"[MpowerClassify] CSOCLASSIFY_EXTRACTOR 값이 올바르지 않습니다: {which} (py · rust)")
@@ -2679,8 +2679,9 @@ def run_seed_fill_title(args):
                         text = fh.read()
                 if text is None and f and os.path.isfile(f):
                     try:
-                        # 저장해 둔 본문이 없으면 원본을 다시 읽는다(추출기는 처음 필요할 때만 만든다)
-                        extractor = extractor or build_extractor()
+                        # 저장해 둔 본문이 없으면 원본을 다시 읽는다(추출기는 처음 필요할 때만 만든다).
+                        # 분류와 같은 추출기(자체 파서 docparse + 사이냅 폴백)로 읽어야 제목이 분류 때와 같다.
+                        extractor = extractor or build_extractor(hybrid=config.DEFAULT_HYBRID_PARSE)
                         text = clean_text(extractor.extract(f, save_dir=None))
                     except (ExtractError, OSError):
                         text = None

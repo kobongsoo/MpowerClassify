@@ -55,14 +55,15 @@ $stray
        (모델을 여기 두면 -y 가 지웁니다. 옮긴 뒤 다시 실행하세요)"
     fi
 
-    # 문서파서 라이브러리(Rust 문서파서, --extractor rust) — 설계: plan/Rust-문서파서-라이브러리분리-설계-20261110.html §6-2
+    # 문서파서 라이브러리(Rust 문서파서, 파이썬 판 기본 파서 — --extractor rust) — 설계: plan/Rust-문서파서-라이브러리분리-설계-20261110.html §6-2
     # 별도 프로젝트(DocParse-rust)가 만든 docparse.dll 을 third_party/docparse 에 받아 두고, spec 이 묶는다.
     local with_docparse=""
     if [ -f third_party/docparse/windows-x64/docparse.dll ]; then
         with_docparse=1
         echo "  docparse $(cat third_party/docparse/VERSION 2>/dev/null || echo '?')"
     else
-        echo "  [경고] third_party/docparse/windows-x64/docparse.dll 이 없어 문서파서 없이 만듭니다 — 배포본에서 --extractor rust 를 쓸 수 없습니다"
+        # 기본 파서가 docparse 라(2026-11-18~) 없으면 그 배포본은 기본 설정에서 1017 로 멈춘다 — 만들지 않는다.
+        die "third_party/docparse/windows-x64/docparse.dll 이 없습니다 — 파이썬 판 기본 파서라 꼭 있어야 합니다(scripts/build/update-docparse.sh 로 받으세요)"
     fi
     # 개인정보 검출 라이브러리(--pii-engine moaipii) — 설계: D:\Project\MoAI-pii\plan\MoAI-pii-개인정보검출-라이브러리분리-설계-20261117.html §6
     # 별도 프로젝트(MoAI-pii)가 만든 moaipii.dll 을 third_party/moaipii 에 받아 두고, spec 이 묶는다.
@@ -77,7 +78,7 @@ $stray
     python -m PyInstaller -y build/csoclassify.spec >/dev/null 2>&1 \
         || die "PyInstaller 빌드 실패 — 'python -m PyInstaller build/csoclassify.spec' 로 로그를 보세요"
     [ -f dist/MpowerClassify/MpowerClassify.exe ] || die "빌드 결과에 실행본체가 없습니다"
-    # 라이브러리를 넣었는데 배포본에 빠졌으면 멈춘다 — 빠진 채 나가면 --extractor rust 가 1017 로 멈춘다.
+    # 라이브러리를 넣었는데 배포본에 빠졌으면 멈춘다 — 빠진 채 나가면 기본 설정(--extractor rust)이 1017 로 멈춘다.
     if [ -n "$with_docparse" ]; then
         [ -f dist/MpowerClassify/_internal/docparse.dll ] \
             || die "배포본에 docparse.dll 이 없습니다 — build/csoclassify.spec 의 binaries 를 보세요"
