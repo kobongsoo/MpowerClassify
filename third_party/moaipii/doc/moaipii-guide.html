@@ -1,0 +1,812 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>moaipii 연동 설명서</title>
+</head>
+<body>
+<style>
+  :root{
+    --bg:#f4f6f9; --surface:#ffffff; --surface-2:#eef1f6; --ink:#191d24;
+    --muted:#58616e; --faint:#8b94a2; --line:#dde2ea; --line-strong:#c7cfda;
+    --accent:#26437e; --accent-2:#365fb0; --accent-soft:#e7edf7;
+    --c:#cf3b2e; --c-soft:#fbeceb; --s:#b3760f; --s-soft:#f9f0dc; --o:#2f8f57; --o-soft:#e6f3ea;
+    --shadow:0 1px 2px rgba(20,30,50,.04), 0 8px 24px rgba(20,30,50,.06);
+    --sans:"Pretendard Variable",Pretendard,"Malgun Gothic","맑은 고딕",-apple-system,"Apple SD Gothic Neo",system-ui,sans-serif;
+    --mono:ui-monospace,"Cascadia Code","Cascadia Mono",Consolas,"D2Coding",monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0e1116; --surface:#161b22; --surface-2:#1d232c; --ink:#e7ebf1;
+      --muted:#9aa4b2; --faint:#6b7684; --line:#262d38; --line-strong:#333c49;
+      --accent:#7ea0e8; --accent-2:#8fb0f2; --accent-soft:#182233;
+      --c:#f2695c; --c-soft:#2a1715; --s:#e6a748; --s-soft:#271e10; --o:#57bd85; --o-soft:#122217;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#f4f6f9; --surface:#ffffff; --surface-2:#eef1f6; --ink:#191d24;
+    --muted:#58616e; --faint:#8b94a2; --line:#dde2ea; --line-strong:#c7cfda;
+    --accent:#26437e; --accent-2:#365fb0; --accent-soft:#e7edf7;
+    --c:#cf3b2e; --c-soft:#fbeceb; --s:#b3760f; --s-soft:#f9f0dc; --o:#2f8f57; --o-soft:#e6f3ea;
+  }
+  :root[data-theme="dark"]{
+    --bg:#0e1116; --surface:#161b22; --surface-2:#1d232c; --ink:#e7ebf1;
+    --muted:#9aa4b2; --faint:#6b7684; --line:#262d38; --line-strong:#333c49;
+    --accent:#7ea0e8; --accent-2:#8fb0f2; --accent-soft:#182233;
+    --c:#f2695c; --c-soft:#2a1715; --s:#e6a748; --s-soft:#271e10; --o:#57bd85; --o-soft:#122217;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    line-height:1.7;-webkit-font-smoothing:antialiased;font-size:16px;letter-spacing:-0.003em;}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 24px 96px;}
+  header.doc{padding:56px 0 34px;border-bottom:1px solid var(--line);margin-bottom:40px;}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);font-weight:600;display:flex;gap:10px;align-items:center;margin-bottom:20px;}
+  .eyebrow::before{content:"";width:26px;height:2px;background:var(--accent);border-radius:2px;}
+  h1.title{font-size:clamp(28px,4.6vw,44px);line-height:1.12;margin:0 0 14px;font-weight:800;
+    letter-spacing:-0.02em;text-wrap:balance;}
+  .lede{font-size:clamp(16px,2.1vw,19px);color:var(--muted);margin:0 0 22px;max-width:64ch;}
+  .lede b{color:var(--ink);font-weight:600;}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;}
+  .chip{font-size:12px;font-family:var(--mono);color:var(--muted);background:var(--surface);
+    border:1px solid var(--line);border-radius:999px;padding:5px 12px;}
+  .chip b{color:var(--ink);font-weight:600;}
+  section{margin:52px 0;scroll-margin-top:20px;}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:22px;}
+  .sec-num{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--accent);
+    border:1px solid var(--line-strong);border-radius:7px;padding:3px 9px;flex:none;line-height:1.3;}
+  h2{font-size:clamp(21px,3vw,27px);margin:0;font-weight:750;letter-spacing:-0.015em;line-height:1.25;}
+  h3{font-size:17px;margin:30px 0 12px;font-weight:700;letter-spacing:-0.01em;}
+  p{margin:0 0 15px;max-width:72ch;}
+  ul.plain{margin:0 0 15px;padding-left:20px;} ul.plain li{margin:5px 0;color:var(--muted);}
+  ul.plain li b{color:var(--ink);font-weight:600;}
+  ol.plain{margin:0 0 15px;padding-left:22px;} ol.plain li{margin:6px 0;color:var(--muted);}
+  ol.plain li b{color:var(--ink);font-weight:600;}
+  .tldr{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--accent);
+    border-radius:12px;padding:22px 24px;box-shadow:var(--shadow);}
+  .tldr .k{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);font-weight:700;margin-bottom:10px;}
+  .tldr p{margin:0;font-size:17px;color:var(--ink);max-width:none;}
+  .tldr b{color:var(--accent-2);}
+  .twrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);margin:16px 0;}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:640px;background:var(--surface);}
+  th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--line);vertical-align:top;}
+  thead th{background:var(--surface-2);font-size:12px;letter-spacing:.03em;color:var(--muted);
+    text-transform:uppercase;font-weight:700;white-space:nowrap;}
+  tbody tr:last-child td{border-bottom:none;}
+  td.mono,.mono-cell{font-family:var(--mono);font-size:13px;white-space:nowrap;}
+  code.inl{font-family:var(--mono);font-size:.9em;background:var(--surface-2);border:1px solid var(--line);
+    border-radius:5px;padding:1px 6px;}
+  pre{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 20px;
+    overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.65;box-shadow:var(--shadow);color:var(--ink);}
+  pre .cm{color:var(--o);} pre .kw{color:var(--accent-2);font-weight:600;} pre .hi{color:var(--c);font-weight:600;}
+  .note{border:1px solid var(--line);background:var(--surface-2);border-radius:12px;padding:16px 18px;
+    font-size:14.5px;display:flex;gap:12px;align-items:flex-start;margin:16px 0;}
+  .note .badge{font-family:var(--mono);font-size:10.5px;font-weight:800;letter-spacing:.06em;
+    padding:3px 8px;border-radius:6px;flex:none;text-transform:uppercase;white-space:nowrap;}
+  .note.safe .badge{color:var(--o);background:var(--o-soft);border:1px solid color-mix(in srgb,var(--o) 35%,transparent);}
+  .note.warn .badge{color:var(--s);background:var(--s-soft);border:1px solid color-mix(in srgb,var(--s) 35%,transparent);}
+  .note.bad .badge{color:var(--c);background:var(--c-soft);border:1px solid color-mix(in srgb,var(--c) 35%,transparent);}
+  .note.info .badge{color:var(--accent-2);background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent-2) 35%,transparent);}
+  .note p{margin:0;color:var(--muted);max-width:none;}
+  .note b{color:var(--ink);}
+  .x{color:var(--c);font-weight:700}
+  .ok{color:var(--o);font-weight:700}
+  .wn{color:var(--s);font-weight:700}
+  .src{font-family:var(--mono);font-size:12px;color:var(--faint);}
+  .fig{background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);
+    padding:18px;margin:16px 0;overflow-x:auto;}
+  .fig svg{display:block;min-width:680px;width:100%;height:auto;}
+  .fig text{font-family:var(--sans);fill:var(--ink);font-size:13px;}
+  .fig .t-mono{font-family:var(--mono);font-size:11.5px;fill:var(--muted);}
+  .fig .t-h{font-weight:700;font-size:14px;}
+  .fig .box{fill:var(--surface-2);stroke:var(--line-strong);}
+  .fig .box-a{fill:var(--accent-soft);stroke:var(--accent-2);}
+  .fig .ln{stroke:var(--muted);stroke-width:1.4;fill:none;}
+  .fig .ln-d{stroke:var(--faint);stroke-width:1.2;fill:none;stroke-dasharray:5 4;}
+  .fig .ah{fill:var(--muted);}
+  footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);
+    font-size:13px;color:var(--faint);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;
+    font-family:var(--mono);letter-spacing:.02em;}
+  @media print{ body{background:#fff;} .tldr,pre,.twrap,.fig{box-shadow:none;} }
+  .warn{color:var(--s);font-weight:700}
+  .toc{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 22px;margin:0 0 8px;box-shadow:var(--shadow);}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:32px;} .toc li{margin:3px 0;break-inside:avoid;}
+  .toc a{color:var(--accent-2);text-decoration:none;} .toc a:hover{text-decoration:underline;}
+  @media (max-width:640px){ .toc ol{columns:1;} .wrap{padding:0 16px 72px;} }
+  .lab{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 20px;margin:14px 0;box-shadow:var(--shadow);}
+  .lab h4{margin:0 0 8px;font-size:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
+  .lab h4 code{font-family:var(--mono);font-size:13.5px;color:var(--accent-2);}
+  .lab dl{margin:0;display:grid;grid-template-columns:88px 1fr;gap:4px 12px;font-size:14.5px;}
+  .lab dt{color:var(--faint);font-weight:600;} .lab dd{margin:0;color:var(--muted);}
+  .lab dd b{color:var(--ink);font-weight:600;}
+  @media (max-width:640px){ .lab dl{grid-template-columns:1fr;} .lab dt{margin-top:6px;} }
+  .rk{font-family:var(--mono);font-size:10.5px;font-weight:800;letter-spacing:.05em;padding:2px 7px;border-radius:6px;white-space:nowrap;}
+  .rk.c{color:var(--c);background:var(--c-soft);} .rk.h{color:var(--s);background:var(--s-soft);}
+  .rk.m{color:var(--accent-2);background:var(--accent-soft);} .rk.l{color:var(--o);background:var(--o-soft);}
+  .rk.i{color:var(--muted);background:var(--surface-2);}
+  .kw-y{color:var(--s);font-weight:700;} .kw-n{color:var(--faint);}
+  details.code{margin:12px 0;} details.code summary{cursor:pointer;color:var(--accent-2);font-weight:600;font-size:14.5px;}
+</style>
+
+<div class="wrap">
+  <header class="doc">
+    <div class="eyebrow">연동 설명서 · moaipii 0.1</div>
+    <h1 class="title">moaipii 연동 설명서<br>— Python · Java · PHP · C++ · Rust · C</h1>
+    <p class="lede">한국어 개인정보 검출 라이브러리 <code class="inl">moaipii.dll</code> / <code class="inl">libmoaipii.so</code>를 각 언어에서 불러 쓰는 방법입니다.
+    모든 언어가 <b>같은 C 함수</b>를 부르므로 결과도 같습니다. 언어마다 다른 것은 <b>좌표를 세는 단위</b>뿐입니다.</p>
+    <div class="meta">
+      <span class="chip"><b>ABI</b> 1</span>
+      <span class="chip"><b>검출 기준</b> ko-pii 1.15.2 + 보강</span>
+      <span class="chip"><b>라벨</b> 20개 + 별칭 1</span>
+      <span class="chip"><b>스레드</b> 동시 호출 가능</span>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="목차">
+    <p style="margin:0 0 10px;max-width:none"><a href="#utf8"><b>⚠ 중요 — 본문은 UTF-8 만 받습니다</b></a></p>
+    <ol>
+      <li><a href="#s1">묶음 구성</a></li>
+      <li><a href="#s2">빠른 시작 — 시험 도구로 DLL 확인</a></li>
+      <li><a href="#s3">좌표 단위</a></li>
+      <li><a href="#s4">옵션과 결과</a></li>
+      <li><a href="#s5">검출 항목 한눈에</a></li>
+      <li><a href="#s6">검출 항목 자세히</a></li>
+      <li><a href="#s7">언어별 연동 예제</a></li>
+      <li><a href="#s8">자주 쓰는 연동 패턴</a></li>
+      <li><a href="#s9">안전 규칙</a></li>
+      <li><a href="#s10">문제 해결</a></li>
+    </ol>
+  </nav>
+
+  <!-- ───────────────────────── 00 ───────────────────────── -->
+  <section id="utf8">
+    <div class="sec-head"><span class="sec-num">!</span><h2>중요 — 본문은 UTF-8 만 받습니다</h2></div>
+    <div class="note bad"><span class="badge">필수</span><p>라이브러리에 넘기는 본문은 <b>UTF-8 텍스트</b>여야 합니다. ANSI(CP949·EUC-KR)나 UTF-16(메모장의 "유니코드") 파일, docx·hwp·pdf 같은 문서 파일을 <b>그대로 넘기면 검출되지 않습니다</b>. 부르는 쪽에서 먼저 UTF-8 텍스트로 바꿔서 넘기세요.</p></div>
+    <div class="twrap"><table>
+      <thead><tr><th>넘긴 본문</th><th>결과</th><th>같은 내용 실측</th></tr></thead>
+      <tbody>
+        <tr><td>UTF-8</td><td class="ok">정상 검출</td><td>RRN · PHONE · ACCOUNT · ADDRESS 4건</td></tr>
+        <tr><td>UTF-8 BOM</td><td class="ok">정상 검출</td><td>4건. 단 BOM(U+FEFF)도 한 글자라 <b>좌표가 1칸 밀림</b> — BOM 을 붙인 본문 그대로 잘라야 맞음</td></tr>
+        <tr><td>ANSI (CP949 · EUC-KR)</td><td class="x">오류 kind=utf8</td><td>—</td></tr>
+        <tr><td>ANSI + <code class="inl">invalid_utf8:"replace"</code></td><td class="wn">일부만</td><td>2건(RRN · PHONE). 한글이 깨진 글자로 바뀌어 "계좌번호"·"주소는" 문맥이 사라짐 → 계좌·주소 놓침</td></tr>
+        <tr><td>UTF-16 (메모장 "유니코드")</td><td class="x">오류 kind=utf8</td><td>—</td></tr>
+        <tr><td>docx · xlsx · hwp · pdf 파일</td><td class="x">오류 kind=utf8</td><td>압축·이진 파일이라 텍스트가 아님 — 텍스트를 뽑은 뒤 넘김</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>왜 UTF-8 만 받나</h3>
+    <ol class="plain">
+      <li><b>바이트만 보고는 인코딩을 확실히 알 수 없습니다.</b> 파일에는 "나는 CP949" 같은 표시가 없습니다. <code class="inl">C8 AB B1 E6 B5 BF</code>는 CP949 로 읽으면 "홍길동", Latin-1 로 읽으면 <code class="inl">È«±æµ¿</code>입니다. 라이브러리가 추측하면 틀렸을 때 <b>오류 없이 조용히 놓칩니다</b> — 개인정보 검출에서 가장 위험한 실패라, 확실하지 않으면 멈추게 했습니다.</li>
+      <li><b>좌표가 어긋납니다.</b> 결과 좌표는 넘긴 본문 기준입니다. 한글 한 글자는 CP949 로 2바이트, UTF-8 로 3바이트라서, 라이브러리 안에서 바꿔 검사하면 byte 좌표가 원래 파일과 맞지 않아 마스킹이 <b>엉뚱한 자리</b>를 지웁니다.</li>
+      <li><b>연동하는 언어는 이미 유니코드로 일합니다.</b> Python <code class="inl">str</code> · Java <code class="inl">String</code> · C#·JS 문자열 · Rust <code class="inl">&amp;str</code>는 모두 유니코드라 UTF-8 로 넘기는 비용이 거의 없고, 파일 인코딩은 그 파일을 읽는 쪽이 가장 잘 압니다.</li>
+      <li><b>검출기 자체가 유니코드 기준입니다.</b> 정규식(Rust <code class="inl">regex</code>는 UTF-8 에서만 동작), 한글 범위·사건부호·법정동/국가 사전, 전각→반각 정규화표가 모두 유니코드라, 다른 인코딩을 받아도 결국 안에서 UTF-8 로 바꿔야 합니다.</li>
+      <li><b>ko-pii 와 같은 결과</b>를 보장하기 위해서입니다. 기준인 ko-pii(Python)도 유니코드 문자열을 받고, 정답표도 그 기준입니다.</li>
+      <li><b>작고 단순한 라이브러리.</b> CP949·EUC-KR·UTF-16LE/BE·조합형 변환표를 넣으면 크기와 시험 부담이 커집니다. "본문 = UTF-8 바이트 (포인터, 길이)" 한 규칙이라 다섯 언어 감싸개가 똑같이 움직입니다.</li>
+    </ol>
+
+    <h3>ANSI 파일은 이렇게 넘깁니다</h3>
+    <pre><span class="cm"># Python</span>
+text = open(path, encoding=<span class="hi">"cp949"</span>).read();  r = moaipii.scan(text, labels)
+<span class="cm">// Java</span>
+String text = <span class="kw">new</span> String(Files.readAllBytes(p), <span class="hi">"MS949"</span>);
+<span class="cm">// PHP</span>
+$text = mb_convert_encoding(file_get_contents($p), <span class="hi">'UTF-8'</span>, <span class="hi">'CP949'</span>);
+<span class="cm">:: 파일 하나만 시험할 때 — 메모장 "다른 이름으로 저장 → 인코딩: UTF-8", Word 는 "일반 텍스트(.txt) · UTF-8"</span></pre>
+    <div class="note warn"><span class="badge">주의</span><p><code class="inl">invalid_utf8:"replace"</code>는 ANSI 파일의 해결책이 아닙니다. UTF-8 문서 중간에 <b>일부만</b> 깨진 바이트가 섞였을 때 그 부분만 건너뛰고 검사하는 옵션입니다.</p></div>
+  </section>
+
+  <!-- ───────────────────────── 01 ───────────────────────── -->
+  <section id="s1">
+    <div class="sec-head"><span class="sec-num">01</span><h2>묶음 구성</h2></div>
+    <pre>moaipii-&lt;버전&gt;-&lt;플랫폼&gt;/
+├─ lib/        moaipii.dll · moaipii.dll.lib(C/C++ 링크용) · moaipii-test.exe · mp.exe     ← Windows
+│              libmoaipii.so · moaipii-test · mp                                          ← Linux
+├─ include/    moaipii.h (C) · moaipii.hpp (C++)
+├─ bindings/   python/moaipii.py · rust/moaipii_dyn.rs · java/moaipii/*.java · php/MoaiPii.php
+├─ doc/        moaipii-guide.html (이 설명서) · moaipii-test-guide.html (시험 도구 사용설명서)
+└─ VERSION · CHANGELOG.md · README.md · SHA256SUMS</pre>
+    <p>라이브러리는 다른 .so·.dll에 기대지 않습니다. 파일 하나만 옮기면 됩니다. 감싸개는 모두 <b>환경변수 <code class="inl">MOAIPII_LIB</code></b>(파일 또는 폴더)로 위치를 알려 줄 수 있습니다.
+    감싸개 파일(<code class="inl">bindings/…</code>)은 쓰는 프로젝트에 <b>복사해 두고 고치지 않습니다</b>. 새 판이 나오면 DLL과 감싸개를 함께 바꿉니다.</p>
+    <div class="twrap"><table>
+      <thead><tr><th>도구 (lib/)</th><th>무엇을 부르나</th><th>언제 쓰나</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">moaipii-test(.exe)</td><td><b>같은 폴더의 DLL·.so 파일을 실행 중에 불러</b> 씀(Rust 감싸개 그대로)</td><td>받은 묶음이 이 PC·서버에서 제대로 도는지 확인 — <b>연동 전에 먼저</b>. 사용법은 <code class="inl">doc/moaipii-test-guide.html</code></td></tr>
+        <tr><td class="mono">mp(.exe)</td><td>C 진입점 소스를 실행파일 안에 넣어 만든 개발용 도구(DLL 파일을 읽지 않음)</td><td>결과 JSON 만 빨리 보고 싶을 때</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- ───────────────────────── 02 ───────────────────────── -->
+  <section id="s2">
+    <div class="sec-head"><span class="sec-num">02</span><h2>빠른 시작 — 시험 도구로 DLL 확인</h2></div>
+    <p>설치할 것이 없습니다. 묶음을 푼 폴더에서 실행하면 같은 <code class="inl">lib/</code>의 DLL을 불러 씁니다. Linux 는 <code class="inl">lib/moaipii-test</code>로 같은 명령을 씁니다.</p>
+    <pre><span class="cm">:: 1) 불러온 DLL 경로 · 버전 · ABI</span>
+lib\moaipii-test.exe info
+
+<span class="cm">:: 2) 연동 전 점검 — 라벨별 예문 20개 · 좌표 3단위 · 옵션·오류 · today · 8스레드 동시 호출</span>
+lib\moaipii-test.exe selftest          <span class="cm">:: 끝줄 "결과: 16 / 16 통과" 면 정상, 실패 시 종료코드 1</span>
+
+<span class="cm">:: 3) 문장·파일 검사</span>
+lib\moaipii-test.exe scan --text <span class="hi">"홍길동 010-1234-5678, hong@example.co.kr"</span>
+lib\moaipii-test.exe scan 본문.txt --labels RRN,PHONE,CARD --hide-values
+lib\moaipii-test.exe scan 본문.txt --offsets utf16 --json      <span class="cm">:: DLL 결과 JSON 그대로</span>
+
+<span class="cm">:: 4) 가린 본문 · 5) 속도</span>
+lib\moaipii-test.exe mask 본문.txt --style label --out 가린본문.txt
+lib\moaipii-test.exe bench 큰본문.txt --repeat 100 --threads 4
+
+<span class="cm">:: 운영 앱이 쓰는 DLL 을 시험하려면</span>
+lib\moaipii-test.exe --lib C:\MyApp\bin\moaipii.dll selftest</pre>
+    <pre><span class="cm"># scan 출력 예</span>
+본문 57자 (87 바이트) · 라벨 20개 · 0.41 ms · 좌표 단위 char
+
+[건수] 합계 3
+  ADDRESS            1
+  EMAIL              1
+  PHONE              1
+
+[위치]
+  라벨                    start      end  값
+  PHONE                     4       17  010-1234-5678
+  EMAIL                    19       37  hong@example.co.kr
+  ADDRESS                  39       57  서울특별시 강남구 테헤란로 152</pre>
+    <div class="note info"><span class="badge">팁</span><p>서버에 올린 직후 <b>selftest 한 번</b>이면 라이브러리 열기·ABI·스레드까지 확인됩니다. 명령·옵션·종료 코드·배치 스크립트 연동은 <b><code class="inl">doc/moaipii-test-guide.html</code></b>(moaipii-test 사용설명서)에 있습니다.</p></div>
+  </section>
+
+  <!-- ───────────────────────── 03 ───────────────────────── -->
+  <section id="s3">
+    <div class="sec-head"><span class="sec-num">03</span><h2>좌표 단위 — 가장 중요한 것</h2></div>
+    <p>결과의 <code class="inl">start</code>·<code class="inl">end</code>는 <code class="inl">[start, end)</code>입니다(end 글자는 포함하지 않음). 단위는 옵션 <code class="inl">offsets</code>로 고르며, <b>감싸개마다 자기 언어에 맞는 기본값</b>을 씁니다.</p>
+    <pre><span class="cm">// 본문: "홍길동 😀 010-1234-5678"   ← 이모지는 코드포인트 1 = UTF-16 2 = UTF-8 4바이트, 한글은 1 = 1 = 3바이트</span>
+offsets   start  end   자르기
+char        6     19   Python  text[6:19]          · Rust(감싸개 기본) text.chars()
+utf16       7     20   Java    text.substring(7, 20) · JavaScript · C#
+byte       15     28   PHP     substr($text, 15, 13) · C/C++ text.substr(15, 13) · Rust &amp;text[15..28]</pre>
+    <div class="twrap"><table>
+      <thead><tr><th>언어</th><th>감싸개 기본 offsets</th><th>자르기 / 바꾸기</th></tr></thead>
+      <tbody>
+        <tr><td>Python</td><td class="mono">char</td><td class="mono">text[s:e]</td></tr>
+        <tr><td>Java (JNA)</td><td class="mono">utf16</td><td class="mono">text.substring(s, e) · StringBuilder.replace(s, e, …)</td></tr>
+        <tr><td>PHP (FFI)</td><td class="mono">byte</td><td class="mono">substr($t, s, e-s) · substr_replace($t, …, s, e-s)</td></tr>
+        <tr><td>C++ (moaipii.hpp)</td><td class="mono">byte</td><td class="mono">t.substr(s, e-s) · t.replace(s, e-s, …)</td></tr>
+        <tr><td>Rust (moaipii_dyn.rs)</td><td class="mono">char</td><td>바꾸려면 <code class="inl">offsets: "byte"</code>로 받아 <code class="inl">replace_range(s..e, …)</code></td></tr>
+        <tr><td>C (moaipii.h 직접)</td><td>옵션에 안 적으면 <code class="inl">char</code></td><td>C 는 바이트 배열이므로 <code class="inl">"offsets":"byte"</code>를 꼭 적습니다</td></tr>
+        <tr><td>브라우저 JS로 보낼 때</td><td class="mono">utf16</td><td class="mono">text.slice(s, e)</td></tr>
+      </tbody>
+    </table></div>
+    <div class="note warn"><span class="badge">주의</span><p>단위를 섞으면 오류 없이 <b>엉뚱한 자리를 지웁니다</b>(한글·이모지가 나오기 전까지는 맞아 보여서 늦게 발견됩니다). 기본값을 바꿀 때는 자르는 함수도 함께 바꾸세요.
+    마스킹할 때는 위치가 밀리지 않도록 <b>뒤에서부터</b>(items 를 거꾸로) 바꿉니다.</p></div>
+  </section>
+
+  <!-- ───────────────────────── 04 ───────────────────────── -->
+  <section id="s4">
+    <div class="sec-head"><span class="sec-num">04</span><h2>옵션과 결과</h2></div>
+    <div class="twrap"><table>
+      <thead><tr><th>옵션</th><th>값(기본)</th><th>뜻</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">labels</td><td>문자열 배열(필수)</td><td>켤 라벨. 목록은 <code class="inl">labels()</code> / <code class="inl">mp labels</code>. <b>빈 배열이면 오류 없이 0건</b>입니다</td></tr>
+        <tr><td class="mono">items</td><td>true</td><td>false면 건수만 받습니다(큰 문서·대량 분류에서 결과가 작아짐)</td></tr>
+        <tr><td class="mono">values</td><td>false</td><td>true면 위치마다 원문 값도 싣습니다. 보통은 좌표로 직접 자르면 되므로 필요 없습니다</td></tr>
+        <tr><td class="mono">offsets</td><td>char · utf16 · byte</td><td>좌표 단위(§3)</td></tr>
+        <tr><td class="mono">invalid_utf8</td><td>error · replace</td><td>본문이 UTF-8이 아닐 때 오류를 낼지, 깨진 바이트 묶음을 U+FFFD 한 글자로 보고 검사할지 정합니다. replace여도 byte 좌표는 <b>넘긴 원래 바이트</b>를 가리킵니다</td></tr>
+        <tr><td class="mono">unknown_labels</td><td>error · ignore</td><td>모르는 라벨을 오류로 볼지, 무시하고 결과 <code class="inl">unknown</code>에 알려 줄지 정합니다. 판이 다른 DLL과 섞어 쓸 때 ignore 가 편합니다</td></tr>
+        <tr><td class="mono">today</td><td>null · "YYYY-MM-DD"</td><td>주민등록번호의 <b>미래 생년월일 거부</b> 기준일. null이면 시스템 날짜. 시험을 날짜와 무관하게 고정할 때 씁니다(다른 라벨에는 영향 없음)</td></tr>
+      </tbody>
+    </table></div>
+    <pre><span class="cm">// 성공</span>
+{ <span class="hi">"chars"</span>: 37,                                         <span class="cm">// 본문 코드포인트 수</span>
+  <span class="hi">"counts"</span>: { <span class="hi">"PHONE"</span>: 1, <span class="hi">"RRN"</span>: 1 },                    <span class="cm">// 0건 라벨은 없다</span>
+  <span class="hi">"items"</span>:  [ { <span class="hi">"label"</span>: <span class="hi">"PHONE"</span>, <span class="hi">"start"</span>: 7, <span class="hi">"end"</span>: 20 },  <span class="cm">// 문서 순서, 겹침 해소 끝난 목록</span>
+              { <span class="hi">"label"</span>: <span class="hi">"RRN"</span>, <span class="hi">"start"</span>: 23, <span class="hi">"end"</span>: 37 } ],
+  <span class="hi">"unknown"</span>: [<span class="hi">"FAX"</span>] }                                    <span class="cm">// unknown_labels:"ignore" 이고 있을 때만</span>
+
+<span class="cm">// 실패</span>
+{ <span class="hi">"error"</span>: { <span class="hi">"kind"</span>: <span class="hi">"arg"</span>, <span class="hi">"message"</span>: <span class="hi">"모르는 라벨입니다: FAX (moaipii_labels 로 목록을 볼 수 있습니다)"</span> } }</pre>
+    <div class="twrap"><table>
+      <thead><tr><th>kind</th><th>C 반환 코드</th><th>원인</th><th>대처</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">arg</td><td class="mono">1 MP_ERR_ARG</td><td>NULL 인자, 옵션 JSON 모양 오류, 모르는 라벨</td><td>호출 코드 수정 또는 <code class="inl">unknown_labels:"ignore"</code></td></tr>
+        <tr><td class="mono">utf8</td><td class="mono">2 MP_ERR_UTF8</td><td>본문이 UTF-8이 아님(invalid_utf8:"error")</td><td>먼저 UTF-8로 변환하거나 <code class="inl">invalid_utf8:"replace"</code></td></tr>
+        <tr><td class="mono">panic</td><td class="mono">99 MP_ERR_PANIC</td><td>라이브러리 내부 오류(경계에서 잡혀 프로세스는 살아 있음)</td><td>본문을 따로 저장해 제보</td></tr>
+        <tr><td class="mono">load</td><td>(감싸개)</td><td>DLL을 못 찾음·못 엶·64비트 아님</td><td><code class="inl">MOAIPII_LIB</code> 지정, §10</td></tr>
+        <tr><td class="mono">abi</td><td>(감싸개)</td><td>DLL과 감싸개의 판이 다름</td><td>같은 묶음의 DLL·감싸개를 함께 씀</td></tr>
+      </tbody>
+    </table></div>
+    <div class="note info"><span class="badge">별칭</span><p><code class="inl">PRESCRIPTION</code>은 <code class="inl">PRESCRIPTION_ID</code>의 별칭입니다. ko-pii와 똑같이 동작하도록 <b>별칭으로 켜면 건수만 <code class="inl">counts.PRESCRIPTION</code>으로 세고 위치(items)는 주지 않습니다</b>. 위치가 필요하면 <code class="inl">PRESCRIPTION_ID</code>로 켜세요.</p></div>
+  </section>
+
+  <!-- ───────────────────────── 05 ───────────────────────── -->
+  <section id="s5">
+    <div class="sec-head"><span class="sec-num">05</span><h2>검출 항목 한눈에</h2></div>
+    <p>20개 라벨입니다. <b>위험도</b>는 같은 자리에 두 라벨이 겹칠 때 어느 쪽을 남길지 정하는 데 쓰이고(§6 첫머리), <b>문맥 필요</b>는 숫자 앞뒤에 정해진 낱말이 있어야만 잡는다는 뜻입니다.
+    예시 값은 모두 체크섬만 맞춘 가짜입니다.</p>
+    <div class="twrap"><table>
+      <thead><tr><th>라벨</th><th>항목</th><th>위험도</th><th>예시(잡힘)</th><th>검증</th><th>문맥 필요</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">RRN</td><td>주민등록번호</td><td><span class="rk c">CRITICAL</span></td><td class="mono">951006-1068003</td><td>날짜·성별자리·미래일 거부 (체크섬 틀려도 잡음)</td><td class="kw-n">없음</td></tr>
+        <tr><td class="mono">FRN</td><td>외국인등록번호</td><td><span class="rk c">CRITICAL</span></td><td class="mono">910410-5783619</td><td>날짜·성별자리 5~8</td><td class="kw-n">없음</td></tr>
+        <tr><td class="mono">DRIVER_LICENSE</td><td>운전면허번호</td><td><span class="rk c">CRITICAL</span></td><td class="mono">14-54-881192-36</td><td>지역코드 11~28</td><td class="kw-y">12자리 붙여쓰기만</td></tr>
+        <tr><td class="mono">PASSPORT</td><td>여권번호</td><td><span class="rk c">CRITICAL</span></td><td class="mono">M12345678 · M123A4567</td><td>접두 문자·자릿수</td><td class="kw-n">없음</td></tr>
+        <tr><td class="mono">CARD</td><td>신용·체크카드</td><td><span class="rk h">HIGH</span></td><td class="mono">4548-8365-5205-6218</td><td><b>Luhn 필수</b>·첫자리·길이</td><td class="kw-n">없음</td></tr>
+        <tr><td class="mono">BUSINESS_REG</td><td>사업자등록번호</td><td><span class="rk h">HIGH</span></td><td class="mono">690-61-68110</td><td><b>국세청 체크섬 필수</b></td><td class="kw-n">없음</td></tr>
+        <tr><td class="mono">ACCOUNT</td><td>계좌번호</td><td><span class="rk h">HIGH</span></td><td class="mono">국민은행 110-234-567890</td><td>숫자 10~16자리</td><td class="kw-y">"계좌" 또는 은행명</td></tr>
+        <tr><td class="mono">MEDICAL_INSURANCE</td><td>건강보험증 번호</td><td><span class="rk h">HIGH</span></td><td class="mono">건강보험 1-2345678901</td><td>자릿수</td><td class="kw-y">건강보험·의료보험·보험증</td></tr>
+        <tr><td class="mono">PRESCRIPTION_ID</td><td>처방전 번호</td><td><span class="rk h">HIGH</span>/<span class="rk m">MED</span></td><td class="mono">처방전 교부번호 202401150001</td><td>앞 8자리 날짜</td><td class="kw-y">처방·교부·요양기관 등</td></tr>
+        <tr><td class="mono">PHONE</td><td>전화번호</td><td><span class="rk h">HIGH</span>/<span class="rk m">MED</span></td><td class="mono">010-1234-5678 · 02-123-4567</td><td>국번 목록</td><td class="kw-n">없음</td></tr>
+        <tr><td class="mono">CORP_REG</td><td>법인등록번호</td><td><span class="rk m">MEDIUM</span></td><td class="mono">165705-5641120</td><td><b>체크섬 필수</b>·ISBN 제외</td><td class="kw-n">없음</td></tr>
+        <tr><td class="mono">EMAIL</td><td>이메일</td><td><span class="rk m">MEDIUM</span></td><td class="mono">hong@example.co.kr</td><td>모양</td><td class="kw-n">없음</td></tr>
+        <tr><td class="mono">IP</td><td>IPv4 · IPv6</td><td><span class="rk m">MEDIUM</span></td><td class="mono">192.168.10.25 · fe80::1</td><td>범위·예약대역·판번호 문맥 제외</td><td class="kw-n">없음</td></tr>
+        <tr><td class="mono">ADDRESS</td><td>주소</td><td><span class="rk m">MEDIUM</span>/<span class="rk l">LOW</span></td><td class="mono">서울특별시 강남구 테헤란로 152</td><td>행정구역 사전</td><td class="kw-y">갈래에 따라</td></tr>
+        <tr><td class="mono">COURT_CASE</td><td>법원 사건번호</td><td><span class="rk m">MEDIUM</span></td><td class="mono">2023가합12345</td><td>사건부호 목록</td><td class="kw-n">없음</td></tr>
+        <tr><td class="mono">VEHICLE</td><td>자동차 번호판</td><td><span class="rk l">LOW</span></td><td class="mono">12가3456</td><td>용도 한글 목록</td><td class="kw-n">없음</td></tr>
+        <tr><td class="mono">PNU</td><td>필지고유번호</td><td><span class="rk l">LOW</span></td><td class="mono">1168010100100010000</td><td>시도코드·필지구분</td><td class="kw-n">없음</td></tr>
+        <tr><td class="mono">NATIONALITY</td><td>국적</td><td><span class="rk l">LOW</span></td><td class="mono">베트남 · 미국인 → 미국</td><td>국가 사전 82개</td><td class="kw-n">없음(오탐 주의)</td></tr>
+        <tr><td class="mono">EDI_DRUG</td><td>EDI 약품코드</td><td><span class="rk l">LOW</span></td><td class="mono">EDI 코드 641900010</td><td>자릿수·접두</td><td class="kw-y">EDI·약품코드 등</td></tr>
+        <tr><td class="mono">URL</td><td>웹 주소</td><td><span class="rk i">INFO</span></td><td class="mono">https://example.co.kr/doc/1</td><td>http(s):// 시작</td><td class="kw-n">없음</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- ───────────────────────── 06 ───────────────────────── -->
+  <section id="s6">
+    <div class="sec-head"><span class="sec-num">06</span><h2>검출 항목 자세히</h2></div>
+
+    <h3>공통 처리 — 모든 라벨에 먼저 적용되는 것</h3>
+    <ol class="plain">
+      <li><b>정규화</b>: 검사 전에 본문을 고르게 맞춥니다. 좌표는 언제나 <b>원래 본문</b> 기준으로 되돌려 주므로 쓰는 쪽은 신경 쓰지 않아도 됩니다.
+        <ul class="plain">
+          <li>전각→반각(<code class="inl">０１０</code>→<code class="inl">010</code>), 제로폭 문자·소프트하이픈 제거, NBSP→공백, en dash(–)·가운뎃점(·)→<code class="inl">-</code>, 아랍-인도 숫자·수학 볼드 숫자→ASCII 숫자.</li>
+          <li><b>숫자 흉내 글자</b>: O·o·Q→0, l·I·|→1, S→5, B→8, Z→2, G→6. 단, 진짜 숫자 2개 이상과 섞인 토막에서만 바꿉니다. 그래서 <code class="inl">69O-61-681lO</code>(가린 사업자번호)는 잡고 "Seoul"은 건드리지 않습니다.</li>
+        </ul>
+      </li>
+      <li><b>경계</b>: 대부분의 숫자형 라벨은 앞뒤에 다른 숫자가 붙어 있으면 잡지 않습니다(긴 숫자열의 일부를 잘못 떼어 내지 않도록).</li>
+      <li><b>겹침 해소</b>: 같은 글자를 두 라벨이 함께 잡으면 하나만 남깁니다. 순서는 <b>위험도 → 확신도 → 길이 → 앞선 위치</b>. 이 다툼은 <b>켠 라벨끼리만</b> 일어납니다 — 예를 들어 <code class="inl">http://10.0.0.5:8080/admin</code>은 전부 켜면 IP만 남지만, URL만 켜면 URL로 잡힙니다.</li>
+      <li><b>건수 = 위치 개수</b>: 건수와 위치는 같은 한 번의 검사에서 나오므로 어긋나지 않습니다(별칭 PRESCRIPTION 제외, §4).</li>
+    </ol>
+
+    <h3>신원 번호</h3>
+    <div class="lab"><h4><code>RRN</code> 주민등록번호 <span class="rk c">CRITICAL</span></h4><dl>
+      <dt>형식</dt><dd>6자리 + 구분자 + 7자리. 구분자는 없음·<code class="inl">-</code>·<code class="inl">.</code>·<code class="inl">/</code>·공백(최대 2개까지 섞여도 됨).<br><b>잡힘</b>: <code class="inl">951006-1068003</code> · <code class="inl">7408212331565</code> · <code class="inl">930107.2937174</code> · <code class="inl">520707 1906083</code></dd>
+      <dt>검증</dt><dd>7번째 자리(성별)가 1·2(1900년대)·3·4(2000년대)·9·0(1800년대). 앞 6자리가 <b>실제 있는 날짜</b>(윤년 포함)이고 <b>오늘보다 미래가 아니어야</b> 합니다(옵션 <code class="inl">today</code>). 체크섬은 <b>틀려도 잡습니다</b> — 오타가 난 주민번호도 개인정보이기 때문입니다.</dd>
+      <dt>안 잡힘</dt><dd>앞뒤에 숫자가 붙은 것, 성별자리 5~8(→ FRN), <code class="inl">000000-0000000</code>(→ 법인번호 모양), 구분자 없이 880으로 시작하고 체크섬이 틀린 13자리(상품 바코드).</dd>
+      <dt>참고</dt><dd>표를 텍스트로 뽑다 두 번호가 붙어 버린 <code class="inl">951026-1411232821016-2760084</code>는 이음 자리의 13자리가 잡힙니다(ko-pii와 같은 동작). 앞에 관계코드 1자리가 붙은 14자리는 뒤 13자리를 잡습니다.</dd>
+    </dl></div>
+    <div class="lab"><h4><code>FRN</code> 외국인등록번호 <span class="rk c">CRITICAL</span></h4><dl>
+      <dt>형식</dt><dd>RRN과 같은 모양, 성별자리가 5·6(1900년대)·7·8(2000년대).<br><b>잡힘</b>: <code class="inl">910410-5783619</code> · <code class="inl">700825-6644833</code> · <code class="inl">7603278084693</code></dd>
+      <dt>검증</dt><dd>실제 있는 날짜. 체크섬은 틀려도 잡습니다. <b>미래 날짜는 거르지 않습니다</b>(today 옵션 영향 없음).</dd>
+      <dt>안 잡힘</dt><dd>앞뒤에 숫자가 붙은 것.</dd>
+    </dl></div>
+    <div class="lab"><h4><code>DRIVER_LICENSE</code> 운전면허번호 <span class="rk c">CRITICAL</span></h4><dl>
+      <dt>형식</dt><dd>① 하이픈형 <code class="inl">NN-NN-NNNNNN-NN</code> — 문맥 없이 잡힘. ② 붙여 쓴 12자리 — 숫자 <b>앞</b> 15글자 안에 "운전면허"·"면허번호"·"면허증"이 있어야 함.<br><b>잡힘</b>: <code class="inl">14-54-881192-36</code> · <code class="inl">운전면허번호 175054712977</code></dd>
+      <dt>검증</dt><dd>앞 2자리(지역코드)가 11~28. 체크섬은 없습니다.</dd>
+      <dt>안 잡힘</dt><dd>키워드 없는 12자리(<code class="inl">141712345678</code>), 키워드가 숫자 뒤에만 있는 경우.</dd>
+    </dl></div>
+    <div class="lab"><h4><code>PASSPORT</code> 여권번호 <span class="rk c">CRITICAL</span></h4><dl>
+      <dt>형식</dt><dd>① 옛 형식: 대문자 접두(M·S·G·O·D·R·T 또는 PM·PS·PO·PD·PR·PT·PP) + 숫자 8자리. ② 2021년 이후 신형: <code class="inl">[MSROD]</code> + 숫자 3 + 대문자 1 + 숫자 4.<br><b>잡힘</b>: <code class="inl">M12345678</code> · <code class="inl">PM12345678</code> · <code class="inl">M123A4567</code></dd>
+      <dt>검증</dt><dd>모양만 봅니다(체크섬·키워드 없음). 일련번호 <code class="inl">00000000</code>은 거부.</dd>
+      <dt>안 잡힘</dt><dd>소문자 접두(<code class="inl">m12345678</code>), 앞뒤에 영문·숫자가 붙은 것(예: 제품 코드 속 <code class="inl">XM12345678</code>).</dd>
+    </dl></div>
+
+    <h3>금융·사업자</h3>
+    <div class="lab"><h4><code>CARD</code> 카드번호 <span class="rk h">HIGH</span></h4><dl>
+      <dt>형식</dt><dd>4-4-4-(1~7)자리(구분자 <code class="inl">-</code>·<code class="inl">.</code>·공백·<code class="inl">/</code>) 또는 붙여 쓴 13~19자리.<br><b>잡힘</b>: <code class="inl">4548-8365-5205-6218</code> · <code class="inl">4380 6436 5898 1377</code> · <code class="inl">5942238185254493</code></dd>
+      <dt>검증</dt><dd><b>Luhn 검사 통과 필수</b>. 첫 자리 2·3·4·5·6·9, 13자리는 4(Visa)로만, 15자리는 34·37(Amex)로만 시작.</dd>
+      <dt>안 잡힘</dt><dd>Luhn이 틀린 번호(<code class="inl">4111-1111-1111-1112</code>), 앞뒤 숫자가 붙은 것.</dd>
+    </dl></div>
+    <div class="lab"><h4><code>BUSINESS_REG</code> 사업자등록번호 <span class="rk h">HIGH</span></h4><dl>
+      <dt>형식</dt><dd><code class="inl">3-2-5</code>자리 10자리, 구분자는 <b>하이픈만</b>(생략 가능).<br><b>잡힘</b>: <code class="inl">690-61-68110</code> · <code class="inl">4925121400</code> · 흉내 글자로 가린 <code class="inl">69O-61-681lO</code></dd>
+      <dt>검증</dt><dd><b>국세청 체크섬이 반드시 맞아야</b> 합니다(주민번호와 다른 점).</dd>
+      <dt>안 잡힘</dt><dd>공백 구분(<code class="inl">436 38 20718</code>), 체크섬 틀림, 전부 0.</dd>
+    </dl></div>
+    <div class="lab"><h4><code>CORP_REG</code> 법인등록번호 <span class="rk m">MEDIUM</span></h4><dl>
+      <dt>형식</dt><dd>6+7자리, 구분자는 RRN과 같음.<br><b>잡힘</b>: <code class="inl">165705-5641120</code> · <code class="inl">179600.6428292</code> · <code class="inl">295629/5898685</code></dd>
+      <dt>검증</dt><dd>법인번호 체크섬(가중치 1·2 번갈아) <b>필수</b>.</dd>
+      <dt>안 잡힘</dt><dd>구분자 없는 978·979 시작 13자리(ISBN 바코드). 주민번호로도 말이 되는 값은 RRN·FRN에 양보합니다.</dd>
+      <dt>겹침</dt><dd>13자리 EDI 약품코드(LOW)와 겹치면 법인번호가 이깁니다(<code class="inl">EDI 코드 8806451234567</code> → CORP_REG).</dd>
+    </dl></div>
+    <div class="lab"><h4><code>ACCOUNT</code> 계좌번호 <span class="rk h">HIGH</span></h4><dl>
+      <dt>형식</dt><dd>앵커 + 숫자열. 앵커는 ① <code class="inl">계좌</code>[번호|번][:] 뒤, ② 은행명 뒤, ③ 숫자열 뒤에 은행명. 숫자열은 공백·하이픈으로 나뉜 2~5묶음 또는 붙여 쓴 10~16자리.<br>은행명에는 약칭도 포함(국민·신한·우리·하나·KB·NH·IBK·MG·카카오뱅크·토스·우체국 등).<br><b>잡힘</b>: <code class="inl">계좌번호 110-234-567890</code> · <code class="inl">국민은행 110-234-567890</code> · <code class="inl">110-234-567890 국민은행</code> · <code class="inl">카카오뱅크 3333-01-1234567</code></dd>
+      <dt>검증</dt><dd>공백·하이픈을 뺀 나머지가 전부 숫자이고 10~16자리. 은행별 체크섬은 없습니다.</dd>
+      <dt>안 잡힘</dt><dd><b>앵커 없는 숫자열</b>(<code class="inl">3333-01-1234567</code> 단독). 줄바꿈을 넘는 값은 첫 줄에서 자르고, 자른 값이 조건을 못 채우면 버립니다.</dd>
+      <dt>표</dt><dd>탭·쉼표로 나뉜 표에서 머리줄에 "계좌" 칸이 있으면, 아래 줄들의 그 칸 값을 계좌로 봅니다(<code class="inl">|</code> 표는 대상 아님).</dd>
+    </dl></div>
+
+    <h3>연락처·온라인</h3>
+    <div class="lab"><h4><code>PHONE</code> 전화번호 <span class="rk h">HIGH</span> 휴대폰 · <span class="rk m">MEDIUM</span> 유선·대표</h4><dl>
+      <dt>형식</dt><dd>휴대폰(010·011·016·017·019), 서울 02, 지역 031~064, 070, 대표번호 15xx~18xx, 그리고 국제 표기(<code class="inl">+82</code>·<code class="inl">0082</code>·<code class="inl">82</code>, <code class="inl">(0)</code> 허용). 구분자 <code class="inl">-</code>·<code class="inl">.</code>·공백, 지역번호 뒤 <code class="inl">)</code>·<code class="inl">]</code>.<br><b>잡힘</b>: <code class="inl">010-1234-5678</code> · <code class="inl">+82-10-1234-5678</code> · <code class="inl">0082 10 9876 5432</code> · <code class="inl">02-123-4567</code> · <code class="inl">(031)123-4567</code> · <code class="inl">070-1234-5678</code> · <code class="inl">1588-1234</code> · <code class="inl">010–1234–5678</code>(en dash)</dd>
+      <dt>검증</dt><dd>국번 목록만 봅니다(키워드 없음).</dd>
+      <dt>안 잡힘</dt><dd>앞뒤에 숫자가 붙은 것. 국내 패턴 앞의 <code class="inl">+</code>.</dd>
+      <dt>오탐 주의</dt><dd>대표번호 <code class="inl">15xx-xxxx</code>는 4-4자리 제품번호와 모양이 같습니다.</dd>
+    </dl></div>
+    <div class="lab"><h4><code>EMAIL</code> 이메일 <span class="rk m">MEDIUM</span></h4><dl>
+      <dt>형식</dt><dd>로컬부 <code class="inl">[A-Za-z0-9._%+-]</code> @ 점으로 이은 도메인 라벨 2개 이상. 전각 영문도 정규화되어 잡힙니다.<br><b>잡힘</b>: <code class="inl">hong@example.co.kr</code> · <code class="inl">gil.dong@example.com</code> · <code class="inl">hong+report@example.org</code></dd>
+      <dt>안 잡힘</dt><dd>로컬부가 점으로 시작·끝, <code class="inl">..</code> 포함, 하이픈으로 시작·끝나는 도메인 라벨(<code class="inl">example-.com</code>), 한글 등 비ASCII 도메인.</dd>
+    </dl></div>
+    <div class="lab"><h4><code>IP</code> IP 주소 <span class="rk m">MEDIUM</span></h4><dl>
+      <dt>형식</dt><dd>IPv4(각 0~255) · IPv6(전체·<code class="inl">::</code> 축약·IPv4 혼합·<code class="inl">%eth0</code>). <b>사설망(10.x, 192.168.x)도 잡습니다.</b><br><b>잡힘</b>: <code class="inl">192.168.10.25</code> · <code class="inl">server 10.20.30.40</code> · <code class="inl">2001:db8::8a2e:370:7334</code> · <code class="inl">fe80::1</code></dd>
+      <dt>안 잡힘</dt><dd>예약 대역(0.x, 127.x, 169.254.x, 문서용 192.0.2.x·198.51.100.x·203.0.113.x, 224 이상). <b>판번호 문맥</b>: 앞에 버전·펌웨어·빌드·패치·표·그림·조·항·장·version·release·v·ver·Fig 등, 뒤에 버전·build 등이 오면 거부(<code class="inl">버전 1.2.3.4 배포</code> → 없음).</dd>
+      <dt>겹침</dt><dd>URL(INFO)보다 높아, URL 속 IP와 겹치면 IP가 남습니다.</dd>
+    </dl></div>
+    <div class="lab"><h4><code>URL</code> 웹 주소 <span class="rk i">INFO</span></h4><dl>
+      <dt>형식</dt><dd><code class="inl">http://</code>·<code class="inl">https://</code>(대소문자 무관)부터 공백·따옴표·<code class="inl">&lt;&gt;</code>·닫는 괄호 앞까지. 끝의 <code class="inl">.,;:!?</code>는 뗍니다.<br><b>잡힘</b>: <code class="inl">https://example.co.kr/doc/1</code> · <code class="inl">https://example.co.kr/s?q=abc&amp;p=2</code></dd>
+      <dt>안 잡힘</dt><dd><code class="inl">www.example.com</code>·<code class="inl">ftp://</code>, 앞 글자에 붙은 URL(<code class="inl">서https://…</code>).</dd>
+      <dt>겹침</dt><dd>위험도가 가장 낮아, 안에 든 IP·EMAIL 등과 겹치면 집니다.</dd>
+    </dl></div>
+
+    <h3>주소·국적·차량</h3>
+    <div class="lab"><h4><code>ADDRESS</code> 주소 <span class="rk m">MEDIUM</span> · <span class="rk l">LOW</span>(단독 지명)</h4><dl>
+      <dt>갈래</dt><dd>
+        ① <b>도로명</b>: [시·도] + 시·군·구 + 도로명(…대로·로·길) + 건물번호 — <code class="inl">서울특별시 강남구 테헤란로 152</code>, <code class="inl">경기도 성남시 분당구 판교로 235</code><br>
+        ② <b>지번</b>: [시·도] + 시·군·구 + 동·읍·면·리 + 번지 — <code class="inl">서울특별시 강남구 역삼동 737</code><br>
+        ③ <b>말하듯 쓴 주소</b>: <code class="inl">서울시 강남구에 살고 있어요</code> → <code class="inl">서울시</code> (주변 앵커 필요)<br>
+        ④ <b>단독 지명</b>(LOW): <code class="inl">본적 성남시</code> → <code class="inl">성남시</code> (주변 앵커 필요)</dd>
+      <dt>문맥</dt><dd>①② 는 시·도나 시·군·구 접두가 있거나 앞 20글자 안에 "주소"가 있어야 합니다. ③④ 는 앞 25글자·뒤 12글자 안에 <b>주소·자택·거주·본적·사는·살고·이사·명함</b> 같은 앵커가 있어야 합니다.</dd>
+      <dt>검증</dt><dd>시·도와 시·군·구 조합이 실제로 맞는지, 법정동 사전(약 1만 개)·시군구 사전으로 확인합니다. 시·도 없이 쓴 주소는 시군구·동이 사전에 있어야 합니다(<code class="inl">연구 정보관리 1</code>·<code class="inl">실시간으로 3</code> 같은 오탐 제거).</dd>
+      <dt>확장</dt><dd>상세 주소까지 값에 포함: <code class="inl">103동 1202호</code>, <code class="inl">5층</code>, 건물명(…빌딩·타워·센터·아파트 등), 괄호 상세 <code class="inl">(신정동, 롯데캐슬아파트)</code>.</dd>
+      <dt>안 잡힘</dt><dd>번지 없이 낱말만(<code class="inl">자택 주소가 어디세요?</code>), 끝 바로 뒤에 숫자·하이픈이 이어지는 것.</dd>
+    </dl></div>
+    <div class="lab"><h4><code>NATIONALITY</code> 국적 <span class="rk l">LOW</span></h4><dl>
+      <dt>형식</dt><dd>한글 2~8자 낱말에서 조사(은·는·이·가·의·에서…)와 끝의 "인"을 떼어 국가 사전(82개)과 맞춥니다. 값에는 조사·"인"이 빠집니다.<br><b>잡힘</b>: <code class="inl">국적은 베트남 입니다</code> → 베트남 · <code class="inl">미국인 친구</code> → 미국 · <code class="inl">우즈베키스탄</code></dd>
+      <dt>안 잡힘</dt><dd><code class="inl">한국어</code>·<code class="inl">미국산</code>처럼 조사가 아닌 글자가 붙은 것, 앞뒤에 영문·숫자가 붙은 것.</dd>
+      <dt>오탐 주의</dt><dd><b>문맥 없이 사전만 봅니다.</b> 일반 낱말과 같은 나라 이름(수단·가나·인도·한국 등)이 잡힙니다 — <code class="inl">수단을 가리지 않고</code> → 수단. 문서 분류 점수에 쓸 때는 가중치를 낮게 두세요.</dd>
+    </dl></div>
+    <div class="lab"><h4><code>VEHICLE</code> 자동차 번호판 <span class="rk l">LOW</span></h4><dl>
+      <dt>형식</dt><dd>숫자 2~3자리 + 용도 한글 1자 + 숫자 4자리(사이 공백 1칸 허용).<br><b>잡힘</b>: <code class="inl">12가3456</code> · <code class="inl">123나4567</code> · <code class="inl">34 다 5678</code> · <code class="inl">서울 12가3456</code></dd>
+      <dt>검증</dt><dd>용도 한글이 번호판 글자 목록(가~저, 고~주, 바·사·아·자·배·하·허·호, 외·영·준·협·대·국·합·육·해·공 등)에 있어야 하고, 끝 4자리가 0000이 아니어야 합니다.</dd>
+      <dt>안 잡힘</dt><dd><b>앞에 한글·숫자가 붙은 것</b>(옛 지역 번호판 <code class="inl">서울12가3456</code>), 뒤에 수량·통화 단위가 오는 것(<code class="inl">12가 3456원</code>·만·억·명·kg·% 등).</dd>
+    </dl></div>
+
+    <h3>의료·공공</h3>
+    <div class="lab"><h4><code>MEDICAL_INSURANCE</code> 건강보험증 번호 <span class="rk h">HIGH</span></h4><dl>
+      <dt>형식</dt><dd><code class="inl">N-NNNNNNNNNN</code>(1-10자리) 또는 붙여 쓴 11자리.<br><b>잡힘</b>: <code class="inl">건강보험 증번호 1-2345678901</code> · <code class="inl">의료보험 12345678901</code> · <code class="inl">보험증 9-8765432109</code></dd>
+      <dt>문맥</dt><dd>앞 25글자 안에 <b>건강보험·의료보험·보험증</b>(사이 공백 허용) 필수.</dd>
+      <dt>안 잡힘</dt><dd>키워드 없는 번호(<code class="inl">사번 1-2345678901</code>).</dd>
+      <dt>겹침</dt><dd>계좌번호와 같은 자리면 건강보험이 이깁니다.</dd>
+    </dl></div>
+    <div class="lab"><h4><code>PRESCRIPTION_ID</code> 처방전 번호 <span class="rk h">HIGH</span> · <span class="rk m">MEDIUM</span>(기관기호) <span class="src">별칭 PRESCRIPTION</span></h4><dl>
+      <dt>갈래</dt><dd>
+        ① <b>12자리 교부번호</b>: 앞 8자리가 실제 날짜(1990~2099년) — <code class="inl">처방전 교부번호 202401150001</code><br>
+        ② <b>영문 접두형</b>: 영문 2~6자 + <code class="inl">-</code> + 숫자로 시작하는 값 — <code class="inl">처방전 번호 RX-1234567</code><br>
+        ③ <b>8자리 요양기관기호</b>: <code class="inl">요양기관번호 12345678</code></dd>
+      <dt>문맥</dt><dd>①② 는 앞 20(18)글자 안에 처방번호·처방전번호·처방전 발행번호·교부번호·Rx번호·Rx 중 하나, ③ 은 앞 15글자 안에 의료기관기호·기관기호·요양기관기호·요양기관번호·병원코드 필수. 키워드는 대소문자를 구분합니다(Rx는 되고 RX는 안 됨).</dd>
+      <dt>안 잡힘</dt><dd>키워드 없는 숫자.</dd>
+    </dl></div>
+    <div class="lab"><h4><code>EDI_DRUG</code> EDI 약품코드 <span class="rk l">LOW</span></h4><dl>
+      <dt>형식</dt><dd>9자리, 또는 880·881·888로 시작하는 13자리.<br><b>잡힘</b>: <code class="inl">EDI 코드 641900010</code></dd>
+      <dt>문맥</dt><dd>앞 18글자 안에 EDI·약품코드·의약품코드·주성분코드·KD코드·약가코드 필수.</dd>
+      <dt>겹침</dt><dd>13자리는 법인등록번호 체크섬도 맞는 경우가 많아 CORP_REG로 잡히곤 합니다(위험도가 높아서).</dd>
+    </dl></div>
+    <div class="lab"><h4><code>COURT_CASE</code> 법원 사건번호 <span class="rk m">MEDIUM</span></h4><dl>
+      <dt>형식</dt><dd>연도(19xx·20xx) + 사건부호 + 일련번호 1~6자리, <b>띄어쓰기 없이</b>. 부호는 가합·가단·가소·카합·고합·고단·구합·드합·헌가~헌바 등 2글자와 나·다·노·도·누·두·르·므·마·바 등 1글자.<br><b>잡힘</b>: <code class="inl">2023가합12345</code> · <code class="inl">2020노222</code> · <code class="inl">2019두3333</code></dd>
+      <dt>안 잡힘</dt><dd>앞뒤에 한글·숫자가 붙은 것(<code class="inl">2023가합12345호</code>), 띄어 쓴 것(<code class="inl">2023 가합 12345</code>), 일련번호 0.</dd>
+    </dl></div>
+    <div class="lab"><h4><code>PNU</code> 필지고유번호 <span class="rk l">LOW</span></h4><dl>
+      <dt>형식</dt><dd>앞뒤에 숫자가 없는 19자리.<br><b>잡힘</b>: <code class="inl">1168010100100010000</code></dd>
+      <dt>검증</dt><dd>앞 2자리가 실제 시도코드(11, 21~26, 29, 31~39, 41~48, 50), 11번째 자리(대지/임야)가 0이 아님, 본번 4자리가 0000이 아님. 키워드 없음.</dd>
+      <dt>안 잡힘</dt><dd>18자리 이하, 시도코드가 아닌 앞자리.</dd>
+    </dl></div>
+
+    <h3>겹칠 때 무엇이 남나 — 위험도 순서</h3>
+    <div class="twrap"><table>
+      <thead><tr><th>위험도</th><th>라벨</th></tr></thead>
+      <tbody>
+        <tr><td><span class="rk c">CRITICAL</span></td><td>RRN · FRN · PASSPORT · DRIVER_LICENSE</td></tr>
+        <tr><td><span class="rk h">HIGH</span></td><td>CARD · BUSINESS_REG · 휴대폰 PHONE · MEDICAL_INSURANCE · ACCOUNT · 처방 교부번호·영문형</td></tr>
+        <tr><td><span class="rk m">MEDIUM</span></td><td>CORP_REG · 유선·대표 PHONE · EMAIL · IP · COURT_CASE · 처방 기관기호 · ADDRESS(①②③)</td></tr>
+        <tr><td><span class="rk l">LOW</span></td><td>PNU · EDI_DRUG · VEHICLE · NATIONALITY · ADDRESS 단독 지명</td></tr>
+        <tr><td><span class="rk i">INFO</span></td><td>URL</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- ───────────────────────── 07 ───────────────────────── -->
+  <section id="s7">
+    <div class="sec-head"><span class="sec-num">07</span><h2>언어별 연동 예제</h2></div>
+    <p>아래 예제는 모두 같은 일을 합니다: <b>UTF-8 텍스트 파일을 읽어 → 라벨별 건수를 찍고 → 검출 자리를 <code class="inl">[라벨]</code>로 바꾼 본문을 출력</b>. 언어마다 좌표 단위가 다른 점만 눈여겨보세요.</p>
+
+    <h3>Python (3.8+, 표준 라이브러리만)</h3>
+    <pre><span class="cm"># pii_mask.py — bindings/python/moaipii.py 를 같은 폴더(또는 sys.path)에 복사</span>
+<span class="kw">import</span> sys
+<span class="kw">import</span> moaipii
+
+LABELS = [<span class="hi">"RRN"</span>, <span class="hi">"FRN"</span>, <span class="hi">"PHONE"</span>, <span class="hi">"EMAIL"</span>, <span class="hi">"CARD"</span>, <span class="hi">"ACCOUNT"</span>, <span class="hi">"ADDRESS"</span>]
+
+<span class="kw">def</span> mask(text):
+    r = moaipii.scan(text, LABELS)                     <span class="cm"># 좌표 char → text[s:e]</span>
+    <span class="kw">for</span> it <span class="kw">in</span> reversed(r[<span class="hi">"items"</span>]):                 <span class="cm"># 뒤에서부터 바꿔야 앞 좌표가 안 밀린다</span>
+        text = text[:it[<span class="hi">"start"</span>]] + <span class="hi">"["</span> + it[<span class="hi">"label"</span>] + <span class="hi">"]"</span> + text[it[<span class="hi">"end"</span>]:]
+    <span class="kw">return</span> r[<span class="hi">"counts"</span>], text
+
+<span class="kw">if</span> __name__ == <span class="hi">"__main__"</span>:
+    <span class="kw">try</span>:
+        moaipii.load()                                 <span class="cm"># 생략 가능(첫 호출 때 불러옴). 경로 지정: load(r"D:\pii\moaipii.dll")</span>
+        text = open(sys.argv[1], encoding=<span class="hi">"utf-8-sig"</span>).read()
+        counts, masked = mask(text)
+    <span class="kw">except</span> moaipii.MoaiPiiError <span class="kw">as</span> e:
+        sys.exit(<span class="hi">"[%s] %s"</span> % (e.kind, e))                <span class="cm"># load · abi · arg · utf8 · panic</span>
+    <span class="kw">for</span> k, n <span class="kw">in</span> counts.items():
+        print(k, n)
+    print(masked)</pre>
+    <ul class="plain">
+      <li>ctypes 호출 중에는 GIL이 풀리므로, <code class="inl">ThreadPoolExecutor</code>로 여러 파일을 나눠 부르면 실제로 병렬로 돕니다(§8 예제).</li>
+      <li>bytes를 그대로 넘기려면 <code class="inl">moaipii.scan(data_bytes, LABELS, offsets="byte", invalid_utf8="replace")</code>. 좌표도 bytes 기준이 됩니다.</li>
+      <li>PyInstaller로 묶을 때는 DLL을 묶음 최상위(<code class="inl">--add-binary "moaipii.dll;."</code>)에 두면 <code class="inl">_MEIPASS</code>에서 찾습니다.</li>
+    </ul>
+
+    <h3>Java (8+, JNA 5.14)</h3>
+    <pre><span class="cm">// PiiMask.java — bindings/java/moaipii/*.java 를 소스에 포함, 의존: net.java.dev.jna:jna:5.14.0</span>
+<span class="kw">import</span> moaipii.MoaiPii;
+<span class="kw">import</span> java.nio.charset.StandardCharsets;
+<span class="kw">import</span> java.nio.file.*;
+<span class="kw">import</span> java.util.*;
+
+<span class="kw">public class</span> PiiMask {
+    <span class="kw">public static void</span> main(String[] args) <span class="kw">throws</span> Exception {
+        String text = <span class="kw">new</span> String(Files.readAllBytes(Paths.get(args[0])), StandardCharsets.UTF_8);
+        List&lt;String&gt; labels = Arrays.asList(<span class="hi">"RRN"</span>, <span class="hi">"PHONE"</span>, <span class="hi">"EMAIL"</span>, <span class="hi">"CARD"</span>, <span class="hi">"ACCOUNT"</span>);
+        <span class="kw">try</span> {
+            MoaiPii pii = MoaiPii.load();                       <span class="cm">// 한 번만 불러 두고 여러 스레드에서 같이 써도 된다</span>
+            MoaiPii.Result r = pii.scan(text, labels);          <span class="cm">// 좌표 utf16 → substring 과 같은 단위</span>
+            <span class="kw">for</span> (Map.Entry&lt;String, Long&gt; e : r.counts.entrySet())
+                System.out.println(e.getKey() + <span class="hi">" : "</span> + e.getValue());
+
+            StringBuilder sb = <span class="kw">new</span> StringBuilder(text);
+            <span class="kw">for</span> (<span class="kw">int</span> i = r.items.size() - 1; i &gt;= 0; i--) {      <span class="cm">// 뒤에서부터</span>
+                MoaiPii.Item it = r.items.get(i);
+                sb.replace(it.start, it.end, <span class="hi">"["</span> + it.label + <span class="hi">"]"</span>);
+            }
+            System.out.println(sb);
+        } <span class="kw">catch</span> (MoaiPii.MoaiPiiException e) {
+            System.err.println(<span class="hi">"["</span> + e.kind + <span class="hi">"] "</span> + e.getMessage());   <span class="cm">// load · abi · arg · utf8 · panic</span>
+            System.exit(1);
+        }
+    }
+}</pre>
+    <pre><span class="cm">:: 빌드·실행 (Windows, 묶음 폴더에서)</span>
+javac -encoding UTF-8 -cp jna-5.14.0.jar -d out bindings\java\moaipii\*.java PiiMask.java
+java -Dfile.encoding=UTF-8 -Dmoaipii.lib=lib\moaipii.dll -cp "jna-5.14.0.jar;out" PiiMask 본문.txt
+<span class="cm"># Linux: 클래스패스 구분자는 ':'  ·  -Dmoaipii.lib=lib/libmoaipii.so</span></pre>
+    <pre><span class="cm">// 옵션을 바꿀 때 — 건수만, 날짜 고정</span>
+MoaiPii.Options o = <span class="kw">new</span> MoaiPii.Options();
+o.items = <span class="kw">false</span>;                 <span class="cm">// 위치 생략</span>
+o.unknownLabels = <span class="hi">"ignore"</span>;      <span class="cm">// 모르는 라벨은 r.unknown 으로</span>
+o.today = <span class="hi">"2026-01-01"</span>;
+MoaiPii.Result r = pii.scan(text, labels, o);</pre>
+    <ul class="plain">
+      <li><b>64비트 JVM</b>이 필요합니다(<code class="inl">size_t</code>를 <code class="inl">long</code>으로 받습니다).</li>
+      <li>DLL 찾는 순서: <code class="inl">MOAIPII_LIB</code> → <code class="inl">-Dmoaipii.lib</code> → <code class="inl">./lib/</code> → <code class="inl">./</code> → <code class="inl">jna.library.path</code>·시스템 경로.</li>
+      <li><code class="inl">scanBytes(byte[], labels, opts)</code>는 넘긴 <code class="inl">byte[]</code>를 호출이 끝나면 0으로 지웁니다(메모리에 원문이 남지 않게).</li>
+    </ul>
+
+    <h3>PHP (7.4+, FFI, 64비트)</h3>
+    <pre><span class="cm">&lt;?php
+// pii_mask.php — bindings/php/MoaiPii.php 를 복사</span>
+<span class="kw">require</span> __DIR__ . <span class="hi">'/MoaiPii.php'</span>;
+
+$text = file_get_contents($argv[1]);              <span class="cm">// UTF-8 바이트열 그대로</span>
+<span class="kw">try</span> {
+    $pii = MoaiPii::load();                       <span class="cm">// 또는 MoaiPii::load('/opt/pii/libmoaipii.so')</span>
+    $r   = $pii-&gt;scan($text, [<span class="hi">'RRN'</span>, <span class="hi">'PHONE'</span>, <span class="hi">'EMAIL'</span>, <span class="hi">'CARD'</span>]);   <span class="cm">// 좌표 byte → substr 단위</span>
+} <span class="kw">catch</span> (MoaiPiiException $e) {
+    fwrite(STDERR, <span class="hi">"[{$e-&gt;kind}] "</span> . $e-&gt;getMessage() . <span class="hi">"\n"</span>);
+    exit(1);
+}
+<span class="kw">foreach</span> ($r[<span class="hi">'counts'</span>] <span class="kw">as</span> $label =&gt; $n) echo <span class="hi">"$label : $n\n"</span>;
+
+<span class="kw">foreach</span> (array_reverse($r[<span class="hi">'items'</span>]) <span class="kw">as</span> $it) {       <span class="cm">// 뒤에서부터</span>
+    $text = substr_replace($text, <span class="hi">'['</span> . $it[<span class="hi">'label'</span>] . <span class="hi">']'</span>, $it[<span class="hi">'start'</span>], $it[<span class="hi">'end'</span>] - $it[<span class="hi">'start'</span>]);
+}
+echo $text;</pre>
+    <pre>php -d extension=ffi pii_mask.php 본문.txt</pre>
+    <ul class="plain">
+      <li>CLI는 <code class="inl">extension=ffi</code>만 켜면 됩니다. 웹(php-fpm·Apache)은 <code class="inl">ffi.enable=true</code> 또는 <code class="inl">opcache.preload</code>가 필요합니다.</li>
+      <li>감싸개 기본값은 <code class="inl">invalid_utf8: "replace"</code>입니다(PHP 문자열은 인코딩을 모르므로). EUC-KR 본문은 먼저 <code class="inl">mb_convert_encoding($s, 'UTF-8', 'EUC-KR')</code>로 바꿔서 넘기세요.</li>
+      <li><code class="inl">mb_substr</code>로 자르려면 <code class="inl">['offsets' =&gt; 'char']</code>를 넘깁니다.</li>
+    </ul>
+
+    <h3>C++ (17, 헤더 하나)</h3>
+    <pre><span class="cm">// pii_mask.cpp — include/moaipii.h · include/moaipii.hpp</span>
+<span class="cm">// #define MOAIPII_DYNAMIC   // ← 켜면 링크 없이 실행 중에 DLL 을 찾아 연다 (Linux 는 -ldl)</span>
+<span class="kw">#include</span> <span class="hi">"moaipii.hpp"</span>
+<span class="kw">#include</span> &lt;fstream&gt;
+<span class="kw">#include</span> &lt;iostream&gt;
+<span class="kw">#include</span> &lt;sstream&gt;
+
+<span class="kw">int</span> main(<span class="kw">int</span> argc, <span class="kw">char</span>** argv) {
+    std::ifstream f(argv[1], std::ios::binary);
+    std::stringstream ss; ss &lt;&lt; f.rdbuf();
+    std::string text = ss.str();                                 <span class="cm">// UTF-8 바이트 그대로</span>
+    <span class="kw">try</span> {
+        <span class="kw">auto</span> pii = moaipii::Lib::load();
+        <span class="kw">auto</span> r   = pii.scan(text, {<span class="hi">"RRN"</span>, <span class="hi">"PHONE"</span>, <span class="hi">"EMAIL"</span>});      <span class="cm">// 좌표 byte → substr 단위</span>
+        <span class="kw">for</span> (<span class="kw">auto</span>&amp; [label, n] : r.counts) std::cout &lt;&lt; label &lt;&lt; <span class="hi">" : "</span> &lt;&lt; n &lt;&lt; <span class="hi">"\n"</span>;
+        <span class="kw">for</span> (<span class="kw">auto</span> it = r.items.rbegin(); it != r.items.rend(); ++it)   <span class="cm">// 뒤에서부터</span>
+            text.replace(it-&gt;start, it-&gt;end - it-&gt;start, <span class="hi">"["</span> + it-&gt;label + <span class="hi">"]"</span>);
+        std::cout &lt;&lt; text;
+    } <span class="kw">catch</span> (<span class="kw">const</span> moaipii::error&amp; e) {
+        std::cerr &lt;&lt; <span class="hi">"["</span> &lt;&lt; e.kind &lt;&lt; <span class="hi">"] "</span> &lt;&lt; e.what() &lt;&lt; <span class="hi">"\n"</span>;      <span class="cm">// e.code = 반환 코드</span>
+        <span class="kw">return</span> 1;
+    }
+}</pre>
+    <pre><span class="cm">:: Windows (VS 2022 x64 Native Tools 프롬프트) — 링크형: 실행 폴더에 moaipii.dll 을 둔다</span>
+cl /std:c++17 /EHsc /utf-8 pii_mask.cpp /I include lib\moaipii.dll.lib
+<span class="cm">:: Windows — 동적 로드형</span>
+cl /std:c++17 /EHsc /utf-8 /DMOAIPII_DYNAMIC pii_mask.cpp /I include
+
+<span class="cm"># Linux — 링크형 (실행파일 옆의 libmoaipii.so 를 찾게 rpath)</span>
+g++ -std=c++17 pii_mask.cpp -I include -L lib -lmoaipii -Wl,-rpath,'$ORIGIN'
+<span class="cm"># Linux — 동적 로드형</span>
+g++ -std=c++17 -DMOAIPII_DYNAMIC pii_mask.cpp -I include -ldl</pre>
+    <ul class="plain">
+      <li>CentOS 7의 기본 g++(4.8)은 C++17을 못 합니다. devtoolset의 g++를 쓰세요.</li>
+      <li>Windows 콘솔에서 한글이 깨지면 <code class="inl">chcp 65001</code> 또는 프로그램 시작 때 <code class="inl">SetConsoleOutputCP(CP_UTF8)</code>.</li>
+      <li>옵션: <code class="inl">moaipii::Options o; o.items = false; o.offsets = "char"; o.today = "2026-01-01"; pii.scan(text, labels, o);</code></li>
+    </ul>
+
+    <h3>Rust (libloading 0.8 · serde_json 1)</h3>
+    <pre><span class="cm"># Cargo.toml</span>
+[dependencies]
+libloading = <span class="hi">"0.8"</span>
+serde_json = <span class="hi">"1"</span></pre>
+    <pre><span class="cm">// src/main.rs — bindings/rust/moaipii_dyn.rs 를 src/ 에 복사</span>
+<span class="kw">mod</span> moaipii_dyn;
+<span class="kw">use</span> moaipii_dyn::{MoaiPii, ScanOpts};
+<span class="kw">use</span> std::collections::HashSet;
+
+<span class="kw">fn</span> main() -&gt; Result&lt;(), String&gt; {
+    <span class="kw">let</span> path = std::env::args().nth(1).ok_or(<span class="hi">"파일을 주세요"</span>)?;
+    <span class="kw">let mut</span> text = std::fs::read_to_string(&amp;path).map_err(|e| e.to_string())?;
+
+    <span class="kw">let</span> pii = MoaiPii::find_and_load(<span class="kw">None</span>, <span class="hi">"MOAIPII_LIB"</span>)?;            <span class="cm">// 한 번 불러 Arc 로 나눠 써도 된다</span>
+    <span class="kw">let</span> want: HashSet&lt;String&gt; = [<span class="hi">"RRN"</span>, <span class="hi">"PHONE"</span>, <span class="hi">"EMAIL"</span>].iter().map(|s| s.to_string()).collect();
+    <span class="cm">// 바꾸기를 하려면 byte 좌표가 편하다 (기본 char 는 text.chars() 기준)</span>
+    <span class="kw">let</span> opts = ScanOpts { offsets: <span class="hi">"byte"</span>, ..Default::default() };
+    <span class="kw">let</span> r = pii.scan(&amp;text, &amp;want, &amp;opts).map_err(|e| e.to_string())?;
+
+    <span class="kw">for</span> (label, n) <span class="kw">in</span> &amp;r.counts { println!(<span class="hi">"{label} : {n}"</span>); }
+    <span class="kw">for</span> it <span class="kw">in</span> r.items.iter().rev() {                                   <span class="cm">// 뒤에서부터</span>
+        text.replace_range(it.start..it.end, &amp;format!(<span class="hi">"[{}]"</span>, it.label));
+    }
+    print!(<span class="hi">"{text}"</span>);
+    Ok(())
+}</pre>
+
+    <h3>C (헤더만, 감싸개 없이)</h3>
+    <p>다른 언어(C#, Go, Delphi 등)에서 직접 부를 때도 이 모양을 그대로 옮기면 됩니다. 규칙은 세 가지: <b>본문은 (포인터, 길이)</b>, <b>옵션·결과는 UTF-8 JSON</b>, <b>out 문자열은 반드시 <code class="inl">moaipii_free</code></b>.</p>
+    <pre><span class="cm">/* pii_raw.c — 소스를 UTF-8 로 저장. cl /utf-8 pii_raw.c /I include lib\moaipii.dll.lib
+ *                                  gcc pii_raw.c -I include -L lib -lmoaipii -Wl,-rpath,'$ORIGIN' */</span>
+<span class="kw">#include</span> &lt;stdio.h&gt;
+<span class="kw">#include</span> &lt;string.h&gt;
+<span class="kw">#include</span> <span class="hi">"moaipii.h"</span>
+
+<span class="kw">int</span> main(<span class="kw">void</span>) {
+    <span class="kw">if</span> (moaipii_abi_version() != MOAIPII_ABI_VERSION) {           <span class="cm">/* 판 확인을 맨 먼저 */</span>
+        fprintf(stderr, <span class="hi">"ABI 판이 다릅니다\n"</span>); <span class="kw">return</span> 1;
+    }
+    printf(<span class="hi">"moaipii %s (ko-pii %s)\n"</span>, moaipii_version(), moaipii_kopii_basis());  <span class="cm">/* 고정 문자열: 해제 안 함 */</span>
+
+    <span class="kw">const char</span>* text = <span class="hi">"연락처 010-1234-5678, 메일 hong@example.co.kr"</span>;
+    <span class="kw">const char</span>* opts = <span class="hi">"{\"labels\":[\"PHONE\",\"EMAIL\"],\"offsets\":\"byte\"}"</span>;
+    <span class="kw">char</span>* out = NULL;
+    <span class="kw">int</span> rc = moaipii_scan((<span class="kw">const</span> uint8_t*)text, strlen(text), opts, &amp;out);
+    printf(<span class="hi">"rc=%d\n%s\n"</span>, rc, out ? out : <span class="hi">""</span>);   <span class="cm">/* rc != 0 이면 out 에 {"error":{…}} */</span>
+    moaipii_free(out);                                          <span class="cm">/* 성공이든 실패든 반드시. C 의 free() 금지 */</span>
+    <span class="kw">return</span> rc;
+}</pre>
+    <div class="note info"><span class="badge">C# 등</span><p>P/Invoke 라면 <code class="inl">moaipii_scan(byte[] text, UIntPtr len, byte[] optsUtf8z, out IntPtr outJson)</code>로 선언하고, 결과는 <code class="inl">Marshal.PtrToStringUTF8</code>로 읽은 뒤 <code class="inl">moaipii_free(outJson)</code>. .NET 문자열 인덱스는 UTF-16이므로 <code class="inl">"offsets":"utf16"</code>을 씁니다.</p></div>
+  </section>
+
+  <!-- ───────────────────────── 08 ───────────────────────── -->
+  <section id="s8">
+    <div class="sec-head"><span class="sec-num">08</span><h2>자주 쓰는 연동 패턴</h2></div>
+
+    <h3>① 문서 대량 분류 — 건수만, 여러 스레드</h3>
+    <p>파일 서버의 문서들을 "개인정보 포함/미포함"으로 나눌 때는 위치가 필요 없습니다. <code class="inl">items=False</code>로 결과를 줄이고, DLL은 한 번만 불러 스레드끼리 함께 씁니다.</p>
+    <pre><span class="kw">from</span> concurrent.futures <span class="kw">import</span> ThreadPoolExecutor
+<span class="kw">import</span> pathlib, moaipii
+
+ALL = moaipii.labels()[<span class="hi">"labels"</span>]
+WEIGHT = {<span class="hi">"RRN"</span>: 10, <span class="hi">"FRN"</span>: 10, <span class="hi">"PASSPORT"</span>: 10, <span class="hi">"DRIVER_LICENSE"</span>: 10, <span class="hi">"CARD"</span>: 8, <span class="hi">"ACCOUNT"</span>: 6,
+          <span class="hi">"PHONE"</span>: 3, <span class="hi">"EMAIL"</span>: 2, <span class="hi">"ADDRESS"</span>: 2, <span class="hi">"NATIONALITY"</span>: 0.5}   <span class="cm"># 나머지는 1</span>
+
+<span class="kw">def</span> classify(p):
+    data = p.read_bytes()
+    r = moaipii.scan(data, ALL, items=<span class="kw">False</span>, invalid_utf8=<span class="hi">"replace"</span>)   <span class="cm"># bytes 그대로, 깨진 곳은 건너뜀</span>
+    score = sum(WEIGHT.get(k, 1) * n <span class="kw">for</span> k, n <span class="kw">in</span> r[<span class="hi">"counts"</span>].items())
+    <span class="kw">return</span> p, score, r[<span class="hi">"counts"</span>]
+
+files = list(pathlib.Path(<span class="hi">r"D:\분류함"</span>).rglob(<span class="hi">"*.txt"</span>))
+<span class="kw">with</span> ThreadPoolExecutor(max_workers=8) <span class="kw">as</span> ex:                  <span class="cm"># GIL 이 풀려 실제로 병렬</span>
+    <span class="kw">for</span> p, score, counts <span class="kw">in</span> ex.map(classify, files):
+        <span class="kw">if</span> score &gt;= 10: print(p, score, counts)</pre>
+
+    <h3>② 웹 화면에서 하이라이트 — 브라우저로 좌표 보내기</h3>
+    <p>JavaScript 문자열 인덱스는 UTF-16이므로 서버가 어떤 언어든 <b><code class="inl">offsets:"utf16"</code></b>으로 받아 그대로 넘깁니다. 원문 값은 보내지 않아도 화면이 이미 본문을 갖고 있습니다.</p>
+    <pre><span class="cm"># 서버(Python)</span>
+r = moaipii.scan(text, labels, offsets=<span class="hi">"utf16"</span>)
+<span class="kw">return</span> {<span class="hi">"counts"</span>: r[<span class="hi">"counts"</span>], <span class="hi">"marks"</span>: r[<span class="hi">"items"</span>]}           <span class="cm"># [{label,start,end}] — 값 없음</span>
+
+<span class="cm">// 브라우저</span>
+<span class="kw">for</span> (<span class="kw">const</span> m <span class="kw">of</span> marks.slice().reverse())
+  html = esc(text.slice(0, m.start)) + `&lt;mark title="${m.label}"&gt;` + esc(text.slice(m.start, m.end)) + <span class="hi">"&lt;/mark&gt;"</span> + rest…</pre>
+
+    <h3>③ 로그·DB 저장 — 값 대신 위치와 건수만</h3>
+    <p>검사 이력을 남길 때는 <code class="inl">values:false</code>(기본)로 받아 <b>라벨·건수·좌표</b>만 저장합니다. 원문 값을 DB에 남기면 그 DB가 새 개인정보 저장소가 됩니다. 꼭 필요하면 <code class="inl">text[s:e]</code>를 해시(+솔트)로만 남기세요.</p>
+    <pre>INSERT INTO pii_scan_log(doc_id, scanned_at, lib_version, counts_json)
+VALUES (?, now(), ?, ?)          <span class="cm">-- lib_version = moaipii.version() : 판이 바뀌면 결과도 바뀔 수 있어 함께 남긴다</span></pre>
+
+    <h3>④ 마스킹 정책 — 라벨마다 다르게</h3>
+    <pre>POLICY = {<span class="hi">"RRN"</span>: <span class="kw">lambda</span> v: v[:6] + <span class="hi">"-*******"</span> <span class="kw">if</span> len(v) &gt;= 13 <span class="kw">else</span> <span class="hi">"*"</span> * len(v),   <span class="cm"># 생년월일만</span>
+          <span class="hi">"PHONE"</span>: <span class="kw">lambda</span> v: v[:-4] + <span class="hi">"****"</span>,                                       <span class="cm"># 뒤 4자리</span>
+          <span class="hi">"EMAIL"</span>: <span class="kw">lambda</span> v: v[:2] + <span class="hi">"***"</span> + v[v.index(<span class="hi">"@"</span>):],                       <span class="cm"># 도메인 남김</span>
+          <span class="hi">"CARD"</span>:  <span class="kw">lambda</span> v: v[:4] + <span class="hi">"-****-****-"</span> + v[-4:]}
+r = moaipii.scan(text, list(POLICY))
+<span class="kw">for</span> it <span class="kw">in</span> reversed(r[<span class="hi">"items"</span>]):
+    s, e = it[<span class="hi">"start"</span>], it[<span class="hi">"end"</span>]
+    text = text[:s] + POLICY[it[<span class="hi">"label"</span>]](text[s:e]) + text[e:]</pre>
+
+    <h3>⑤ 큰 문서·인코딩</h3>
+    <ul class="plain">
+      <li><b>문서는 통째로 한 번에</b> 넘깁니다. 줄·쪽 단위로 쪼개면 경계에 걸친 번호(줄바꿈 낀 주소·표의 계좌 칸)를 놓치고, 표 머리줄 문맥도 사라집니다. 검사 시간은 본문 길이에 비례합니다(<code class="inl">moaipii-test bench</code>로 확인).</li>
+      <li>EUC-KR(cp949) 문서는 먼저 UTF-8로 바꿉니다. 인코딩을 모르는 바이너리 섞인 텍스트는 <code class="inl">invalid_utf8:"replace"</code>로 넘기면 깨진 곳만 건너뛰고 검사합니다.</li>
+      <li>HWP·DOCX·PDF는 이 라이브러리가 읽지 않습니다. 텍스트를 뽑은 뒤 넘기세요. 표를 뽑을 때 칸 구분자(탭)를 살려 두면 계좌 표 검출(§6 ACCOUNT)이 동작합니다.</li>
+    </ul>
+
+    <h3>⑥ 라벨 고르기</h3>
+    <div class="twrap"><table>
+      <thead><tr><th>용도</th><th>권장 라벨</th></tr></thead>
+      <tbody>
+        <tr><td>고유식별정보만(법정 필수)</td><td class="mono">RRN, FRN, PASSPORT, DRIVER_LICENSE</td></tr>
+        <tr><td>금융</td><td class="mono">CARD, ACCOUNT, BUSINESS_REG, CORP_REG</td></tr>
+        <tr><td>고객 응대 기록 마스킹</td><td class="mono">RRN, FRN, PHONE, EMAIL, CARD, ACCOUNT, ADDRESS, VEHICLE</td></tr>
+        <tr><td>의료 문서</td><td class="mono">RRN, MEDICAL_INSURANCE, PRESCRIPTION_ID, EDI_DRUG, PHONE, ADDRESS</td></tr>
+        <tr><td>전부(분류용)</td><td><code class="inl">labels()</code> 결과 그대로 — NATIONALITY·URL 은 점수 가중치를 낮게</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- ───────────────────────── 09 ───────────────────────── -->
+  <section id="s9">
+    <div class="sec-head"><span class="sec-num">09</span><h2>안전 규칙</h2></div>
+    <ul class="plain">
+      <li><b>본문은 (포인터, 길이)</b>로 넘깁니다. 본문 속 <code class="inl">\0</code>에서 잘리지 않습니다.</li>
+      <li><b>원문 값은 요청할 때만</b>(<code class="inl">values:true</code>) 경계를 넘습니다. 라이브러리는 결과 문자열을 해제할 때 0으로 덮고, 로그를 남기지 않습니다. 네트워크·파일 접근도 하지 않습니다.</li>
+      <li><b>스레드</b>: 라이브러리에 전역 상태가 없습니다. 한 번 불러온 객체를 여러 스레드가 함께 써도 됩니다.</li>
+      <li><b>판 확인</b>: 감싸개는 불러온 직후 <code class="inl">moaipii_abi_version()</code>을 비교하고, 다르면 <code class="inl">abi</code> 오류를 냅니다. 직접 부를 때도 맨 먼저 확인하세요.</li>
+      <li><b>메모리</b>: <code class="inl">char** out</code>으로 받은 문자열은 성공·실패와 관계없이 <code class="inl">moaipii_free</code>로만 돌려줍니다(C의 <code class="inl">free()</code> 금지, 할당기가 다름). 버전 문자열은 고정이라 해제하지 않습니다.</li>
+      <li><b>검출은 보조 수단</b>입니다. 모양·체크섬·문맥으로 판단하므로 놓침과 오탐이 있습니다(§6 "안 잡힘"·"오탐 주의"). 최종 판단이 필요한 업무는 사람 확인을 거치세요.</li>
+    </ul>
+  </section>
+
+  <!-- ───────────────────────── 10 ───────────────────────── -->
+  <section id="s10">
+    <div class="sec-head"><span class="sec-num">10</span><h2>문제 해결</h2></div>
+    <div class="twrap"><table>
+      <thead><tr><th>증상</th><th>원인</th><th>해결</th></tr></thead>
+      <tbody>
+        <tr><td><code class="inl">load</code> 오류 — 찾을 수 없음</td><td>감싸개가 찾는 위치에 DLL이 없음</td><td><code class="inl">MOAIPII_LIB</code>에 파일·폴더 지정. 오류 메시지에 찾아본 경로가 모두 나옵니다</td></tr>
+        <tr><td><code class="inl">load</code> 오류 — 열지 못함 / 잘못된 이미지</td><td>32비트 프로세스(JVM·PHP·Python)에서 64비트 DLL을 엶</td><td>64비트 런타임 사용. Linux는 x86_64 · glibc 2.17 이상</td></tr>
+        <tr><td><code class="inl">abi</code> 오류</td><td>DLL과 감싸개가 서로 다른 묶음</td><td>같은 묶음의 DLL·감싸개를 함께 교체</td></tr>
+        <tr><td><code class="inl">arg</code> — 모르는 라벨</td><td>오타, 또는 더 옛 판 DLL</td><td><code class="inl">moaipii-test labels</code>로 확인, 또는 <code class="inl">unknown_labels:"ignore"</code></td></tr>
+        <tr><td><code class="inl">utf8</code> 오류</td><td>EUC-KR·바이너리 본문</td><td>UTF-8로 변환하거나 <code class="inl">invalid_utf8:"replace"</code></td></tr>
+        <tr><td>마스킹 자리가 조금씩 밀림</td><td>좌표 단위와 자르는 함수 단위가 다름, 또는 앞에서부터 바꿈</td><td>§3 표대로 맞추고, items를 거꾸로 돌며 바꿈</td></tr>
+        <tr><td>BOM 붙은 파일에서 1칸 밀림</td><td>BOM(U+FEFF)도 한 글자로 셈</td><td>Python은 <code class="inl">utf-8-sig</code>로 읽기, 다른 언어는 BOM을 떼고 넘기기(또는 좌표에 그대로 쓰기 — 둘 중 하나로 일관되게)</td></tr>
+        <tr><td>PRESCRIPTION 건수는 있는데 위치가 없음</td><td>별칭은 건수만 셈(§4)</td><td><code class="inl">PRESCRIPTION_ID</code>로 켬</td></tr>
+        <tr><td>URL이 안 나오고 IP만 나옴</td><td>겹침 해소에서 IP가 이김(§6)</td><td>URL 전체가 필요하면 URL만 켠 검사를 따로</td></tr>
+        <tr><td>"수단", "한국" 같은 일반 낱말이 국적으로</td><td>NATIONALITY는 사전만 봄</td><td>분류 가중치를 낮추거나 라벨을 끔</td></tr>
+        <tr><td>콘솔에 한글이 깨짐</td><td>Windows 콘솔 코드페이지 cp949</td><td><code class="inl">chcp 65001</code>, Python은 <code class="inl">PYTHONIOENCODING=utf-8</code>, Java는 <code class="inl">-Dfile.encoding=UTF-8</code></td></tr>
+        <tr><td>날짜가 바뀌자 시험 결과가 달라짐</td><td>RRN 미래 생년월일 판단이 시스템 날짜 기준</td><td>시험에서는 <code class="inl">today</code>를 고정</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <footer>
+    <span>MoAI-pii · moaipii 연동 설명서</span>
+    <span>2026-11-18</span>
+  </footer>
+</div>
+</body>
+</html>

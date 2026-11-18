@@ -73,12 +73,25 @@ build_python() {
     else
         echo "  [경고] third_party/docparse/linux-x64/libdocparse.so 가 없어 문서파서 없이 만듭니다 — 배포본에서 --extractor rust 를 쓸 수 없습니다"
     fi
+    # 개인정보 검출 라이브러리(--pii-engine moaipii) — 별도 프로젝트(MoAI-pii)가 빌드서버에서 만든
+    # libmoaipii.so 를 소스 묶음에 실어 왔다. spec 이 묶는다.
+    local with_moaipii=""
+    if [ -f third_party/moaipii/linux-x64/libmoaipii.so ]; then
+        with_moaipii=1
+        echo "  moaipii $(cat third_party/moaipii/VERSION 2>/dev/null || echo '?')"
+    else
+        echo "  [경고] third_party/moaipii/linux-x64/libmoaipii.so 가 없어 개인정보 검출 라이브러리 없이 만듭니다 — 배포본에서 --pii-engine moaipii 를 쓸 수 없습니다"
+    fi
     pyinstaller -y build/csoclassify.spec > build.log 2>&1 \
         || die "PyInstaller 빌드 실패 — $PY_BUILD/build.log 를 보세요"
     [ -f dist/MpowerClassify/MpowerClassify ] || die "빌드 결과에 실행본체가 없습니다"
     if [ -n "$with_docparse" ]; then
         [ -f dist/MpowerClassify/_internal/libdocparse.so ] \
             || die "배포본에 libdocparse.so 가 없습니다 — build/csoclassify.spec 의 binaries 를 보세요"
+    fi
+    if [ -n "$with_moaipii" ]; then
+        [ -f dist/MpowerClassify/_internal/libmoaipii.so ] \
+            || die "배포본에 libmoaipii.so 가 없습니다 — build/csoclassify.spec 의 binaries 를 보세요"
     fi
 
     # 모델 복귀 — 대피시킨 것이 있으면 그것을, 없으면 원본에서 새로 복사한다.
@@ -140,6 +153,9 @@ build_rust() {
     # 문서파서 라이브러리(별도 프로젝트 DocParse-rust 산출물) — 없으면 문서를 읽기 전에 1017 로 멈춘다.
     [ -f third_party/docparse/linux-x64/libdocparse.so ] || die "third_party/docparse/linux-x64/libdocparse.so 가 없습니다"
     cp third_party/docparse/linux-x64/libdocparse.so "$D/" 
+    # 개인정보 검출 라이브러리(별도 프로젝트 MoAI-pii 산출물) — 없으면 분류 전에 1018 로 멈춘다.
+    [ -f third_party/moaipii/linux-x64/libmoaipii.so ] || die "third_party/moaipii/linux-x64/libmoaipii.so 가 없습니다"
+    cp third_party/moaipii/linux-x64/libmoaipii.so "$D/"
     # ONNX Runtime 은 반드시 버전 숫자 없는 이름으로 둔다(로더가 그 이름을 찾는다).
     cp "$CONDA_SP/onnxruntime/capi/libonnxruntime.so.1.26.0"           "$D/libonnxruntime.so" \
         || die "libonnxruntime 복사 실패"

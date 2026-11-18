@@ -73,12 +73,14 @@ class _ContractParser(argparse.ArgumentParser):
 #   실제로 어떤 검출기를 쓰는지 확인할 수가 없었다(번들에는 dist-info 가
 #   남지 않는다). 그래서 --version 이 직접 물어보고 찍어 준다.
 #    1) ko_pii 를 그 자리에서 import 해 __version__ 을 읽는다
-#    2) 못 읽어도 --version 은 성공해야 하므로, 사유만 괄호 안에 적는다
+#    2) 개인정보 검출 라이브러리(moaipii — Rust 판과 같은 검출기)도 불러 판을 읽는다
+#       (전환 기간에는 두 엔진이 함께 들어 있어 둘 다 찍는다)
+#    3) 못 읽어도 --version 은 성공해야 하므로, 사유만 괄호 안에 적는다
 #
 # -in: 없음
 #
-# -out: text = "MpowerClassify <앱버전> (ko-pii <버전>)" 형태의 한 줄
-# -out: error = 예외 없음 — ko-pii 가 없거나 버전이 없으면 "없음"/"버전미상"으로 적는다
+# -out: text = "MpowerClassify <앱버전> (ko-pii <버전>, moaipii <판>)" 형태의 한 줄
+# -out: error = 예외 없음 — 못 읽으면 "없음"/"버전미상"으로 적는다
 #------------------------------------------------------------------
 def version_text():
     try:
@@ -89,7 +91,13 @@ def version_text():
         # PII 검출은 ko-pii 없이는 못 하지만, 그 진단은 실제 스캔 때 하면 된다.
         # 여기서 죽으면 "왜 안 되는지" 물어보려던 사람이 답을 못 얻는다.
         kopii = "없음"
-    return f"MpowerClassify {__version__} (ko-pii {kopii})"
+    try:
+        from .classify.rules import moaipii_load
+        moaipii = moaipii_load().version()
+    except Exception:
+        # 라이브러리가 없어도 --version 은 답한다(kopii 엔진만 쓰는 배포일 수 있다).
+        moaipii = "없음"
+    return f"MpowerClassify {__version__} (ko-pii {kopii}, moaipii {moaipii})"
 
 
 #------------------------------------------------------------------
@@ -316,6 +324,12 @@ def build_parser():
                         "rust = docparse 모듈(Rust 판과 같은 파서). 기본은 환경변수 "
                         f"CSOCLASSIFY_EXTRACTOR, 없으면 {config.EXTRACTOR}. "
                         "rust 인데 docparse 모듈이 없으면 문서를 읽기 전에 1017 extractor_missing 으로 멈춘다")
+    # 개인정보 검출 엔진 — 설계: D:\Project\MoAI-pii\plan\MoAI-pii-개인정보검출-라이브러리분리-설계-20261117.html §7-1
+    p.add_argument("--pii-engine", dest="pii_engine", choices=config.PII_ENGINES, default=None,
+                   help="개인정보 검출 엔진을 고른다: kopii = 파이썬 ko-pii(지금), "
+                        "moaipii = Rust 판과 같은 라이브러리(moaipii.dll/.so). 기본은 환경변수 "
+                        f"CSOCLASSIFY_PII_ENGINE, 없으면 {config.PII_ENGINE}. "
+                        "moaipii 인데 라이브러리가 없으면 문서를 읽기 전에 1018 pii_engine_missing 으로 멈춘다")
     p.add_argument("--synap-path", dest="synap_path", default=None, metavar="경로",
                    help="사이냅 실행파일(snf_exe) 경로를 직접 준다(찾기 순서를 건너뛴다)")
 
@@ -564,6 +578,9 @@ def make_opts(args):
         "keep_page_markers": False,
         # 추출기 선택용(--hybridparse). run_text_only 처럼 args 를 직접 안 받는 경로가 읽는다.
         "hybridparse": getattr(args, "hybridparse", False),
+        # 자체 파서(py/rust). 데몬은 별도 프로세스라 이 실행의 --extractor 를 모른다 —
+        # 요청에 실어 보내야 데몬도 같은 파서로 읽는다. check_extractor_args 가 이미 확정한 값이다.
+        "extractor": (getattr(args, "extractor", None) or config.EXTRACTOR or "py").strip().lower(),
         # 글자수 상한(G3). 분류 경로만이 아니라 --embed 경로(pipeline.process_file)와
         # 데몬 경로도 같은 상한을 갖게 해야, 같은 문서를 어느 경로로 넣든 결과가
         # 갈리지 않는다. None 이면 상한 없음(--no-size-limit).
@@ -899,6 +916,44 @@ def check_extractor_args(args):
     else:
         log.info("실행 자체파서=py")
     config.EXTRACTOR = which
+    return None
+
+
+#------------------------------------------------------------------
+# 개인정보 검출 엔진 고르기 검사 — 문서를 읽기 전에 끝낸다
+#=> 설계: D:\Project\MoAI-pii\plan\MoAI-pii-개인정보검출-라이브러리분리-설계-20261117.html §7-1
+#    1) --pii-engine 이 있으면 그 값, 없으면 환경변수 CSOCLASSIFY_PII_ENGINE(config.PII_ENGINE)
+#    2) 환경변수 값이 kopii · moaipii 가 아니면 1003 bad_args
+#    3) moaipii 인데 라이브러리를 못 불러오면 1018 pii_engine_missing — 조용히 kopii 로
+#       넘어가면 판정이 몰래 바뀌므로 멈춘다
+#    4) 고른 값을 config.PII_ENGINE 에 새긴다(rules.pii_engine 이 이 값을 본다)
+#    5) 일반 로그에 고른 엔진과 moaipii 버전을 남긴다
+#
+# -in: args = 파싱된 인자
+#
+# -out: None = 문제 없음 / int = 종료코드(이미 오류를 알렸다 — 그대로 return 한다)
+# -out: error = 예외 없음
+#------------------------------------------------------------------
+def check_pii_engine_args(args):
+    which = (getattr(args, "pii_engine", None) or config.PII_ENGINE or "kopii").strip().lower()
+    if which not in config.PII_ENGINES:
+        return fail_err("bad_args",
+                        f"[MpowerClassify] CSOCLASSIFY_PII_ENGINE 값이 올바르지 않습니다: {which} (kopii · moaipii)")
+    log = logsetup.get_logger("csoclassify.cli")
+    if which == "moaipii":
+        from .classify import _moaipii
+        from .classify.rules import moaipii_load
+        try:
+            moaipii_load()
+        except _moaipii.MoaiPiiError as e:
+            return fail_err("pii_engine_missing",
+                            f"[MpowerClassify] --pii-engine moaipii 를 골랐지만 {e} "
+                            "(moaipii.dll / libmoaipii.so 를 실행파일 옆에 두거나 CSO_MOAIPII 로 알려 주세요)")
+        log.info("실행 개인정보검출=moaipii moaipii=%s ko-pii기준=%s lib=%s",
+                 _moaipii.version(), _moaipii.kopii_basis(), _moaipii.lib_path())
+    else:
+        log.info("실행 개인정보검출=kopii")
+    config.PII_ENGINE = which
     return None
 
 
@@ -5459,6 +5514,10 @@ def _main(argv=None):
     _xc = check_extractor_args(args)
     if _xc is not None:
         return _xc
+    # 개인정보 검출 엔진을 moaipii 로 골랐는데 라이브러리가 없으면 문서를 읽기 전에 끝낸다(1018).
+    _pc = check_pii_engine_args(args)
+    if _pc is not None:
+        return _pc
     # 등급 스트림 옵션 조합이 틀렸거나 쓸 수 없는 플랫폼이면 읽기 전에 끝낸다.
     _gc = check_grade_stream_args(args)
     if _gc is not None:

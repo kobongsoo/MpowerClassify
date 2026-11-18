@@ -51,6 +51,9 @@ pub const ERRORS: &[(&str, i64, i32)] = &[
     // 파이썬 판이 --extractor rust 를 골랐는데 docparse 모듈을 못 불러왔다(배포 누락).
     // 이 판은 늘 docparse 를 정적으로 품어 내지 않지만, 두 판의 표를 같게 둔다.
     ("extractor_missing", 1017, 3),
+    // 개인정보 검출 라이브러리(moaipii.dll / libmoaipii.so — 별도 프로젝트 MoAI-pii)를 못 불러왔다.
+    // PII 없이 등급을 매기면 C 등급이 소리 없이 빠지므로 멈춘다. 파일을 넣으면 되므로 3.
+    ("pii_engine_missing", 1018, 3),
     // ── 2000 정책 파일(규칙셋 · 분류체계) ────────────────────────────
     ("rules_missing", 2001, 3),
     ("rules_invalid", 2002, 4),

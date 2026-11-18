@@ -7,7 +7,6 @@ mod bm25;
 mod conflict;
 mod daemon;
 mod decrypt;
-mod districts;
 mod doc_rules;
 mod doctype;
 mod docbuild;
@@ -25,7 +24,7 @@ mod gradeoverride;
 mod filelist;
 mod limits;
 mod pii;
-mod pii_fold;
+mod moaipii_dyn;
 mod propagate;
 mod record;
 mod rules;
@@ -76,6 +75,7 @@ struct Opts {
     synap_path: Option<String>,
     // 문서파서 라이브러리(docparse.dll/.so)를 직접 가리킨다(없으면 CSO_DOCPARSE → exe 옆).
     docparse_lib: Option<String>,
+    moaipii_lib: Option<String>,
     // 등급 스트림 기록(설계: plan/등급스트림-기록-옵션-설계-20261019.html).
     //  · write_grade_stream        : 분류한 문서의 :mgrade 에 최종 등급을 쓴다
     //  · grade_stream_unclassified : 등급 없는 문서 — "skip"(기본) | "none"(NONE 기록)
@@ -169,20 +169,19 @@ struct Opts {
 }
 
 //------------------------------------------------------------------
-// 버전 문자열 만들기 (앱 버전 + PII 포팅 기준 ko-pii 버전)
-//=> Python 판(MpowerClassify.exe)은 ko-pii 를 exe 안에 넣어 다니므로 '번들된 버전'을
-//   찍는다. 이 판은 ko-pii 를 쓰지 않고 알고리즘을 옮겨 적었으므로 찍을 번들이
-//   없다 — 대신 '어느 ko-pii 를 보고 옮겼는지'를 찍는다. 두 판의 이 값이 같아야
-//   같은 기준으로 도는 것이고, 다르면 검출 결과가 갈릴 수 있다는 신호다.
+// 버전 문자열 만들기 (앱 버전 + 개인정보 검출 라이브러리 판)
+//=> 개인정보 검출은 별도 라이브러리(moaipii, MoAI-pii 프로젝트)가 한다. 그래서 그 판과
+//   '어느 ko-pii 를 보고 옮겼는지'를 함께 찍는다. 두 판(Rust·Python)이 같은 moaipii 를
+//   쓰면 검출 결과가 같고, 다르면 갈릴 수 있다는 신호다.
 //
 // -in: 없음
 //
-// -out: text = "MpowerClassify-rs <앱버전> (ko-pii 포팅 기준 <버전>)" 한 줄
-// -out: error = 예외 없음(전부 컴파일 시점에 정해진 상수)
+// -out: text = "MpowerClassify-rs <앱버전> (moaipii <판>, ko-pii 기준 <버전>)" 한 줄
+//              (라이브러리를 못 불러오면 "(moaipii 없음)")
+// -out: error = 예외 없음
 //------------------------------------------------------------------
 fn version_text() -> String {
-    format!("MpowerClassify-rs {} (ko-pii 포팅 기준 {})",
-            env!("CARGO_PKG_VERSION"), pii::KOPII_PORTED_FROM)
+    format!("MpowerClassify-rs {} ({})", env!("CARGO_PKG_VERSION"), pii::version_label())
 }
 
 //------------------------------------------------------------------
@@ -261,7 +260,7 @@ fn usage() {
     eprintln!("  --no-timing               요약줄에서 총시간 표기를 뺀다");
     eprintln!("  --json-errors             실패할 때 stdout 에 오류 JSON 한 줄");
     eprintln!("                            ({{\"error\":{{code,kind,message,path}}}})");
-    eprintln!("  -V, --version             버전 출력(앱 버전 + PII 포팅 기준 ko-pii 버전)");
+    eprintln!("  -V, --version             버전 출력(앱 버전 + 개인정보 검출 moaipii 판)");
     eprintln!("  -h, --help                이 도움말");
     eprintln!("");
     eprintln!("─── ⑤ 추출 본문을 파일로 남기기 ───────────────────────────────");
@@ -387,6 +386,9 @@ fn usage() {
     eprintln!("  --docparse-lib <경로>     문서파서 라이브러리({})를 직접 가리킵니다",
               if cfg!(windows) { "docparse.dll" } else { "libdocparse.so" });
     eprintln!("  [찾기] --docparse-lib → CSO_DOCPARSE → exe 옆. 못 찾으면 문서를 읽기 전에 1017 extractor_missing");
+    eprintln!("  --moaipii-lib <경로>      개인정보 검출 라이브러리({})를 직접 가리킵니다",
+              if cfg!(windows) { "moaipii.dll" } else { "libmoaipii.so" });
+    eprintln!("  [찾기] --moaipii-lib → CSO_MOAIPII → exe 옆. 못 찾으면 분류 전에 1018 pii_engine_missing");
     eprintln!("  [환경변수] CSOCLASSIFY_SYNAP_MODE=off|fallback|only (인자가 이깁니다)");
     eprintln!("");
     eprintln!("─── ⑩-0b 등급 스트림 기록 — 문서 파일의 :mgrade 에 등급을 쓴다(Windows NTFS) ──");
@@ -572,6 +574,7 @@ fn parse_args() -> Result<Opts, String> {
         synap_fallback: false,
         synap_path: None,
         docparse_lib: None,
+        moaipii_lib: None,
         write_grade_stream: false, grade_stream_unclassified: None, grade_stream_update_time: false,
         embed_flag: false,
         grade_overrides: None, set_grade: None, reviewer: None, reason: None,
@@ -695,6 +698,7 @@ fn parse_args() -> Result<Opts, String> {
             "--synap-path" => o.synap_path = take(false),
             // 문서파서 라이브러리 파일(또는 그것이 든 폴더)
             "--docparse-lib" => o.docparse_lib = take(false),
+            "--moaipii-lib" => o.moaipii_lib = take(false),
             // 등급 스트림 기록(check_grade_stream_args 가 조합을 본다)
             "--write-grade-stream" => o.write_grade_stream = true,
             "--grade-stream-unclassified" => o.grade_stream_unclassified = Some(take(false).unwrap_or_default()),
@@ -3086,6 +3090,10 @@ fn main() {
     if let Some(p) = opts.docparse_lib.as_deref() {
         docparse::set_explicit_path(std::path::PathBuf::from(p));
     }
+    // 개인정보 검출 라이브러리 위치도 같은 식으로(--version 보다 먼저 알 수는 없어 여기서 정한다).
+    if let Some(p) = opts.moaipii_lib.as_deref() {
+        pii::set_explicit_path(std::path::PathBuf::from(p));
+    }
     // docparse 가 남기는 추출 로그를 같은 로그 파일로 받는다(문장은 분리 전과 같다).
     // 라이브러리는 처음 쓸 때 불러오고, 그때 로그 받기도 단다(문서를 읽지 않는 명령은 불러오지 않는다).
     extractcfg::install_log_bridge();
@@ -3208,6 +3216,11 @@ fn main() {
         Err(e) => errcodes::fail("rules_invalid",
             &format!("[MpowerClassify-rs] {}", e), rules_path.to_str()),
     };
+    // PII 규칙이 있으면 개인정보 검출 라이브러리를 지금 불러 둔다 — 없으면 문서를 읽기 전에
+    // 1018 로 멈춘다(첫 문서를 추출한 뒤에야 알게 되면 원인이 늦게 드러난다).
+    if !rs.regex_rules.is_empty() {
+        pii::lib();
+    }
 
     // 업무분류(doctype) 축 — 있으면 켜고 없으면 security 만(4-6). --axis doctype 이면 필수.
     let mut dt_axis = match load_doctype_axis(&opts) {

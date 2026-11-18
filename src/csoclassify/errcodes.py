@@ -56,6 +56,10 @@ ERRORS = {
     # 불러오지 못했다 — 배포 누락이다. 조용히 파이썬 파서로 넘어가면 판정이 몰래 바뀌므로 멈춘다
     # (설계: plan/Python-문서파서-Rust연동-설계-20261110.html §4-3). 모듈을 넣으면 되므로 3.
     "extractor_missing":        (1017, 3),
+    # 개인정보 검출 라이브러리(moaipii.dll / libmoaipii.so — 별도 프로젝트 MoAI-pii)를 불러오지 못했다.
+    # PII 없이 등급을 매기면 C 등급이 소리 없이 빠지므로 멈춘다
+    # (설계: MoAI-pii plan/MoAI-pii-개인정보검출-라이브러리분리-설계-20261117.html §6). 파일을 넣으면 되므로 3.
+    "pii_engine_missing":       (1018, 3),
     # ── 2000 정책 파일(규칙셋 · 분류체계) ─────────────────────────
     "rules_missing":            (2001, 3),
     "rules_invalid":            (2002, 4),

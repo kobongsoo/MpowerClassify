@@ -86,10 +86,20 @@
   <p>Rust 소스(<code>MpowerClassify\Rust\</code>)에서 <b>Windows</b>·<b>Linux</b> 배포본을 만드는 전 과정 — 처음 해보는 사람 기준으로 한 줄씩</p>
 </header>
 
+<div class="warn"><b>2026-11-11 변경 — 문서파서가 별도 라이브러리(<code>docparse.dll</code> / <code>libdocparse.so</code>)로 떨어져 나갔습니다.</b><br>
+문서 → 본문 추출(hwp·doc·xls·ppt·OOXML·PDF·html·text)과 압축 펼치기는 이제 이 실행파일 안에 없습니다.
+별도 프로젝트 <code>D:\Project\DocParse-rust</code> 가 만든 공유 라이브러리를 <b>실행 중에 불러</b> 씁니다.
+빌드할 때 달라진 것은 세 가지입니다.
+<ol style="margin:6px 0 0">
+  <li>빌드 전에 <code>third_party/docparse/&lt;os&gt;-x64/</code> 에 라이브러리가 있어야 합니다 → <a href="#docparse">1-1</a></li>
+  <li>배포본 폴더에 <b><code>docparse.dll</code> / <code>libdocparse.so</code> 를 exe 옆에</b> 함께 둡니다</li>
+  <li>없으면 문서를 읽기 전에 <b>종료코드 1017(<code>extractor_missing</code>)</b>로 멈춥니다 → <a href="#trouble">7-⑧</a></li>
+</ol></div>
+
 <section class="card">
   <h3 style="margin-top:16px">목차</h3>
   <ul class="toc">
-    <li><a href="#what">1. 무엇을 만드는가</a></li>
+    <li><a href="#what">1. 무엇을 만드는가</a> · <a href="#docparse">1-1. 문서파서 라이브러리(docparse)</a></li>
     <li><a href="#prep">2. 준비물</a></li>
     <li><a href="#win">3. Windows 배포본 만들기</a></li>
     <li><a href="#linux">4. Linux 배포본 만들기</a></li>
@@ -108,16 +118,18 @@
   이 폴더를 통째로 복사하면 어느 PC/서버에서든 별도 설치 없이 실행됩니다.</p>
 
   <div class="note"><b>왜 파일 하나가 아니라 폴더인가?</b><br>
-  실행파일 자체는 7.5MB로 작지만 <b>임베딩 모델(129MB)</b>·<b>ONNX Runtime</b>·<b>pdfium(PDF 추출)</b> 은
+  실행파일 자체는 8MB로 작지만 <b>문서파서(docparse)</b>·<b>임베딩 모델(129MB)</b>·<b>ONNX Runtime</b>·<b>pdfium(PDF 추출)</b> 은
   실행파일 안에 넣지 <b>않고</b> 옆에 파일로 둡니다. 그래야 ① 실행파일이 작고 ② 규칙셋
-  (<code>cso_rule.yaml</code>)을 재빌드 없이 교체할 수 있고 ③ PDF·임베딩을 안 쓰면 그 파일들을 빼도 됩니다.
+  (<code>cso_rule.yaml</code>)을 재빌드 없이 교체할 수 있고 ③ 임베딩을 안 쓰면 그 파일들을 빼도 되며
+  ④ 문서파서를 고친 판이 나오면 <b>exe 를 다시 빌드하지 않고 dll 만 바꿔</b> 끼울 수 있습니다.
   프로그램은 <b>자기 실행파일이 있는 폴더</b>에서 이 파일들을 찾습니다.</div>
 
   <h3>완성된 배포본 구조</h3>
   <div class="two">
     <div>
       <p><b>Windows</b><span class="os">Rust\dist-onedir\windows\</span></p>
-<div class="tree">MpowerClassify-rs.exe                  <span class="cmt">7.5MB 실행 본체</span>
+<div class="tree">MpowerClassify-rs.exe                  <span class="cmt">8MB   실행 본체</span>
+docparse.dll                        <span class="cmt">4MB   ★문서파서(본문 추출·압축 펼치기)</span>
 cso_rule.yaml                      <span class="cmt">보안등급 규칙셋(외장)</span>
 doc_rule.yaml                       <span class="cmt">업무분류 규칙셋(외장, 자동 생성 · 분류체계 내장)</span>
 doc_rule.local.yaml                 <span class="cmt">회사 조정(있을 때만)</span>
@@ -141,7 +153,8 @@ README.txt</div>
     </div>
     <div>
       <p><b>Linux</b><span class="os">Rust/dist-onedir/linux/</span></p>
-<div class="tree">MpowerClassify-rs                      <span class="cmt">7.4MB 실행 본체(ELF)</span>
+<div class="tree">MpowerClassify-rs                      <span class="cmt">8MB   실행 본체(ELF)</span>
+libdocparse.so                      <span class="cmt">4.5MB ★문서파서(본문 추출·압축 펼치기)</span>
 cso_rule.yaml                      <span class="cmt">보안등급 규칙셋(외장)</span>
 doc_rule.yaml                       <span class="cmt">업무분류 규칙셋(외장, 자동 생성 · 분류체계 내장)</span>
 doc_rule.local.yaml                 <span class="cmt">회사 조정(있을 때만)</span>
@@ -171,9 +184,47 @@ README.txt</div>
       파일은 있는데 자동 생성이 아닌 옛 형식이면 종료코드 4(<code>doc_rules_invalid</code>, [G0] 다시 만들라는 안내) <span class="def">2026-09-22 변경 — 옛 'seed 전파 전용' 동작과 <code>doc_taxonomy.yaml</code> 은 없어졌다</span></td></tr>
     <tr><td><code>doc_classification_export.json</code> · <code>doc_rule_template.yaml</code> · <code>synonyms/</code></td><td>분류는 되지만 돌 때마다 <b>"입력이 없어짐" 경고</b>. 현장에서 규칙을 다시 만들 수도 없다</td></tr>
     <tr><td><code>doc_rule.local.yaml</code></td><td>회사 조정이 없는 회사라면 정상. 규칙을 만들 때 썼는데 빠졌다면 역시 "입력이 없어짐" 경고</td></tr>
+    <tr><td><code>docparse.dll</code> / <code>libdocparse.so</code></td><td><b>문서를 읽는 명령은 실행 불가</b> — 첫 문서를 읽기 전에 종료코드 <b>1017</b>(<code>extractor_missing</code>)로 멈춤.
+      문서마다 '추출 실패'로 조용히 흘러가지 않게 일부러 바로 멈춥니다. 문서를 읽지 않는 명령(<code>--set-grade</code>·<code>--propagate</code>·<code>--check-rules</code>)은 정상</td></tr>
     <tr><td>pdfium</td><td>PDF 만 추출 실패(스킵). 다른 포맷은 정상</td></tr>
     <tr><td><code>class_seed.jsonl</code></td><td>전파 기능이 꺼짐(= <code>--rule-only</code> 와 같아짐)</td></tr>
   </table></div>
+
+  <h3 id="docparse">1-1. 문서파서 라이브러리(docparse)는 어떻게 붙나 <span class="def">2026-11-11</span></h3>
+  <p>예전에는 hwp·doc·pdf 등을 읽는 코드가 이 실행파일 안에 같이 컴파일됐습니다(<code>src/extract.rs</code>·<code>hwp5.rs</code>·<code>ole.rs</code>·<code>archive.rs</code> …).
+  지금은 그 코드가 별도 프로젝트 <code>D:\Project\DocParse-rust</code> 로 옮겨 갔고, 거기서 만든 <b>공유 라이브러리</b>를 이 프로그램이 <b>실행 중에 불러</b> 씁니다.
+  파이썬 판도 같은 라이브러리를 불러 쓸 수 있어서(<code>--extractor rust</code>), <b>두 판이 같은 파서 하나</b>로 본문을 뽑게 됩니다.</p>
+  <div class="scroll"><table>
+    <tr><th>어디에</th><th>무엇이</th></tr>
+    <tr><td><code>third_party/docparse/windows-x64/</code></td><td><code>docparse.dll</code> · <code>pdfium.dll</code> · <code>VERSION</code> — <b>버전을 고정해 둔 정본</b></td></tr>
+    <tr><td><code>third_party/docparse/linux-x64/</code></td><td><code>libdocparse.so</code> · <code>libpdfium.so</code> · <code>VERSION</code></td></tr>
+    <tr><td><code>third_party/docparse/include/docparse.h</code></td><td>라이브러리 함수 모양(C ABI) 설명서</td></tr>
+    <tr><td><code>Rust/src/docparse_dyn.rs</code></td><td>라이브러리를 여는 얇은 층(<code>libloading</code>). 정본은 <code>DocParse-rust/bindings/rust/</code> 에 있고 이 파일은 복사본</td></tr>
+    <tr><td><code>Rust/src/docparse.rs</code></td><td>예전 추출 함수와 같은 이름·모양을 내주는 창구(<code>extract_as</code>·<code>detect_format</code>·<code>archive::expand_paths</code> …)</td></tr>
+    <tr><td><code>Rust/build.rs</code></td><td><code>cargo build</code> 때 <code>third_party</code> 의 라이브러리를 <code>target/&lt;프로파일&gt;/</code>(exe 옆)으로 <b>자동 복사</b></td></tr>
+  </table></div>
+
+  <p><b>실행할 때 찾는 순서</b> — 앞에서 찾으면 거기서 멈춥니다.</p>
+<pre><code>① --docparse-lib &lt;파일 또는 폴더&gt;   <span class="cmt">직접 지정. 지정하면 이것만 본다(없으면 다른 곳 것으로 대신하지 않고 1017)</span>
+② 환경변수 CSO_DOCPARSE              <span class="cmt">파일·폴더 모두 가능</span>
+③ 실행파일 옆                        <span class="cmt">배포본은 여기 — docparse.dll / libdocparse.so</span>
+④ 실행파일 폴더의 부모               <span class="cmt">cargo test 용(시험 실행파일은 target/release/deps 에 있다)</span></code></pre>
+  <ul>
+    <li><b>처음 문서를 읽을 때 한 번</b> 불러와 프로세스가 끝날 때까지 들고 있습니다. 문서를 안 읽는 명령은 아예 불러오지 않습니다.</li>
+    <li>불러오면서 <b>ABI 버전</b>(함수 모양 번호, 지금 <code>1</code>)을 맞춰 봅니다. 다르면 엉뚱하게 돌지 않고 1017 로 멈춥니다.</li>
+    <li>일반 로그(<code>--log</code>)에 <b>어떤 파일을 어떤 버전으로</b> 불러왔는지 한 줄 남깁니다. 배포본 확인 때 이 줄을 봅니다.
+<pre style="margin:6px 0 0"><code>INFO MpowerClassify_rs::docparse::try_lib:69: 문서파서 docparse=0.1.0+b9704d2 lib=D:\…\docparse.dll</code></pre></li>
+    <li>라이브러리 안에서 남기는 기록(부분 추출 경고 등)은 콜백으로 받아 <b>이 프로그램의 일반·오류 로그에 그대로</b> 적힙니다.</li>
+    <li><b>pdfium</b> 은 docparse 가 대신 엽니다. <code>CSO_PDFIUM</code> → docparse 라이브러리 폴더 → 실행파일 옆 → 시스템 순으로 찾으므로, 배포본은 지금처럼 exe 옆에 두면 됩니다.</li>
+  </ul>
+
+  <div class="note"><b>문서파서를 새 판으로 바꾸려면</b><br>
+  DocParse-rust 쪽에서 묶음(<code>docparse-&lt;버전&gt;-windows-x64.zip</code> / <code>-linux-x64.tgz</code>)을 만든 뒤, 이 저장소에서 아래 한 줄로 받아 넣습니다.
+  <code>third_party/docparse/</code> 를 갈아 끼우고, 감싸개 두 개(<code>Rust/src/docparse_dyn.rs</code>·<code>src/csoclassify/extract/_docparse.py</code>)도 함께 바꿉니다.
+<pre style="margin:6px 0 0"><code>bash scripts/build/update-docparse.sh                 <span class="cmt"># ../DocParse-rust/dist 의 가장 새 묶음</span>
+bash scripts/build/update-docparse.sh &lt;묶음.zip&gt; &lt;묶음.tgz&gt;   <span class="cmt"># 직접 지정</span></code></pre>
+  그 뒤 <code>cargo build --release</code> 를 다시 하면 새 dll 이 exe 옆으로 복사됩니다.
+  <b>ABI 버전이 같으면</b> exe 를 다시 빌드하지 않고 배포본의 dll 만 바꿔도 됩니다.</div>
 </section>
 
 
@@ -185,7 +236,8 @@ README.txt</div>
     <tr><td>C/C++ 컴파일러</td><td>Visual Studio Build Tools<br>(C++ 데스크톱 개발 워크로드)</td><td><code>gcc</code> (이미 있음)</td></tr>
     <tr><td>OS</td><td>Windows 10/11 x64</td><td>CentOS 7.9 / glibc 2.17 / x86_64</td></tr>
     <tr><td>인터넷</td><td>필요 <span class="def">(crates.io 에서 의존 크레이트 다운로드)</span></td><td>필요 <span class="def">(확인됨)</span></td></tr>
-    <tr><td>C 컴파일러</td><td colspan="2"><b>불필요</b> <span class="def">— 압축 해제 의존(<code>tar</code>·<code>bzip2-rs</code>·<code>lzma-rs</code>·<code>sevenz-rust2</code>·<code>rars</code>)과 시각 의존(<code>chrono</code>)이 전부 순수 Rust 라 <code>cc</code> 를 부르지 않습니다. CentOS 7 에서도 추가 개발도구 없이 빌드됩니다.</span></td></tr>
+    <tr><td>C 컴파일러</td><td colspan="2"><b>불필요</b> <span class="def">— 압축 해제·문서 파서 의존은 docparse 라이브러리로 떠나 이 빌드에 없고, 남은 의존(<code>libloading</code>·<code>chrono</code> 등)도 순수 Rust 라 <code>cc</code> 를 부르지 않습니다. CentOS 7 에서도 추가 개발도구 없이 빌드됩니다.</span></td></tr>
+    <tr><td>문서파서 라이브러리</td><td><code>third_party\docparse\windows-x64\docparse.dll</code></td><td><code>third_party/docparse/linux-x64/libdocparse.so</code> <span class="def">(소스와 함께 올림)</span></td></tr>
     <tr><td>디스크</td><td>약 3GB <span class="def">(빌드 캐시 <code>target\</code> 포함)</span></td><td>약 3GB</td></tr>
     <tr><td>빌드 시간</td><td>첫 빌드 5~8분 / 재빌드 수 초</td><td>첫 빌드 약 2분 <span class="def">(32코어)</span></td></tr>
   </table></div>
@@ -228,8 +280,19 @@ rustc 1.98.0 (88d9e12ae 2026-08-18)</code></pre></div>
   </div>
 
   <div class="step">
+    <h4><span class="num">2-1</span> 문서파서 라이브러리가 있는지 확인 <span class="pill">2026-11-11 추가</span></h4>
+<pre><code>dir ..\third_party\docparse\windows-x64
+type ..\third_party\docparse\VERSION</code></pre>
+    <div class="ok"><code>docparse.dll</code>·<code>pdfium.dll</code> 이 보이고 VERSION 에 <code>0.1.0+b9704d2</code> 같은 값이 나오면 됩니다.</div>
+    <p class="def">없으면 DocParse-rust 에서 받은 묶음을 <code>bash scripts/build/update-docparse.sh</code> 로 먼저 넣으세요(<a href="#docparse">1-1</a>).
+    없어도 빌드는 끝나지만 <code>warning: docparse.dll 원본(third_party/docparse)을 찾지 못했습니다</code> 가 뜨고, 만든 exe 는 문서를 읽을 때 1017 로 멈춥니다.</p>
+  </div>
+
+  <div class="step">
     <h4><span class="num">3</span> 빌드</h4>
 <pre><code>cargo build --release</code></pre>
+    <p class="def">빌드가 끝나면 <code>build.rs</code> 가 <code>docparse.dll</code> 과 <code>pdfium.dll</code> 을 <code>target\release\</code> 의 exe 옆으로 복사해 둡니다.
+    그래서 <code>target\release\MpowerClassify-rs.exe</code> 를 그 자리에서 바로 실행해도 문서가 읽힙니다.</p>
     <p>처음에는 인터넷에서 의존 라이브러리를 내려받느라 <b>3~5분</b> 걸립니다. 마지막 줄이</p>
 <pre><code>    Finished `release` profile [optimized] target(s) in 3m 12s</code></pre>
     <p>이면 성공이고, 결과물은 <code>Rust\target\release\MpowerClassify-rs.exe</code> 입니다.</p>
@@ -240,12 +303,15 @@ rustc 1.98.0 (88d9e12ae 2026-08-18)</code></pre></div>
 
   <div class="step">
     <h4><span class="num">4</span> 배포본 폴더에 조립</h4>
-    <p>빌드된 exe 하나만으로는 임베딩·PDF 가 동작하지 않습니다. 아래처럼 <b>자산을 한 폴더에 모읍니다</b>.</p>
+    <p>빌드된 exe 하나만으로는 문서를 읽지 못하고 임베딩·PDF 도 동작하지 않습니다. 아래처럼 <b>자산을 한 폴더에 모읍니다</b>.</p>
 <pre><code>cd /d D:\Project\MpowerClassify\Rust
 mkdir dist-onedir\windows\models 2&gt;nul
 
 <span class="cmt">:: (1) 방금 빌드한 실행파일</span>
 copy /Y target\release\MpowerClassify-rs.exe dist-onedir\windows\
+
+<span class="cmt">:: (1-1) ★ 문서파서 라이브러리 — exe 옆에 둔다(없으면 문서를 읽기 전에 1017 로 멈춘다)</span>
+copy /Y ..\third_party\docparse\windows-x64\docparse.dll dist-onedir\windows\
 
 <span class="cmt">:: (2) 규칙셋 · 전파 seed</span>
 copy /Y ..\resources\policy\cso_rule.yaml  dist-onedir\windows\
@@ -259,14 +325,18 @@ xcopy /E /I /Y ..\ui\policy\synonyms dist-onedir\windows\synonyms
 if exist ..\ui\policy\doc_rule.local.yaml copy /Y ..\ui\policy\doc_rule.local.yaml dist-onedir\windows\
 copy /Y ..\ui\policy\class_seed.jsonl dist-onedir\windows\
 
-<span class="cmt">:: (3) ONNX Runtime · pdfium — 파이썬 배포본 _internal 에서 그대로 재사용</span>
+<span class="cmt">:: (3) ONNX Runtime — 파이썬 배포본 _internal 에서 그대로 재사용</span>
 copy /Y ..\dist-onedir\windows\_internal\onnxruntime\capi\onnxruntime.dll                  dist-onedir\windows\
 copy /Y ..\dist-onedir\windows\_internal\onnxruntime\capi\onnxruntime_providers_shared.dll dist-onedir\windows\
-copy /Y ..\dist-onedir\windows\_internal\pypdfium2_raw\pdfium.dll                          dist-onedir\windows\
+<span class="cmt">:: pdfium — docparse 와 같은 묶음에 든 것을 쓴다(파이썬 배포본 _internal\pypdfium2_raw\pdfium.dll 도 같은 엔진)</span>
+copy /Y ..\third_party\docparse\windows-x64\pdfium.dll                                   dist-onedir\windows\
 
 <span class="cmt">:: (4) 임베딩 모델 폴더 통째로</span>
 xcopy /E /I /Y ..\resources\models\e5-small-ko dist-onedir\windows\models\e5-small-ko</code></pre>
-    <div class="warn"><b>DLL 이름을 바꾸지 마세요.</b> 프로그램은 <code>onnxruntime.dll</code>,
+    <div class="note"><b>스크립트로 하면</b> — <code>bash scripts/build/win-deploy.sh</code> 의 Rust 단계가 <code>cargo test</code> → <code>cargo build --release</code> →
+    exe·<code>docparse.dll</code> 을 <code>Rust\dist-onedir\windows\</code> 에 갈아 끼우고 <code>--version</code> 으로 실행까지 확인합니다.
+    <code>third_party\docparse\windows-x64\docparse.dll</code> 이 없으면 빌드 전에 멈춥니다.</div>
+    <div class="warn"><b>DLL 이름을 바꾸지 마세요.</b> 프로그램은 <code>docparse.dll</code>, <code>onnxruntime.dll</code>,
     <code>pdfium.dll</code> 이라는 <b>정확한 이름</b>으로 exe 옆을 찾습니다.
     버전이 붙은 이름(<code>onnxruntime-1.26.dll</code>)이면 못 찾고 임베딩이 조용히 꺼집니다.</div>
   </div>
@@ -275,7 +345,10 @@ xcopy /E /I /Y ..\resources\models\e5-small-ko dist-onedir\windows\models\e5-sma
     <h4><span class="num">5</span> 동작 확인</h4>
 <pre><code>cd /d D:\Project\MpowerClassify\Rust\dist-onedir\windows
 MpowerClassify-rs.exe --help
-MpowerClassify-rs.exe --file "샘플.txt" --cso-rules cso_rule.yaml</code></pre>
+MpowerClassify-rs.exe --file "샘플.hwp" --cso-rules cso_rule.yaml --log run.log
+findstr docparse run.log</code></pre>
+    <div class="ok"><code>문서파서 docparse=0.1.0+… lib=…\dist-onedir\windows\docparse.dll</code> 줄이 나오면
+    <b>배포본 폴더의 dll 을 불러 쓴 것</b>입니다. lib 경로가 다른 폴더(예: <code>target\release</code>)를 가리키면 <code>CSO_DOCPARSE</code> 환경변수가 걸려 있는지 보세요.</div>
     <p>자세한 확인 항목은 <a href="#verify">6장</a>을 보세요.</p>
   </div>
 
@@ -362,9 +435,12 @@ bash scripts/build/linux-build.sh rust  <span class="cmt"># 한 판만</span></c
     <h4><span class="num">1</span> 소스를 압축해서 서버로 보내기</h4>
     <p>Git Bash(또는 WSL) 에서 실행합니다. <code>target/</code>(빌드 캐시)은 보내지 않습니다 — 서버에서 새로 만듭니다.</p>
 <pre><code>cd /d/Project/MpowerClassify/Rust
-tar -czf /tmp/rustsrc.tgz Cargo.toml Cargo.lock build.rs src resources tests README.md
-<span class="cmt"># build.rs 는 pdfium 자동 복사, tests 는 골든 정답표(pii_golden.json 등)를 담는다.</span>
-<span class="cmt"># 둘 다 빠뜨리면 빌드는 되지만 pdfium 이 안 붙고 cargo test 가 8건 실패한다.</span>
+tar -czf /tmp/rustsrc.tgz Cargo.toml Cargo.lock build.rs src resources tests README.md \
+    -C .. third_party/docparse/linux-x64 third_party/docparse/VERSION
+<span class="cmt"># build.rs 는 pdfium·docparse 자동 복사, tests 는 골든 정답표(pii_golden.json 등)를 담는다.</span>
+<span class="cmt"># 둘 다 빠뜨리면 빌드는 되지만 라이브러리가 안 붙고 cargo test 가 실패한다.</span>
+<span class="cmt"># ★ third_party/docparse/linux-x64 = libdocparse.so(문서파서). 서버에서는 Rust 빌드폴더 바로 밑</span>
+<span class="cmt">#   third_party/ 로 풀리고, build.rs 가 그 자리도 찾아본다. 빠뜨리면 배포본이 1017 로 멈춘다.</span>
 <span class="cmt"># src 에는 2026-09-08 부터 seedstore.rs · seedcli.rs 가 함께 들어간다(--seed-add).</span>
 
 <span class="cmt"># 서버에 작업 폴더 만들고 업로드</span>
@@ -381,6 +457,8 @@ pscp  -batch -pw '&lt;비밀번호&gt;' /tmp/rustsrc.tgz &lt;계정&gt;@&lt;빌�
 
 export PATH=&lt;cargo&gt;/bin:$PATH
 cd &lt;Rust빌드폴더&gt;
+<span class="cmt"># 옛 소스가 섞이지 않게 먼저 지운다 — 분리 전 crates/ 와 옛 third_party/ 포함</span>
+rm -rf src crates tests resources third_party
 tar xzf rustsrc.tgz
 
 <span class="cmt"># ★ 실행파일에 "내 옆 폴더에서 .so 를 찾아라" 규칙(RPATH)을 새겨 넣는다</span>
@@ -418,6 +496,9 @@ rm -rf $D &amp;&amp; mkdir -p $D/models
 
 <span class="cmt"># (1) 실행파일</span>
 cp $B/target/release/MpowerClassify-rs $D/ &amp;&amp; chmod +x $D/MpowerClassify-rs
+
+<span class="cmt"># (1-1) ★ 문서파서 라이브러리 — 1단계에서 소스와 함께 올린 것. 실행파일 옆에 둔다</span>
+cp $B/third_party/docparse/linux-x64/libdocparse.so $D/
 
 <span class="cmt"># (2) ONNX Runtime — 반드시 'libonnxruntime.so' 이름으로 (버전 숫자 제거)</span>
 cp $CONDA/onnxruntime/capi/libonnxruntime.so.1.26.0            $D/libonnxruntime.so
@@ -472,7 +553,10 @@ pscp -batch -q -r -pw '&lt;PW&gt;' ui/policy/synonyms &lt;계정&gt;@&lt;빌드�
 ./MpowerClassify-rs --dir /tmp/csotest --cso-rules cso_rule.yaml --rule-only --simple --nosummary --format jsonl
 
 <span class="cmt"># 기본 모드 = 규칙 + 임베딩 전파 (여기가 .so 로딩 확인 지점)</span>
-./MpowerClassify-rs --dir /tmp/csotest --cso-rules cso_rule.yaml --simple --nosummary --format jsonl</code></pre>
+./MpowerClassify-rs --dir /tmp/csotest --cso-rules cso_rule.yaml --simple --nosummary --format jsonl --log /tmp/rs.log
+
+<span class="cmt"># 문서파서를 배포본 폴더의 것으로 불렀는지</span>
+grep docparse /tmp/rs.log          <span class="cmt"># lib=…/dist-onedir/linux/libdocparse.so 여야 함</span></code></pre>
     <div class="ok">기본 모드에서 <code>[전파] seed=70 전파결정=0 미분류잔여=0</code> 같은 줄이 뜨면
     <b>ONNX Runtime 이 정상 로드</b>된 것입니다.</div>
     <div class="bad">여기서 <code>CXXABI_1.3.8 not found</code> 가 나오면 2단계 <code>RUSTFLAGS</code> 를 빠뜨렸거나
@@ -481,11 +565,11 @@ pscp -batch -q -r -pw '&lt;PW&gt;' ui/policy/synonyms &lt;계정&gt;@&lt;빌드�
 
   <div class="step">
     <h4><span class="num">5</span> Windows 로 내려받아 최종 배포본 완성</h4>
-    <p>서버에서 만든 것 중 <b>바이너리 6개만</b> 내려받고, 모델·규칙셋은 Windows 쪽 것을 복사합니다(같은 파일).</p>
+    <p>서버에서 만든 것 중 <b>바이너리 7개만</b> 내려받고, 모델·규칙셋은 Windows 쪽 것을 복사합니다(같은 파일).</p>
 <pre><code>cd /d/Project/MpowerClassify/Rust/dist-onedir/linux
 R=&lt;Rust빌드폴더&gt;/dist-onedir/linux
 
-for f in MpowerClassify-rs libonnxruntime.so libonnxruntime_providers_shared.so \
+for f in MpowerClassify-rs libdocparse.so libonnxruntime.so libonnxruntime_providers_shared.so \
          libpdfium.so libstdc++.so.6 libgcc_s.so.1; do
   pscp -batch -q -pw '&lt;비밀번호&gt;' "&lt;계정&gt;@&lt;빌드서버&gt;:$R/$f" .
 done
@@ -558,11 +642,20 @@ cd MpowerClassify-rs-linux
           <span class="def">없으면 <code>pip install onnxruntime</code> 후 그 폴더에서 꺼내면 됩니다.</span></td>
     </tr>
     <tr>
+      <td>문서파서<br><span class="def">2026-11-11</span></td>
+      <td><code>docparse.dll</code></td>
+      <td><code>libdocparse.so</code></td>
+      <td>별도 프로젝트 <code>D:\Project\DocParse-rust</code> 의 배포 묶음.<br>
+          이 저장소의 <code>third_party\docparse\&lt;os&gt;-x64\</code> 에 버전을 고정해 둡니다(<code>VERSION</code>).<br>
+          <span class="def">새 판은 <code>bash scripts/build/update-docparse.sh</code> 로 받아 넣습니다 → <a href="#docparse">1-1</a></span></td>
+    </tr>
+    <tr>
       <td>pdfium</td>
       <td><code>pdfium.dll</code></td>
       <td><code>libpdfium.so</code></td>
-      <td>파이썬 <code>pypdfium2</code> 패키지의 <code>pypdfium2_raw/</code> 폴더.<br>
-          <span class="def">파이썬판과 같은 엔진이라 <b>추출 결과가 동일</b>합니다.</span></td>
+      <td>docparse 묶음에 함께 든 것(<code>third_party\docparse\&lt;os&gt;-x64\</code>) 또는
+          파이썬 <code>pypdfium2</code> 패키지의 <code>pypdfium2_raw/</code> 폴더.<br>
+          <span class="def">PDF 를 여는 것은 docparse 이고, docparse 가 이 파일을 불러 씁니다.</span></td>
     </tr>
     <tr>
       <td>C++ 런타임<br><span class="def">(Linux 전용)</span></td>
@@ -591,7 +684,8 @@ cd MpowerClassify-rs-linux
     <tr><th>변수</th><th>의미</th><th>기본 동작(미설정 시)</th></tr>
     <tr><td><code>CSO_MODEL</code></td><td>임베딩 모델 폴더</td><td>실행파일 옆 <code>models/e5-small-ko/</code></td></tr>
     <tr><td><code>ORT_DYLIB_PATH</code></td><td>ONNX Runtime 라이브러리 파일</td><td>실행파일 옆 <code>onnxruntime.dll</code> / <code>libonnxruntime.so</code></td></tr>
-    <tr><td><code>CSO_PDFIUM</code></td><td>pdfium 라이브러리 파일</td><td>실행파일 옆 <code>pdfium.dll</code> / <code>libpdfium.so</code> → 시스템</td></tr>
+    <tr><td><code>CSO_DOCPARSE</code><br><span class="def">또는 인자 <code>--docparse-lib</code></span></td><td>문서파서 라이브러리 파일·폴더</td><td>실행파일 옆 <code>docparse.dll</code> / <code>libdocparse.so</code> → 실행파일 폴더의 부모. 못 찾으면 1017<br><span class="def">인자가 환경변수보다 앞선다</span></td></tr>
+    <tr><td><code>CSO_PDFIUM</code></td><td>pdfium 라이브러리 파일</td><td>docparse 라이브러리 폴더 → 실행파일 옆 <code>pdfium.dll</code> / <code>libpdfium.so</code> → 시스템</td></tr>
     <tr><td><code>CSOCLASSIFY_POLICY_DIR</code></td><td>규칙셋 폴더</td><td>실행파일 옆 <code>cso_rule.yaml</code></td></tr>
   </table></div>
 </section>
@@ -603,10 +697,12 @@ cd MpowerClassify-rs-linux
   <div class="scroll"><table>
     <tr><th>#</th><th>확인 항목</th><th>명령</th><th>성공 신호</th></tr>
     <tr><td>1</td><td>실행파일이 뜨는가</td><td><code>MpowerClassify-rs --help</code></td><td>옵션 목록 출력</td></tr>
+    <tr><td>1-1</td><td>문서파서 로드<br><span class="def">(docparse)</span> <span class="def">2026-11-11 추가</span></td><td>문서 1개를 <code>--log run.log</code> 로 돌린 뒤 <code>docparse</code> 줄을 봄</td>
+        <td><code>문서파서 docparse=&lt;VERSION 값&gt; lib=&lt;배포본 폴더&gt;\docparse.dll</code><br><span class="def">버전이 <code>third_party/docparse/VERSION</code> 과 같아야 합니다. 종료코드 1017 이면 <a href="#trouble">7-⑧</a></span></td></tr>
     <tr><td>2</td><td>규칙 엔진<br><span class="def">(규칙셋 로드)</span></td><td><code>… --rule-only --simple --format jsonl</code></td><td><code>{"file":…,"grade":"C"}</code> 형태 JSON</td></tr>
     <tr><td>3</td><td>임베딩<br><span class="def">(ORT + 모델 로드)</span></td><td><code>… --simple --format jsonl</code> <span class="def">(기본 모드)</span></td><td><code>[전파] seed=NN 전파결정=…</code> 줄이 뜸</td></tr>
     <tr><td>4</td><td>PDF 추출<br><span class="def">(pdfium 로드)</span></td><td>PDF 가 든 폴더에 <code>--dir</code> 실행</td><td>PDF 에 <code>grade</code>·<code>signals.rule.hits</code> 가 채워짐</td></tr>
-    <tr><td>5</td><td>구형 OLE 추출<br><span class="def">(자체 CFB 파서)</span> <span class="def">2026-08-26 추가</span></td>
+    <tr><td>5</td><td>구형 OLE 추출<br><span class="def">(docparse 의 CFB 파서)</span> <span class="def">2026-08-26 추가</span></td>
         <td>구형 <code>.doc</code>/<code>.xls</code>/<code>.ppt</code>/<code>.hwp</code> 가 든 폴더에 <code>--dir</code> 실행</td>
         <td>요약 줄의 <code>추출실패=0</code><br><span class="def">Rust 판은 사이냅을 아예 쓰지 않습니다</span></td></tr>
     <tr><td>6</td><td>압축 확장<br><span class="def">(zip·tar·gz·bz2·xz·7z·rar)</span> <span class="def">2026-09-07 추가</span></td>
@@ -630,6 +726,7 @@ cd MpowerClassify-rs-linux
   이 판은 압축 1개를 내부 문서 N건으로 펼쳐 <b>파일별로 등급</b>을 매기고, 압축 자체에는 내부 최고 위험을 매긴 집계 레코드(<code>archive: true</code>)를 덧붙입니다.
   <br><br><b>업무분류 축을 함께 켜면</b> — 같은 집계 레코드에 <code>contains_doctype</code> 이 붙습니다(<code>{"DC_001_001":2, "DC_003_002":1, "unclassified":1}</code>). 등급은 <code>C&gt;S&gt;O</code> 서열이 있어 <b>최고 위험 하나</b>로 롤업되지만, 업무분류는 서열이 없고 한 문서가 여러 라벨을 가질 수 있어 대표를 고르면 반드시 무언가를 버립니다 — 그래서 고르지 않고 <b>건수 분포</b>를 그대로 싣습니다. 그래서 다중 라벨 문서 때문에 <b>분포의 합계가 <code>contains.total</code> 보다 클 수 있고</b>, 축을 안 쓴 실행에서는 <b>키 자체가 없습니다</b>("분류 못 함"과 "축을 안 씀"의 구분). 두 판이 <b>같은 모양·같은 값</b>을 내야 하므로 빌드 뒤 대조 지점으로 씁니다 (<code>--doctype</code> 을 켜고 압축을 하나 넣어 <code>contains_doctype</code> 을 비교).
   <br>지원: <b>zip · tar(+gz/bz2/xz) · gz · bz2 · xz · 7z · rar</b>. 새로 들어간 의존(<code>tar</code>·<code>bzip2-rs</code>·<code>lzma-rs</code>·<code>sevenz-rust2</code>·<code>rars</code>)은 <b>전부 순수 Rust</b>라 C 컴파일러가 필요 없습니다 — 정적 단일 바이너리 목표와 CentOS 7 빌드가 그대로 유지됩니다.
+  <span class="def">2026-11-11 부터 압축 펼치기도 docparse 라이브러리가 합니다. 이 의존들은 이제 DocParse-rust 쪽 빌드에 있고, 이 실행파일은 결과(작업 목록·못 펼친 압축 보고)만 받습니다.</span>
   <br><br><b>못 하는 것 두 가지</b>(둘 다 결과에 표식이 남으므로 조용히 빠지지 않습니다):
   <ul>
     <li><b>분할 볼륨</b>(<code>.7z.001</code>·<code>.z01</code>·<code>.partN.rar</code> 등) — 조각을 잇지 않습니다. <b>파이썬 판도 zip·tar·7z 는 마찬가지</b>라(라이브러리 차원 미지원) 두 판이 같은 수준입니다. 결과에 <code>kind=split_volume</code> 과 "파일이 깨진 것이 아닙니다" 안내가 나갑니다.</li>
@@ -656,7 +753,7 @@ cd MpowerClassify-rs-linux
   <div class="note"><b><code>--textsave</code> — 이 판도 추출 본문을 남깁니다</b> <span class="def">2026-09-07</span><br>
   이 판은 그동안 <code>--save-text</code> 를 <b>인자로 받아 삼키고 아무 일도 하지 않았습니다</b>. 오류도 경고도 없이 정상 종료하고 폴더는 비어 있어서, 쓰는 사람이 "저장했는데 왜 없지"를 혼자 헤맸습니다. <b>기능 없음보다 나쁜, 조용한 실패</b>였습니다. 이제 파이썬 판과 같은 규칙으로 실제로 남깁니다 — 같은 파일명(<code>&lt;sha256&gt;.txt</code>) · 같은 색인 칸 · 같은 레코드 표식(<code>text_saved</code>).
   <br><br><b>빌드 관점에서 달라진 것은 없습니다</b> — 새 의존이 없습니다(<code>src/textsave.rs</code> 한 파일이 늘었을 뿐이고 표준 라이브러리만 씁니다).
-  <br><b>주의</b> — 저장되는 것은 원본이 아니라 <b>추출한 본문</b>이고 두 판은 파서가 다릅니다. <b>두 판이 같은 폴더를 쓰면 안 됩니다</b>(같은 이름인데 내용이 다르면 덮지 않고 <code>저장실패</code> 로 알립니다). 검증할 때도 판마다 폴더를 나누세요.</div>
+  <br><b>주의</b> — 저장되는 것은 원본이 아니라 <b>추출한 본문</b>이고, 파이썬 판이 기본 파서(<code>--extractor py</code>)로 돌면 두 판은 파서가 다릅니다. <b>두 판이 같은 폴더를 쓰면 안 됩니다</b>(같은 이름인데 내용이 다르면 덮지 않고 <code>저장실패</code> 로 알립니다). 검증할 때도 판마다 폴더를 나누세요.</div>
 
   <div class="note"><b><code>ts</code> — 레코드 시각을 이 판도 채웁니다</b> <span class="def">2026-09-07</span><br>
   이 판은 그동안 모든 레코드의 <code>ts</code> 를 <code>null</code> 로 두었습니다. 파이썬 판은 채우고 있었으므로 <b>두 판의 결과를 같은 표에 놓고 비교할 때 이 필드만 어긋났습니다</b>. 이제 같은 모양으로 냅니다 — ISO-8601 <b>초 단위 + 로컬 타임존 오프셋</b>(<code>2026-09-07T14:11:45+09:00</code>), UTC 라도 <code>Z</code> 가 아니라 <code>+00:00</code>. 정상 판정·추출 실패·보류·압축 집계까지 <b>모든 줄</b>에 붙습니다.
@@ -682,7 +779,7 @@ cd MpowerClassify-rs-linux
     <tr><td>Linux Python</td><td><b>없음</b> + <code>--hybridparse</code></td><td>검출 10, C=7 S=3 O=0 <span class="def">추출실패 0</span></td></tr>
   </table></div>
   <div class="note">Rust 판은 구형 OLE 를 <b>CFB 컨테이너를 직접 열어</b> 판정·추출합니다
-  (<code>src/ole.rs</code>·<code>src/office_legacy.rs</code>·<code>src/xls.rs</code>·<code>src/hwp5.rs</code>).
+  (예전 <code>src/ole.rs</code>·<code>src/office_legacy.rs</code>·<code>src/xls.rs</code>·<code>src/hwp5.rs</code> — <b>2026-11-11 부터 docparse 라이브러리 안</b>으로 옮겨 갔습니다).
   파이썬 쪽 <code>detect.py</code> 의 OLE 매직 판정 버그
   (<a href="MpowerClassify-빌드가이드-python.html#trouble">파이썬 가이드 8-⑧</a>) 와 <b>무관</b>합니다 —
   그 수정 때문에 Rust 를 재빌드할 필요는 없습니다.</div>
@@ -739,13 +836,29 @@ An error occurred while attempting to load the ONNX Runtime binary at
   <code>~/.cargo/registry/</code> 를 통째로 복사하면 오프라인 빌드(<code>cargo build --release --offline</code>)가 됩니다.</p>
 
   <h3>⑥ PDF 만 결과가 비어 있음 <span class="os">공통</span></h3>
-  <p><code>pdfium.dll</code>/<code>libpdfium.so</code> 가 없거나 이름이 다릅니다. 다른 포맷은 정상이므로 놓치기 쉽습니다.</p>
+  <p><code>pdfium.dll</code>/<code>libpdfium.so</code> 가 없거나 이름이 다릅니다. 다른 포맷은 정상이므로 놓치기 쉽습니다.
+  docparse 가 <b>자기 라이브러리 폴더 → 실행파일 옆 → 시스템</b> 순으로 찾으므로 exe(=docparse) 옆에 두면 됩니다.</p>
 
   <h3>⑦ musl 정적 빌드는 되나요?</h3>
   <p><code>README.md</code> 에는 <code>x86_64-unknown-linux-musl</code> 이 적혀 있지만, 이 서버에는 <code>musl-gcc</code> 가
   없어 <code>tokenizers</code> 의 C 코드(oniguruma)를 musl 로 컴파일할 수 없습니다.
   <b>현재 배포본은 CentOS 7(glibc 2.17) gnu 타깃</b>이며, 실용적으로는 이쪽이 호환 범위가 더 넓습니다
   (musl 로 만들어도 <code>libonnxruntime.so</code>·<code>libpdfium.so</code> 는 어차피 외부 glibc 라이브러리라 완전 정적이 되지 않습니다).</p>
+
+  <h3>⑧ 종료코드 <code>1017</code> — <code>extractor_missing</code> <span class="os">공통</span> <span class="def">2026-11-11</span></h3>
+<pre><code>[MpowerClassify-rs] 문서파서 라이브러리(docparse.dll)를 찾을 수 없습니다 — 찾아본 곳: …\docparse.dll , … (환경변수 CSO_DOCPARSE 로 알려 주세요)</code></pre>
+  <p>문서파서 라이브러리를 못 불러온 것입니다. 메시지에 따라 원인이 셋입니다.</p>
+  <div class="scroll"><table>
+    <tr><th>메시지</th><th>원인</th><th>해결</th></tr>
+    <tr><td><code>…를 찾을 수 없습니다 — 찾아본 곳: …</code></td><td>exe 옆에 dll/so 가 없음</td>
+        <td><code>third_party/docparse/&lt;os&gt;-x64/</code> 의 것을 exe 옆에 복사. 다른 곳에 두려면 <code>CSO_DOCPARSE</code> 나 <code>--docparse-lib</code></td></tr>
+    <tr><td><code>ABI 버전이 다릅니다: 라이브러리 N / 감싸개 1</code></td><td>dll 만 새 판(또는 옛 판)으로 바꿨는데 함수 모양 번호가 다름</td>
+        <td><code>update-docparse.sh</code> 로 감싸개(<code>Rust/src/docparse_dyn.rs</code>)까지 함께 바꾸고 exe 를 다시 빌드</td></tr>
+    <tr><td><code>…를 열지 못했습니다</code> / <code>… 함수가 없습니다</code></td><td>다른 OS 용 파일이거나 깨진 파일, 리눅스면 의존 .so 를 못 찾음</td>
+        <td>리눅스는 <code>ldd libdocparse.so</code> 로 <code>not found</code> 가 없는지 확인. 윈도우는 메일로 받은 zip 이면 <code>Unblock-File</code>(3-6)</td></tr>
+  </table></div>
+  <p class="def">빌드할 때 <code>warning: docparse.dll 원본(third_party/docparse)을 찾지 못했습니다</code> 가 떴다면 그 빌드의 <code>target/release</code> 에는 dll 이 없습니다 — 2-1 을 먼저 하세요.</p>
+
 </section>
 
 
@@ -758,6 +871,7 @@ cargo build --release
 
 mkdir dist-onedir\windows\models 2&gt;nul
 copy /Y target\release\MpowerClassify-rs.exe  dist-onedir\windows\
+copy /Y ..\third_party\docparse\windows-x64\docparse.dll dist-onedir\windows\
 copy /Y ..\resources\policy\cso_rule.yaml dist-onedir\windows\
 <span class="cmt">:: 업무분류 규칙과 그 입력은 ..\ui\policy 가 갱신되는 쪽 — 파이썬 빌드가이드 4장 '정책 파일 정본 확인' 참고</span>
 copy /Y ..\ui\policy\doc_rule.yaml dist-onedir\windows\
@@ -768,10 +882,11 @@ if exist ..\ui\policy\doc_rule.local.yaml copy /Y ..\ui\policy\doc_rule.local.ya
 copy /Y ..\ui\policy\class_seed.jsonl dist-onedir\windows\
 copy /Y ..\dist-onedir\windows\_internal\onnxruntime\capi\onnxruntime.dll                  dist-onedir\windows\
 copy /Y ..\dist-onedir\windows\_internal\onnxruntime\capi\onnxruntime_providers_shared.dll dist-onedir\windows\
-copy /Y ..\dist-onedir\windows\_internal\pypdfium2_raw\pdfium.dll                          dist-onedir\windows\
+copy /Y ..\third_party\docparse\windows-x64\pdfium.dll                                   dist-onedir\windows\
 xcopy /E /I /Y ..\resources\models\e5-small-ko dist-onedir\windows\models\e5-small-ko
 
 dist-onedir\windows\MpowerClassify-rs.exe --help</code></pre>
+  <p class="def">같은 일을 스크립트로: <code>bash scripts/build/win-deploy.sh</code> (Rust 단계가 시험 → 빌드 → exe·docparse.dll 갈아 끼우기 → 실행 확인까지)</p>
   <p class="def">배포용 zip 까지 만들려면 (PowerShell):</p>
 <pre><code>$stage = "$env:TEMP\csopkg"
 Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
@@ -784,9 +899,10 @@ Compress-Archive -Path "$stage\MpowerClassify-rs-windows" -DestinationPath $out 
 
   <h3>B. Linux 전체 <span class="def">(1) Windows(Git Bash) 에서 업로드</span></h3>
 <pre><code>cd /d/Project/MpowerClassify/Rust
-tar -czf /tmp/rustsrc.tgz Cargo.toml Cargo.lock build.rs src resources tests README.md
-<span class="cmt"># build.rs 는 pdfium 자동 복사, tests 는 골든 정답표(pii_golden.json 등)를 담는다.</span>
-<span class="cmt"># 둘 다 빠뜨리면 빌드는 되지만 pdfium 이 안 붙고 cargo test 가 8건 실패한다.</span>
+tar -czf /tmp/rustsrc.tgz Cargo.toml Cargo.lock build.rs src resources tests README.md \
+    -C .. third_party/docparse/linux-x64 third_party/docparse/VERSION
+<span class="cmt"># build.rs 는 pdfium·docparse 자동 복사, tests 는 골든 정답표(pii_golden.json 등)를 담는다.</span>
+<span class="cmt"># ★ third_party/docparse/linux-x64 = libdocparse.so — 빠뜨리면 배포본이 1017 로 멈춘다.</span>
 <span class="cmt"># src 에는 2026-09-08 부터 seedstore.rs · seedcli.rs 가 함께 들어간다(--seed-add).</span>
 plink -batch -ssh -l &lt;계정&gt; -pw '&lt;PW&gt;' &lt;빌드서버&gt; "mkdir -p &lt;Rust빌드폴더&gt;/assets"
 pscp  -batch -pw '&lt;PW&gt;' /tmp/rustsrc.tgz &lt;계정&gt;@&lt;빌드서버&gt;:&lt;Rust빌드폴더&gt;/
@@ -810,12 +926,13 @@ D=$B/dist-onedir/linux
 CONDA=&lt;conda환경&gt;/lib/python3.x/site-packages
 L=&lt;conda환경&gt;/lib
 
-cd $B &amp;&amp; tar xzf rustsrc.tgz
+cd $B &amp;&amp; rm -rf src crates tests resources third_party &amp;&amp; tar xzf rustsrc.tgz
 export RUSTFLAGS='-C link-arg=-Wl,-rpath,$ORIGIN -C link-arg=-Wl,--disable-new-dtags'
 cargo build --release
 
 rm -rf $D &amp;&amp; mkdir -p $D/models
 cp $B/target/release/MpowerClassify-rs $D/ &amp;&amp; chmod +x $D/MpowerClassify-rs
+cp $B/third_party/docparse/linux-x64/libdocparse.so $D/
 cp $CONDA/onnxruntime/capi/libonnxruntime.so.1.26.0           $D/libonnxruntime.so
 cp $CONDA/onnxruntime/capi/libonnxruntime_providers_shared.so $D/
 cp $CONDA/pypdfium2_raw/libpdfium.so                          $D/
@@ -835,12 +952,13 @@ ls -la $D
 <span class="cmt"># 검증 — RPATH 가 새겨졌는지, 구형 .doc 가 추출되는지</span>
 readelf -d $B/target/release/MpowerClassify-rs | grep -i rpath   <span class="cmt"># [$ORIGIN] 이어야 함</span>
 cd $D &amp;&amp; ./MpowerClassify-rs --dir /경로/샘플 --cso-rules cso_rule.yaml --rule-only --simple --format jsonl \
-  | grep summary                                              <span class="cmt"># 추출실패=0 이어야 함</span></code></pre>
+  --log /tmp/rs.log | grep summary                            <span class="cmt"># 추출실패=0 이어야 함</span>
+grep docparse /tmp/rs.log                                     <span class="cmt"># lib=$D/libdocparse.so 여야 함</span></code></pre>
 
   <h3><span class="def">(3) Windows 로 내려받아 마무리</span></h3>
 <pre><code>cd /d/Project/MpowerClassify/Rust/dist-onedir/linux
 R=&lt;Rust빌드폴더&gt;/dist-onedir/linux
-for f in MpowerClassify-rs libonnxruntime.so libonnxruntime_providers_shared.so \
+for f in MpowerClassify-rs libdocparse.so libonnxruntime.so libonnxruntime_providers_shared.so \
          libpdfium.so libstdc++.so.6 libgcc_s.so.1; do
   pscp -batch -q -pw '&lt;PW&gt;' "&lt;계정&gt;@&lt;빌드서버&gt;:$R/$f" .
 done
@@ -873,7 +991,9 @@ cd MpowerClassify-rs-linux
   <div class="note"><b>다음에 소스만 고쳤을 때</b>는 위 과정을 다 할 필요 없이,
   Windows 는 <code>cargo build --release</code> + exe 복사,
   Linux 는 소스 재업로드 + <code>RUSTFLAGS</code> 붙여 <code>cargo build --release</code> + 바이너리 1개 내려받기면 끝입니다.
-  <code>.so</code>·모델은 그대로 두면 됩니다.</div>
+  <code>.so</code>·모델은 그대로 두면 됩니다.
+  <br><b>문서파서만 새 판이 나왔을 때</b>는 <code>update-docparse.sh</code> 로 받아 넣은 뒤, ABI 버전이 같으면 <b>배포본의 <code>docparse.dll</code> / <code>libdocparse.so</code> 만 바꿔 끼우면</b> 됩니다(exe 재빌드 불필요).
+  ABI 버전이 올라갔으면 감싸개가 바뀌었으므로 exe 도 다시 빌드합니다.</div>
 </section>
 
 
@@ -1037,7 +1157,9 @@ cd MpowerClassify-rs-linux
   <span class="def">2026-08-26 변경 — 구형 OLE 추출 확인 항목(6장 #5)과 3엔진 기준값 추가.
   조립 단계에 규칙셋·분류체계 복사(4-3 (6)) 명시, tgz 보관 위치를
   <code>Rust/dist-onedir/linux/</code> 로 고정.<br>
-  2026-09-01 변경 — 9장(부록) VS Code <code>rust-analyzer</code> 확장 설치·설정·문제해결 추가.</span>
+  2026-09-01 변경 — 9장(부록) VS Code <code>rust-analyzer</code> 확장 설치·설정·문제해결 추가.<br>
+  2026-11-11 변경 — 문서 추출·압축 펼치기를 문서파서 라이브러리(<code>docparse.dll</code> / <code>libdocparse.so</code>, VERSION <code>0.1.0+b9704d2</code>)로 분리.
+  빌드 전 확인(3-2-1)·배포본 조립·리눅스 소스 묶음·내려받기 목록·확인 항목(6장 #1-1)·오류 7-⑧ 에 반영(1-1).</span>
 </footer>
 
 </div>
