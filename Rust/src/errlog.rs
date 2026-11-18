@@ -127,7 +127,10 @@ pub fn note(msg: &str) {
         // 열쇠(--mrk 뒤의 값)는 오류 로그에도 남기지 않는다.
         let _ = writeln!(f, "cmd: {}", crate::decrypt::mask_args(&args).join(" "));
     });
-    let _ = writeln!(f, "{} {}", now_readable(), msg);
+    let mut text = format!("{} {}", now_readable(), msg);
+    // 긴 오류는 뒤에 빈 줄을 두어 다음 오류와 갈라 보이게 한다(일반 로그와 같은 규칙).
+    crate::log::spaced(&mut text);
+    let _ = writeln!(f, "{}", text);
 }
 
 //------------------------------------------------------------------

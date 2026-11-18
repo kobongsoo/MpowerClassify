@@ -16,6 +16,33 @@ from . import resources
 # 모든 모듈 로거의 공통 부모 이름. 이 로거에만 핸들러를 단다.
 _ROOT_NAME = "csoclassify"
 
+# 이 글자 수 이상인 로그 한 건 뒤에는 빈 줄을 하나 둔다(Rust 판 log.rs 와 같은 값).
+LONG_LINE_CHARS = 250
+
+
+#------------------------------------------------------------------
+# 긴 로그 뒤에 빈 줄을 두는 포매터
+#=> 경로·명령줄·오류 사유가 든 로그는 한 건이 수백 자라 편집기에서 여러 줄로 접혀
+#   보인다. 그러면 어디서 끝나고 다음 로그가 어디서 시작하는지 알기 어렵다.
+#   그래서 다 만든 로그 한 건(시각·PID 머리말 포함)이 LONG_LINE_CHARS 글자 이상이면
+#   끝에 줄바꿈을 하나 더 붙여 빈 줄로 구분한다. 짧은 로그는 그대로다.
+#
+# -필드: (logging.Formatter 와 같음)
+#------------------------------------------------------------------
+class _SpacedFormatter(logging.Formatter):
+    #------------------------------------------------------------------
+    # 로그 한 건 문자열 만들기
+    #
+    # -in: record = logging.LogRecord
+    #
+    # -out: str = 만든 로그(길면 끝에 "\n" 하나 더 — 핸들러가 붙이는 줄바꿈과 합쳐 빈 줄)
+    # -out: error = 없음(부모 format 의 동작 그대로)
+    #------------------------------------------------------------------
+    def format(self, record):
+        s = super().format(record)
+        # 바이트가 아니라 글자 수로 센다 — 한글 로그가 일찍 걸리지 않게.
+        return s + "\n" if len(s) >= LONG_LINE_CHARS else s
+
 
 #------------------------------------------------------------------
 # 기본 로그 파일 경로
@@ -121,6 +148,7 @@ def get_logger(name):
 #       2-1) 파일 핸들러를 붙인 직후, 이번 실행 시작을 알리는 구분선("---")을 파일에
 #            먼저 남겨 이전 실행 로그와 눈으로 구분되게 한다
 #    3) verbose 면 stderr 핸들러도 추가(화면에서 실시간 확인)
+#    ※ 모든 핸들러가 _SpacedFormatter 를 함께 써서, 250자 이상인 로그 뒤에는 빈 줄이 붙는다
 #    4) 핸들러가 하나도 없으면 NullHandler 로 'No handlers' 경고 방지
 #
 # -in: log_path     = 로그 파일 경로(None 이면 파일 로그 없음)
@@ -142,7 +170,8 @@ def setup_logging(log_path=None, verbose=False, err_log_path=None):
         logger.removeHandler(h)
 
     # PID 를 넣어 클라이언트/데몬 로그를 한 파일에서도 구분할 수 있게 한다.
-    fmt = logging.Formatter(
+    # 긴 로그(LONG_LINE_CHARS 글자 이상) 뒤에는 빈 줄이 하나 붙는다 — 일반·오류·화면 로그 모두.
+    fmt = _SpacedFormatter(
         "%(asctime)s [PID %(process)d] %(levelname)s "
         "%(name)s.%(funcName)s:%(lineno)d: %(message)s",
         "%Y-%m-%d %H:%M:%S",
