@@ -553,6 +553,66 @@ pub(crate) fn exclude_spans(hay: &str, excludes: &[String], ci: bool) -> Vec<(us
     spans
 }
 
+//------------------------------------------------------------------
+// 영문 단어 속에 박힌 규칙어 구간 (보안 규칙 전용)
+//=> 한국어는 띄어쓰기가 없어 부분일치로 찾지만, 영문 약어는 부분일치하면 영어 단어 속에서
+//   오탐한다 — 'NDA' 가 'Standard'(sta·nda·rd)에, 'MOU' 가 'mouse' 에 걸린다
+//   (실측 2026-11-18: SmartArt 글 "Standard" 때문에 무등급 문서가 법무·계약 S).
+//   그래서 규칙어의 첫 글자가 영문·숫자면 그 바로 앞이, 끝 글자가 영문·숫자면 그 바로 뒤가
+//   영문·숫자일 때 그 매치를 '단어 속'으로 보고 제외 구간으로 돌려준다.
+//    1) 규칙어 양 끝이 영문·숫자가 아니면(한글 단어 등) 빈 목록 — 지금 동작 그대로
+//    2) count_outside 와 같은 비중첩 순서로 매치를 훑어, 앞뒤 글자를 본다
+//    3) 한글 · 공백 · 기호와 붙은 것은 단어 경계로 본다('NDA체결' · 'NDA_계약' 은 그대로 걸린다)
+//   파이썬 판 rules._glued_spans 와 같은 규칙이다. 업무분류(doctype)에는 쓰지 않는다 —
+//   'Mpower' 가 'MpowerClassify' 에 걸리는 것처럼 붙여 쓴 영문 제품명이 정답 단서라서다.
+//
+// -in: hay    = 검사 대상(대소문자 정책 적용 후)
+// -in: needle = 찾을 규칙어(같은 정책 적용 후)
+//
+// -out: Vec<(usize, usize)> = 단어 속 매치 구간(byte offset)
+// -out: error = 없음
+//------------------------------------------------------------------
+pub(crate) fn glued_spans(hay: &str, needle: &str) -> Vec<(usize, usize)> {
+    let mut spans = vec![];
+    let head_word = needle.chars().next().map_or(false, |c| c.is_ascii_alphanumeric());
+    let tail_word = needle.chars().next_back().map_or(false, |c| c.is_ascii_alphanumeric());
+    // 양 끝이 다 영문·숫자가 아니면 단어 경계를 볼 일이 없다
+    if needle.is_empty() || (!head_word && !tail_word) { return spans; }
+    let mut start = 0;
+    while let Some(i) = hay[start..].find(needle) {
+        let abs = start + i;
+        let end = abs + needle.len();
+        // 규칙어 앞뒤 글자가 영문·숫자로 이어지면 영어 단어의 일부다
+        let before = head_word && hay[..abs].chars().next_back().map_or(false, |c| c.is_ascii_alphanumeric());
+        let after = tail_word && hay[end..].chars().next().map_or(false, |c| c.is_ascii_alphanumeric());
+        if before || after { spans.push((abs, end)); }
+        start = end;
+    }
+    spans
+}
+
+//------------------------------------------------------------------
+// 제외 구간 + 단어 속 구간 (보안 규칙의 한 규칙어용)
+//=> 규칙의 제외어 구간에 그 규칙어의 '영문 단어 속' 매치 구간을 더한다.
+//   영문·숫자로 시작/끝나지 않는 규칙어면 제외어 구간을 그대로 쓴다(복사 없이).
+//
+// -in: ex     = exclude_spans 결과
+// -in: hay    = 검사 대상
+// -in: needle = 규칙어
+//
+// -out: Cow<[(usize, usize)]> = 세지 않을 구간
+// -out: error = 없음
+//------------------------------------------------------------------
+fn word_ex<'a>(ex: &'a [(usize, usize)], hay: &str, needle: &str) -> std::borrow::Cow<'a, [(usize, usize)]> {
+    let glued = glued_spans(hay, needle);
+    if glued.is_empty() {
+        return std::borrow::Cow::Borrowed(ex);
+    }
+    let mut all = ex.to_vec();
+    all.extend(glued);
+    std::borrow::Cow::Owned(all)
+}
+
 /// 제외 구간에 통째로 든 매치는 빼고 needle 등장 횟수(비중첩).
 pub(crate) fn count_outside(hay: &str, needle: &str, ex: &[(usize, usize)]) -> u32 {
     if needle.is_empty() { return 0; }
@@ -671,7 +731,8 @@ pub fn scan_text(text: &str, rs: &RuleSet) -> Sig {
         for term in &rule.terms {
             if term.is_empty() { continue; }
             let needle = if rs.case_insensitive { term.to_lowercase() } else { term.clone() };
-            let c = count_outside(&hay, &needle, &ex);
+            // 영문 약어가 영어 단어 속에 박힌 매치('NDA' ⊂ 'Standard')는 세지 않는다
+            let c = count_outside(&hay, &needle, &word_ex(&ex, &hay, &needle));
             // 그 단어의 최소 횟수 미달(규정 말미 경고 같은 단발 언급)은 센 것으로 치지 않는다.
             let need = rule.term_min_count.get(term).copied().unwrap_or(1);
             if c > 0 && c >= need { per_term.push(json!({"term": term, "count": c})); total += c; }
@@ -699,7 +760,8 @@ pub fn scan_sensitive(text: &str, rs: &RuleSet) -> Sig {
         for term in &rule.terms {
             if term.is_empty() { continue; }
             let needle = if rs.case_insensitive { term.to_lowercase() } else { term.clone() };
-            let c = count_outside(&hay, &needle, &ex);
+            // 영문 단어 속 매치는 세지 않는다(키워드와 같은 규칙)
+            let c = count_outside(&hay, &needle, &word_ex(&ex, &hay, &needle));
             if c > 0 { per_term.push(json!({"term": term, "count": c})); total += c; }
         }
         // 최소 건수 미달(단발 언급)은 민감정보 '보유'로 보지 않는다.
@@ -732,8 +794,9 @@ pub fn scan_stamp(text: &str, rs: &RuleSet) -> Sig {
         for term in &rule.terms {
             if term.is_empty() { continue; }
             let needle = if ci { term.to_lowercase() } else { term.clone() };
-            // 제외어 구간 안의 매치는 세지 않는다(제외어가 없으면 종전 matches().count() 와 같다).
-            let c = count_outside(&hay, &needle, &ex);
+            // 제외어 구간 · 영문 단어 속('confidential' ⊂ 'nonconfidential' 같은 것)의 매치는 세지 않는다.
+            let wex = word_ex(&ex, &hay, &needle);
+            let c = count_outside(&hay, &needle, &wex);
             if c == 0 { continue; }
             total += c;
             if first_term.is_none() { first_term = Some(term); }
@@ -742,7 +805,7 @@ pub fn scan_stamp(text: &str, rs: &RuleSet) -> Sig {
                 let nlen = needle.len();
                 let first_pos = hay.match_indices(needle.as_str())
                     .map(|(i, _)| i)
-                    .find(|&i| !ex.iter().any(|&(s, e)| s <= i && i + nlen <= e));
+                    .find(|&i| !wex.iter().any(|&(s, e)| s <= i && i + nlen <= e));
                 if let Some(pos) = first_pos {
                     // '머리' 판정은 문자수 기준(byte→char 근사): 앞부분 여부.
                     let char_pos = hay[..pos].chars().count();
@@ -785,7 +848,9 @@ pub fn scan_filename(file: &str, rs: &RuleSet) -> Sig {
         let ex = exclude_spans(&base, &rule.exclude, true);
         for term in &rule.filename {
             if term.is_empty() { continue; }
-            if count_outside(&base, &term.to_lowercase(), &ex) > 0 {
+            // 파일 이름에서도 영문 약어는 단어로만 센다('mou' ⊂ 'mouse.pdf' 는 아니다)
+            let needle = term.to_lowercase();
+            if count_outside(&base, &needle, &word_ex(&ex, &base, &needle)) > 0 {
                 grades.push(Grade::from_str(&rule.base_grade));
                 hits.push(json!({"id": rule.id, "name": rule.name, "grade": rule.base_grade, "term": term}));
                 break;
@@ -1035,6 +1100,72 @@ mod sensitive_min_count_tests {
             exclude: vec![], min_count: 1, grade: "C".into(), weight: "high".into(), seed_eligible: false,
         }];
         assert_eq!(scan_sensitive("가", &rs).grade, Some(Grade::C));
+    }
+}
+
+// 영문 약어는 단어로만 센다 — 파이썬 판 tests/test_rules.py::test_ascii_term_word_boundary 와 같은 사례.
+#[cfg(test)]
+mod ascii_word_boundary_tests {
+    use super::*;
+
+    //------------------------------------------------------------------
+    // 배포 규칙 읽기 (시험 도우미)
+    //
+    // -in: 없음
+    //
+    // -out: RuleSet = Rust/resources/policy/cso_rule.yaml
+    // -out: error = 읽기 실패 시 panic
+    //------------------------------------------------------------------
+    fn rs() -> RuleSet {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/policy/cso_rule.yaml");
+        load_rules(&p).unwrap_or_else(|e| panic!("cso_rule.yaml 로드 실패: {}", e))
+    }
+
+    //------------------------------------------------------------------
+    // 그 규칙이 걸렸나 (시험 도우미)
+    //
+    // -in: sig = 스캔 결과 · id = 규칙 id
+    //
+    // -out: bool = 걸렸으면 true
+    // -out: error = 없음
+    //------------------------------------------------------------------
+    fn has(sig: &Sig, id: &str) -> bool {
+        sig.dict["hits"].as_array().map_or(false, |a| a.iter().any(|h| h["id"] == id))
+    }
+
+    #[test]
+    fn glued_spans_marks_only_inside_words() {
+        assert_eq!(glued_spans("standard nda", "nda"), vec![(3, 6)]);
+        assert!(glued_spans("nda체결 (nda) nda_계약", "nda").is_empty());
+        // 영문·숫자로 시작/끝나지 않는 한글 규칙어는 늘 빈 목록
+        assert!(glued_spans("산전과 산후", "전과").is_empty());
+        // 끝이 한글이면 앞만 본다 — 'xdna검사' 는 단어 속, 'dna검사' 는 아니다
+        assert_eq!(glued_spans("xdna검사", "dna검사").len(), 1);
+    }
+
+    #[test]
+    fn nda_inside_standard_is_not_legal() {
+        let rs = rs();
+        // 실측 오탐(2026-11-18) — SmartArt 글 "Standard" 의 'nda'
+        assert!(!has(&scan_text("Standard\n개발자의 개발 과정을 표준화한다.", &rs), "legal_contract"));
+        // 단어로 쓴 NDA · 한글과 붙은 NDA 는 그대로 걸린다
+        assert!(has(&scan_text("상호 NDA 를 체결한다.", &rs), "legal_contract"));
+        assert!(has(&scan_text("NDA체결 후 자료를 준다.", &rs), "legal_contract"));
+        // MOU 도 같다 — mouse · famous 에는 안 걸리고 MOU 에는 걸린다
+        assert!(!has(&scan_text("Click the mouse. A famous place.", &rs), "legal_contract"));
+        assert!(has(&scan_text("업무협약(MOU) 체결", &rs), "legal_contract"));
+    }
+
+    #[test]
+    fn filename_uses_word_boundary() {
+        let rs = rs();
+        let hit = |f: &str| scan_filename(f, &rs).dict["hits"].as_array().map_or(false, |a| !a.is_empty());
+        // 파일명 규칙어에 영문 약어가 없으면 이 시험은 볼 것이 없다 — 배포 규칙에서 하나 고른다
+        let Some(term) = rs.keyword_rules.iter().flat_map(|r| r.filename.iter())
+            .find(|t| t.chars().all(|c| c.is_ascii_alphanumeric()) && t.len() >= 3).cloned()
+        else { return; };
+        assert!(hit(&format!("{}_자료.pdf", term)));
+        assert!(!hit(&format!("x{}x_자료.pdf", term)));
     }
 }
 

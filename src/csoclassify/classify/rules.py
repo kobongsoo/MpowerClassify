@@ -1554,6 +1554,65 @@ def _exclude_spans(hay, excludes, ci):
 
 
 #------------------------------------------------------------------
+# 영문 단어 속에 박힌 규칙어 구간 (보안 규칙 전용)
+#=> 한국어는 띄어쓰기가 없어 부분일치로 찾지만, 영문 약어는 부분일치하면 영어 단어 속에서
+#   오탐한다 — 'NDA' 가 'Standard'(sta·nda·rd)에, 'MOU' 가 'mouse' 에 걸린다
+#   (실측 2026-11-18: SmartArt 글 "Standard" 때문에 무등급 문서가 법무·계약 S).
+#   그래서 규칙어의 첫 글자가 영문·숫자면 그 바로 앞이, 끝 글자가 영문·숫자면 그 바로 뒤가
+#   영문·숫자일 때 그 매치를 '단어 속'으로 보고 제외 구간으로 돌려준다.
+#    1) 규칙어 양 끝이 영문·숫자가 아니면(한글 단어 등) 빈 목록 — 지금 동작 그대로
+#    2) _count_outside 와 같은 비중첩 순서로 매치를 훑어, 앞뒤 글자를 본다
+#    3) 한글 · 공백 · 기호와 붙은 것은 단어 경계로 본다('NDA체결' · 'NDA_계약' 은 그대로 걸린다)
+#   Rust 판 rules::glued_spans 와 같은 규칙이다. 업무분류(doctype)에는 쓰지 않는다 —
+#   'Mpower' 가 'MpowerClassify' 에 걸리는 것처럼 붙여 쓴 영문 제품명이 정답 단서라서다.
+#
+# -in: hay    = 검사 대상(대소문자 정책 적용 후)
+# -in: needle = 찾을 규칙어(같은 정책 적용 후)
+#
+# -out: list[(start,end)] = 단어 속 매치 구간
+# -out: error = 없음
+#------------------------------------------------------------------
+def _glued_spans(hay, needle):
+    if not needle:
+        return []
+    # 영문·숫자 한 글자인가(한글 · 기호 · 공백은 아니다)
+    word = lambda ch: ch.isascii() and ch.isalnum()
+    head_word, tail_word = word(needle[0]), word(needle[-1])
+    # 양 끝이 다 영문·숫자가 아니면 단어 경계를 볼 일이 없다
+    if not (head_word or tail_word):
+        return []
+    spans = []
+    n = len(needle)
+    i = hay.find(needle)
+    while i >= 0:
+        j = i + n
+        # 규칙어 앞뒤 글자가 영문·숫자로 이어지면 영어 단어의 일부다
+        before = head_word and i > 0 and word(hay[i - 1])
+        after = tail_word and j < len(hay) and word(hay[j])
+        if before or after:
+            spans.append((i, j))
+        i = hay.find(needle, j)   # 비중첩(_count_outside 와 같은 진행)
+    return spans
+
+
+#------------------------------------------------------------------
+# 제외 구간 + 단어 속 구간 (보안 규칙의 한 규칙어용)
+#=> 규칙의 제외어 구간에 그 규칙어의 '영문 단어 속' 매치 구간을 더한다.
+#   영문·숫자로 시작/끝나지 않는 규칙어면 제외어 구간을 그대로 돌려준다.
+#
+# -in: ex_spans = _exclude_spans 결과
+# -in: hay      = 검사 대상
+# -in: needle   = 규칙어
+#
+# -out: list[(start,end)] = 세지 않을 구간
+# -out: error = 없음
+#------------------------------------------------------------------
+def _word_ex(ex_spans, hay, needle):
+    glued = _glued_spans(hay, needle)
+    return ex_spans + glued if glued else ex_spans
+
+
+#------------------------------------------------------------------
 # 제외 구간 밖 등장 횟수
 #=> needle 의 비중첩 등장 횟수를 세되, 제외 구간(ex_spans)에 '완전히 포함'되는
 #   매치는 뺀다. 제외 구간이 없으면 str.count 와 동일하다(하위호환).
@@ -1639,8 +1698,8 @@ def _scan_keyword(text, rule, defaults, conf_map=None):
         if not term:
             continue
         needle = term.lower() if defaults.case_insensitive else term
-        # 비중첩 등장 횟수(str.count 동등) 중, 제외 구간에 든 매치는 뺀다.
-        c = _count_outside(haystack, needle, ex_spans)
+        # 비중첩 등장 횟수(str.count 동등) 중, 제외 구간 · 영문 단어 속('NDA' ⊂ 'Standard') 매치는 뺀다.
+        c = _count_outside(haystack, needle, _word_ex(ex_spans, haystack, needle))
         # 그 단어의 최소 횟수 미달(규정 말미 경고 같은 단발 언급)은 센 것으로 치지 않는다.
         if c and c >= min_of.get(term, 1):
             per_term.append((term, c))
@@ -1784,8 +1843,9 @@ def scan_stamp(text, ruleset):
             if not term:
                 continue
             needle = term.lower() if ci else term
-            # 제외어 안의 매치는 뺀다(제외어가 없으면 종전 str.count 와 같다).
-            c = _count_outside(hay, needle, ex_spans)
+            # 제외어 안 · 영문 단어 속 매치는 뺀다(둘 다 없으면 종전 str.count 와 같다).
+            wex = _word_ex(ex_spans, hay, needle)
+            c = _count_outside(hay, needle, wex)
             if not c:
                 continue
             total += c
@@ -1793,7 +1853,7 @@ def scan_stamp(text, ruleset):
                 first_term = term
             # 첫 등장이 문서 '머리' 범위 안이면 head 로 인정(제목/표지 스탬프 정황).
             #   위치도 제외어 밖에서 처음 나온 곳으로 본다.
-            if not head and 0 <= _find_outside(hay, needle, ex_spans) < _STAMP_HEAD_CHARS:
+            if not head and 0 <= _find_outside(hay, needle, wex) < _STAMP_HEAD_CHARS:
                 head, head_term = True, term
 
         if total == 0:
@@ -1907,7 +1967,8 @@ def scan_sensitive(text, ruleset):
             if not term:
                 continue
             needle = term.lower() if ci else term
-            c = _count_outside(hay, needle, ex_spans)
+            # 영문 단어 속 매치는 세지 않는다(키워드와 같은 규칙)
+            c = _count_outside(hay, needle, _word_ex(ex_spans, hay, needle))
             if c:
                 per_term.append((term, c))
                 total += c

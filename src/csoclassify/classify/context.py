@@ -99,7 +99,9 @@ def scan_filename(file, ruleset):
         # 제외어(오탐 방지) 구간 — 내용 스캔과 동일 규칙을 파일명에도 적용(예: '전과' vs '산전과').
         ex_spans = R._exclude_spans(base, getattr(rule, "exclude", ()), True)
         for term in names:
-            if term and R._count_outside(base, term.lower(), ex_spans) > 0:
+            # 파일 이름에서도 영문 약어는 단어로만 센다('mou' ⊂ 'mouse.pdf' 는 아니다)
+            if term and R._count_outside(base, term.lower(),
+                                         R._word_ex(ex_spans, base, term.lower())) > 0:
                 # 어떤 단어가 파일명에 있었는지 term 으로 남긴다(키워드라 노출 안전).
                 hits.append({"id": rule.id, "name": rule.name,
                              "grade": rule.base_grade, "term": term})
