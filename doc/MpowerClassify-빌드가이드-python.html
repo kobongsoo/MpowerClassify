@@ -84,10 +84,20 @@
   <p>파이썬 소스(<code>MpowerClassify\src\</code>)를 <b>PyInstaller</b> 로 묶어 <b>Windows</b>·<b>Linux</b> 배포본을 만드는 전 과정</p>
 </header>
 
+<div class="warn"><b>2026-11-11 변경 — Rust 문서파서 라이브러리(<code>docparse.dll</code> / <code>libdocparse.so</code>)를 함께 묶습니다.</b><br>
+파이썬 판도 이제 Rust 판과 <b>같은 문서파서 라이브러리</b>로 본문을 뽑을 수 있습니다(<code>--extractor rust</code>).
+빌드할 때 달라진 것은 세 가지입니다.
+<ol style="margin:6px 0 0">
+  <li>빌드 전에 <code>third_party/docparse/&lt;os&gt;-x64/</code> 에 라이브러리가 있어야 합니다 → <a href="#docparse">1-1</a></li>
+  <li>spec 이 그 파일을 <b><code>_internal/</code> 에 자동으로</b> 넣습니다(따로 복사할 것 없음)</li>
+  <li>리눅스 소스 묶음에 <code>third_party/docparse/linux-x64</code> 를 함께 올립니다</li>
+</ol>
+<span class="def">기본 파서는 아직 <code>py</code>(지금 파이썬 파서)입니다. 라이브러리가 들어 있어도 <code>--extractor rust</code> 를 주기 전에는 쓰지 않습니다.</span></div>
+
 <section class="card">
   <h3 style="margin-top:16px">목차</h3>
   <ul class="toc">
-    <li><a href="#what">1. 무엇을 만드는가</a></li>
+    <li><a href="#what">1. 무엇을 만드는가</a> · <a href="#docparse">1-1. 문서파서 라이브러리(docparse)</a></li>
     <li><a href="#prep">2. 준비물</a></li>
     <li><a href="#win">3. Windows 배포본 만들기</a></li>
     <li><a href="#linux">4. Linux 배포본 만들기</a></li>
@@ -120,6 +130,7 @@
       <p><b>Windows</b><span class="os">dist-onedir\windows\</span></p>
 <div class="tree">MpowerClassify.exe            <span class="cmt">실행 본체</span>
 _internal\                 <span class="cmt">파이썬 런타임 + 라이브러리</span>
+   └ docparse.dll          <span class="cmt">★문서파서(--extractor rust 일 때 씀) — spec 이 넣음</span>
 cso_rule.yaml             <span class="cmt">보안등급 규칙셋(외장)</span>
 doc_rule.yaml              <span class="cmt">업무분류 규칙셋(외장, 자동 생성 · 분류체계 내장)</span>
 doc_rule.local.yaml        <span class="cmt">회사 조정(있을 때만)</span>
@@ -135,7 +146,7 @@ synap\windows\
     </div>
     <div>
       <p><b>Linux</b><span class="os">dist-onedir/linux/</span></p>
-<div class="tree">MpowerClassify-onedir-linux.tgz  <span class="cmt">실행본체+_internal 압축</span>
+<div class="tree">MpowerClassify-onedir-linux.tgz  <span class="cmt">실행본체+_internal 압축(_internal/libdocparse.so 포함)</span>
 cso_rule.yaml                <span class="cmt">보안등급 규칙셋(외장)</span>
 doc_rule.yaml                 <span class="cmt">업무분류 규칙셋(외장, 자동 생성 · 분류체계 내장)</span>
 doc_rule.local.yaml           <span class="cmt">회사 조정(있을 때만)</span>
@@ -162,6 +173,55 @@ README.txt</div>
     <li><b>기동이 빠르다</b> — 모델(129MB)을 매번 압축 해제하지 않음</li>
     <li><b>라이선스 분리</b> — 사이냅 문서필터는 상용 컴포넌트라 별도 배포</li>
   </ul>
+
+  <h3 id="docparse">1-1. 문서파서 라이브러리(docparse)는 어떻게 붙나 <span class="def">2026-11-11</span></h3>
+  <p>문서 → 본문 추출을 하는 파서가 두 벌 있습니다. 실행할 때 <code>--extractor</code> 로 고릅니다.</p>
+  <div class="scroll"><table>
+    <tr><th>값</th><th>파서</th><th>비고</th></tr>
+    <tr><td><code>py</code> <span class="def">(기본)</span></td><td>지금까지의 파이썬 파서(<code>pypdfium2</code>·<code>olefile</code>·<code>xlrd</code>·자체 HWP5/OOXML 파서 …)</td><td>전환 기간 기본값. 평가셋으로 판정 차이를 확인한 뒤 <code>rust</code> 로 바꿀 예정</td></tr>
+    <tr><td><code>rust</code></td><td><b>Rust 판과 같은 문서파서 라이브러리</b> <code>docparse.dll</code> / <code>libdocparse.so</code></td><td>별도 프로젝트 <code>D:\Project\DocParse-rust</code> 산출물. <b>형식 감지와 압축 펼치기도</b> 같은 라이브러리가 한다</td></tr>
+  </table></div>
+<pre><code>MpowerClassify.exe --dir 폴더 --extractor rust          <span class="cmt">:: 이번 실행만</span>
+set CSOCLASSIFY_EXTRACTOR=rust                           <span class="cmt">:: 배치·스크립트 — 환경변수로 (인자가 환경변수보다 앞선다)</span></code></pre>
+  <p class="def"><b>상주 데몬(<code>--embed --daemon</code>)도 같은 설정을 따릅니다</b> <span class="def">2026-11-11</span> — 클라이언트가 고른 <code>--hybridparse</code>·<code>--extractor</code> 를 요청에 실어 보내고, 데몬이 그 조합의 추출기로 읽습니다.
+  예전에는 데몬이 사이냅 단독으로 고정돼 두 옵션이 무시됐고, 사이냅이 없는 PC 에서는 데몬이 뜨지 못해 매번 in-process 로 폴백했습니다.
+  <b>배포본을 바꾼 뒤에는 떠 있던 데몬을 <code>MpowerClassify --stop</code> 으로 한 번 내리세요</b> — 버전 번호가 같으면 클라이언트가 옛 데몬을 그대로 쓰기 때문입니다.</p>
+  <p class="def"><code>--synap-only</code> 로 돌리면 모든 문서를 사이냅이 읽으므로 이 스위치와 상관없이 docparse 를 쓰지 않습니다.
+  자체 파서가 못 읽은 문서를 사이냅으로 넘기는 폴백 사슬과 본문 정제(<code>clean_text</code>)는 <code>rust</code> 일 때도 지금처럼 파이썬이 맡습니다.</p>
+
+  <div class="scroll"><table>
+    <tr><th>어디에</th><th>무엇이</th></tr>
+    <tr><td><code>third_party/docparse/windows-x64/</code></td><td><code>docparse.dll</code> · <code>pdfium.dll</code> · <code>VERSION</code> — <b>버전을 고정해 둔 정본</b></td></tr>
+    <tr><td><code>third_party/docparse/linux-x64/</code></td><td><code>libdocparse.so</code> · <code>libpdfium.so</code> · <code>VERSION</code></td></tr>
+    <tr><td><code>src/csoclassify/extract/_docparse.py</code></td><td>라이브러리를 <code>ctypes</code> 로 여는 얇은 층. 정본은 <code>DocParse-rust/bindings/python/</code> 에 있고 이 파일은 복사본</td></tr>
+    <tr><td><code>src/csoclassify/extract/rust_engine.py</code></td><td>라이브러리를 기존 추출기 모양(<code>TextExtractor</code>)으로 감싸 형식별 엔진 표에 꽂는 곳</td></tr>
+    <tr><td><code>build/csoclassify.spec</code></td><td>빌드할 때 <code>third_party</code> 의 라이브러리를 <b><code>_internal/</code>(=<code>sys._MEIPASS</code>)</b>에 넣음 → <a href="#spec">6장</a></td></tr>
+  </table></div>
+
+  <p><b>실행할 때 찾는 순서</b> — ①이나 ②가 정해지면 <b>그 자리만</b> 봅니다(없으면 1017). 둘 다 없을 때 ③부터 차례로 찾습니다.</p>
+<pre><code>① 환경변수 CSO_DOCPARSE              <span class="cmt">파일·폴더 모두 가능 (Rust 판과 같은 이름)</span>
+② 저장소 third_party/docparse/&lt;os&gt;-x64/  <span class="cmt">소스로 실행할 때만(개발 PC). 배포본(exe)에서는 건너뜀</span>
+③ 환경변수 DOCPARSE_LIB              <span class="cmt">감싸개 기본 이름</span>
+④ 감싸개 폴더 · 그 아래 lib/
+⑤ _internal (sys._MEIPASS)           <span class="cmt">배포본은 여기 — spec 이 넣어 둔 자리</span>
+⑥ 실행파일 옆                        <span class="cmt">exe 옆에 둬도 찾는다</span></code></pre>
+  <ul>
+    <li><code>--extractor rust</code> 를 고르면 <b>문서를 읽기 전에</b> 라이브러리를 불러 봅니다. 못 불러오면 조용히 <code>py</code> 로 넘어가지 않고
+      <b>종료코드 1017(<code>extractor_missing</code>)</b>로 멈춥니다 — 몰래 파서가 바뀌면 판정이 몰래 바뀌기 때문입니다 → <a href="#trouble">8-⑨</a></li>
+    <li>불러오면서 <b>ABI 버전</b>(함수 모양 번호, 지금 <code>1</code>)을 맞춰 봅니다. 다르면 역시 1017 입니다.</li>
+    <li>일반 로그(<code>--log</code>)에 고른 파서와 불러온 파일을 한 줄 남깁니다. 배포본 확인 때 이 줄을 봅니다.
+<pre style="margin:6px 0 0"><code>실행 자체파서=rust docparse=0.1.0+b9704d2 lib=…\_internal\docparse.dll pdfium=…</code></pre>
+      <span class="def"><code>py</code> 면 <code>실행 자체파서=py</code> 만 남습니다.</span></li>
+    <li><b>pdfium</b> 은 docparse 가 대신 엽니다. 파이썬 쪽이 <code>CSO_PDFIUM</code> → 실행파일 옆·<code>_internal</code> → <code>pypdfium2_raw</code> 패키지 폴더 순으로 찾아 위치를 넘겨 주므로, 따로 넣을 것은 없습니다.</li>
+  </ul>
+
+  <div class="note"><b>문서파서를 새 판으로 바꾸려면</b><br>
+  DocParse-rust 쪽에서 만든 묶음을 이 저장소에서 아래 한 줄로 받아 넣습니다.
+  <code>third_party/docparse/</code> 를 갈아 끼우고, 감싸개 두 개(<code>src/csoclassify/extract/_docparse.py</code>·<code>Rust/src/docparse_dyn.rs</code>)도 함께 바꿉니다.
+<pre style="margin:6px 0 0"><code>bash scripts/build/update-docparse.sh                 <span class="cmt"># ../DocParse-rust/dist 의 가장 새 묶음</span>
+bash scripts/build/update-docparse.sh &lt;묶음.zip&gt; &lt;묶음.tgz&gt;   <span class="cmt"># 직접 지정</span></code></pre>
+  그 뒤 PyInstaller 로 다시 빌드하면 새 dll 이 <code>_internal</code> 에 들어갑니다.
+  <b>ABI 버전이 같으면</b> 다시 빌드하지 않고 배포본 <code>_internal\docparse.dll</code> 만 바꿔도 됩니다.</div>
 </section>
 
 
@@ -194,7 +254,8 @@ README.txt</div>
     <tr><td><code>numpy</code></td><td>벡터 연산·풀링</td></tr>
     <tr><td><code>PyYAML</code></td><td><code>cso_rule.yaml</code> 규칙셋 로드</td></tr>
     <tr><td><code>ko-pii==1.15.2</code></td><td>L1 PII 검출 엔진 <span class="def">(버전 고정 — 검출 결과가 바뀌면 등급이 달라짐)</span></td></tr>
-    <tr><td><code>olefile</code> · <code>pypdfium2</code> · <code>xlrd</code></td><td>하이브리드 추출(<code>--hybridparse</code>) — hwp5/구형 doc·ppt, PDF, 구형 xls</td></tr>
+    <tr><td><code>olefile</code> · <code>pypdfium2</code> · <code>xlrd</code></td><td>하이브리드 추출(<code>--hybridparse</code>) — hwp5/구형 doc·ppt, PDF, 구형 xls <span class="def">(<code>--extractor py</code> 일 때. <code>rust</code> 면 docparse 가 대신하지만 전환 기간이라 그대로 둔다)</span></td></tr>
+    <tr><td><span class="def">(pip 아님)</span> 문서파서 라이브러리</td><td><code>third_party/docparse/&lt;os&gt;-x64/</code> 의 <code>docparse.dll</code> / <code>libdocparse.so</code> — <code>ctypes</code> 로 불러 쓰므로 설치할 패키지가 없다 → <a href="#docparse">1-1</a></td></tr>
     <tr><td><code>py7zr</code> · <code>rarfile</code></td><td>압축파일 확장(7z / rar)</td></tr>
     <tr><td><code>pyinstaller</code></td><td>패키징 도구 <span class="def">(빌드 전용)</span></td></tr>
   </table></div>
@@ -243,6 +304,15 @@ pip install -r requirements.txt</code></pre>
   </div>
 
   <div class="step">
+    <h4><span class="num">2-1</span> 문서파서 라이브러리가 있는지 확인 <span class="pill">2026-11-11 추가</span></h4>
+<pre><code>dir third_party\docparse\windows-x64
+type third_party\docparse\VERSION</code></pre>
+    <div class="ok"><code>docparse.dll</code> 이 보이고 VERSION 에 <code>0.1.0+b9704d2</code> 같은 값이 나오면 됩니다.</div>
+    <p class="def">없으면 DocParse-rust 에서 받은 묶음을 <code>bash scripts/build/update-docparse.sh</code> 로 먼저 넣으세요(<a href="#docparse">1-1</a>).
+    없어도 빌드는 되지만 <code>[spec] 경고: 문서파서 라이브러리가 없습니다</code> 가 뜨고, 그 배포본은 <code>--extractor rust</code> 에서 1017 로 멈춥니다(기본 <code>py</code> 는 정상).</p>
+  </div>
+
+  <div class="step">
     <h4><span class="num">3</span> 빌드</h4>
     <p><b>반드시 프로젝트 최상위 폴더</b>(<code>D:\Project\MpowerClassify</code>)에서 실행합니다.
     spec 파일이 <code>os.getcwd()</code> 를 기준으로 <code>src\</code> 를 찾기 때문입니다.</p>
@@ -253,7 +323,9 @@ pyinstaller build\csoclassify.spec</code></pre>
     <p>가 나오면 성공. 결과물은 <code>dist\MpowerClassify\</code> 입니다.</p>
 <div class="tree">dist\MpowerClassify\
    ├ MpowerClassify.exe      <span class="cmt">실행 본체</span>
-   └ _internal\           <span class="cmt">파이썬 런타임 + 라이브러리 (약 115MB)</span></div>
+   └ _internal\           <span class="cmt">파이썬 런타임 + 라이브러리 (약 115MB)</span>
+        └ docparse.dll     <span class="cmt">문서파서 — spec 이 third_party 에서 넣음</span></div>
+<pre><code>dir dist\MpowerClassify\_internal\docparse.dll     <span class="cmt">:: 있어야 정상</span></code></pre>
     <div class="note"><code>WARNING:</code> 줄은 대부분 무시해도 됩니다. 중요한 것은 <b>맨 마지막에
     <code>completed successfully</code> 가 나오는지</b>와, 7장의 실행 테스트가 통과하는지입니다.</div>
   </div>
@@ -263,7 +335,7 @@ pyinstaller build\csoclassify.spec</code></pre>
     <p>빌드 결과에 <b>외장 리소스</b>를 붙여야 완성입니다.</p>
 <pre><code>cd /d D:\Project\MpowerClassify
 
-<span class="cmt">:: (1) 실행본체 + 런타임</span>
+<span class="cmt">:: (1) 실행본체 + 런타임 (_internal\docparse.dll 도 여기에 같이 들어 있다 — 따로 복사할 것 없음)</span>
 xcopy /E /I /Y dist\MpowerClassify  dist-onedir\windows
 
 <span class="cmt">:: (2) 규칙셋(보안등급 · 업무분류) · 전파 seed</span>
@@ -347,7 +419,13 @@ for %F in (doc_rule.yaml doc_rule.local.yaml) do @(
     <h4><span class="num">5</span> 동작 확인</h4>
 <pre><code>cd /d D:\Project\MpowerClassify\dist-onedir\windows
 MpowerClassify.exe --help
-MpowerClassify.exe --file "샘플.hwp"</code></pre>
+MpowerClassify.exe --file "샘플.hwp"
+
+<span class="cmt">:: 문서파서 라이브러리로 읽히는지</span>
+MpowerClassify.exe --file "샘플.hwp" --extractor rust --log run.log
+findstr "자체파서" run.log</code></pre>
+    <div class="ok"><code>실행 자체파서=rust docparse=0.1.0+… lib=…\dist-onedir\windows\_internal\docparse.dll</code> 이 나오면
+    <b>배포본에 실린 dll 을 불러 쓴 것</b>입니다. lib 경로가 다른 곳이면 <code>CSO_DOCPARSE</code> 환경변수가 걸려 있는지 보세요.</div>
     <p>첫 실행은 모델을 메모리에 올리느라 수십 초 걸릴 수 있습니다(정상). 자세한 확인은 <a href="#verify">7장</a>.</p>
   </div>
 </section>
@@ -379,9 +457,12 @@ MpowerClassify.exe --file "샘플.hwp"</code></pre>
 
   <div class="step">
     <h4><span class="num">1</span> 소스를 압축해서 서버로 보내기</h4>
-    <p>보낼 것은 <b>소스와 spec 뿐</b>입니다. 모델(129MB)·사이냅은 서버에 이미 있거나 별도로 배치합니다.</p>
+    <p>보낼 것은 <b>소스와 spec, 그리고 문서파서 라이브러리</b>입니다. 모델(129MB)·사이냅은 서버에 이미 있거나 별도로 배치합니다.</p>
 <pre><code>cd /d/Project/MpowerClassify
-tar -czf /tmp/cso_src.tgz src build requirements.txt
+tar -czf /tmp/cso_src.tgz src build requirements.txt \
+    third_party/docparse/linux-x64 third_party/docparse/VERSION
+<span class="cmt"># ★ third_party/docparse/linux-x64 = libdocparse.so — spec 이 _internal/ 에 넣는다.</span>
+<span class="cmt">#   빠뜨려도 빌드는 되지만 그 배포본은 --extractor rust 에서 1017 로 멈춘다.</span>
 
 plink -batch -ssh -l &lt;계정&gt; -pw '&lt;PW&gt;' &lt;빌드서버&gt; "mkdir -p &lt;파이썬빌드폴더&gt;"
 pscp  -batch -pw '&lt;PW&gt;' /tmp/cso_src.tgz &lt;계정&gt;@&lt;빌드서버&gt;:&lt;파이썬빌드폴더&gt;/</code></pre>
@@ -397,6 +478,7 @@ python -V                <span class="cmt"># Python 3.13.5</span>
 pyinstaller --version    <span class="cmt"># 6.22.0</span>
 
 cd &lt;파이썬빌드폴더&gt;
+rm -rf third_party          <span class="cmt"># 옛 판 라이브러리가 섞이지 않게</span>
 tar xzf cso_src.tgz</code></pre>
     <p>패키지가 빠져 있으면 설치합니다.</p>
 <pre><code>pip install -r requirements.txt</code></pre>
@@ -411,7 +493,8 @@ tar xzf cso_src.tgz</code></pre>
 pyinstaller build/csoclassify.spec 2&gt;&amp;1 | tee build.log</code></pre>
     <p>결과물은 <code>dist/MpowerClassify/</code> 입니다.</p>
 <pre><code>ls -la dist/MpowerClassify/
-<span class="cmt"># MpowerClassify (약 8.5MB, ELF) + _internal/</span></code></pre>
+<span class="cmt"># MpowerClassify (약 8.5MB, ELF) + _internal/</span>
+ls -la dist/MpowerClassify/_internal/libdocparse.so      <span class="cmt"># 문서파서 — 있어야 정상</span></code></pre>
     <div class="note"><b>venv 로 빌드한다면</b> — <code>--system-site-packages</code> venv 에서는
     <code>sys.prefix/lib</code> 에 <code>libstdc++.so.6</code> 가 없습니다. 이때는 conda 라이브러리 경로를 직접 알려줍니다.
 <pre style="margin:8px 0 0"><code>export CSO_EXTRA_LIBDIR=&lt;conda환경&gt;/lib
@@ -422,7 +505,11 @@ pyinstaller build/csoclassify.spec</code></pre></div>
     <h4><span class="num">4</span> 서버에서 동작 확인</h4>
 <pre><code>cd &lt;파이썬빌드폴더&gt;/dist/MpowerClassify
 ./MpowerClassify --help
-./MpowerClassify --classify --file /tmp/샘플.txt --cso-rules /경로/cso_rule.yaml</code></pre>
+./MpowerClassify --classify --file /tmp/샘플.txt --cso-rules /경로/cso_rule.yaml
+
+<span class="cmt"># 문서파서 라이브러리로 읽히는지</span>
+./MpowerClassify --classify --file /tmp/샘플.hwp --cso-rules /경로/cso_rule.yaml --extractor rust --log /tmp/py.log
+grep 자체파서 /tmp/py.log      <span class="cmt"># lib=…/_internal/libdocparse.so 여야 함</span></code></pre>
     <div class="bad"><code>ImportError: … CXXABI_1.3.9 not found</code> 가 나오면
     <code>_internal/libstdc++.so.6</code> 가 안 들어간 것입니다 → <a href="#trouble">8-①</a></div>
   </div>
@@ -558,6 +645,9 @@ python scripts/quantize_onnx.py --model e5-small-ko</code></pre>
     <tr><td><code>CSOCLASSIFY_POLICY_DIR</code></td><td>규칙셋 폴더 <span class="def">(<code>--cso-rules</code> 로도 지정 가능)</span></td></tr>
     <tr><td><code>CSOCLASSIFY_MODELS_DIR</code></td><td>임베딩 모델 폴더</td></tr>
     <tr><td><code>CSOCLASSIFY_SYNAP_DIR</code></td><td>사이냅 추출기 폴더</td></tr>
+    <tr><td><code>CSOCLASSIFY_EXTRACTOR</code></td><td>자체 파서 고르기 — <code>py</code>(기본) · <code>rust</code>(docparse). <code>--extractor</code> 가 이 값보다 앞선다. 다른 값이면 종료코드 1003(<code>bad_args</code>)</td></tr>
+    <tr><td><code>CSO_DOCPARSE</code></td><td>문서파서 라이브러리 파일·폴더. 정하면 그 자리만 본다 <span class="def">(Rust 판과 같은 이름)</span></td></tr>
+    <tr><td><code>CSO_PDFIUM</code></td><td>pdfium 라이브러리 파일 <span class="def">(<code>--extractor rust</code> 일 때 docparse 에 넘김)</span></td></tr>
     <tr><td><code>CSO_EXTRA_LIBDIR</code></td><td><b>빌드 시에만</b> — <code>libstdc++.so.6</code> 를 찾을 경로(리눅스)</td></tr>
   </table></div>
 </section>
@@ -586,6 +676,13 @@ python scripts/quantize_onnx.py --model e5-small-ko</code></pre>
       <td>동적으로 import 되는 모듈을 명시</td>
       <td>PyInstaller 는 코드에 적힌 <code>import</code> 만 추적합니다.
         문자열로 불러오는 모듈은 <b>직접 적어줘야</b> 실행 시 <code>ModuleNotFoundError</code> 가 안 납니다</td>
+    </tr>
+    <tr>
+      <td><code>binaries</code> <span class="def">(두 OS)</span> <span class="def">2026-11-11</span></td>
+      <td><code>third_party/docparse/&lt;os&gt;-x64/</code> 의 <code>docparse.dll</code> / <code>libdocparse.so</code> 를 <code>_internal/</code> 최상위(<code>"."</code>)에 넣음</td>
+      <td><code>_docparse.py</code> 가 실행 중에 <code>sys._MEIPASS</code>(=<code>_internal</code>)에서 이 파일을 찾습니다.
+        <code>import</code> 로 불러오는 것이 아니라 PyInstaller 가 스스로 알아채지 못하므로 직접 적어 둡니다.
+        파일이 없으면 <code>[spec] 경고</code> 만 찍고 넘어갑니다(빌드는 됨). 같은 이유로 <code>hiddenimports</code> 에 <code>csoclassify.extract._docparse</code>·<code>rust_engine</code> 이 들어 있습니다</td>
     </tr>
     <tr>
       <td><code>binaries</code> <span class="def">(리눅스만)</span></td>
@@ -624,6 +721,11 @@ python scripts/quantize_onnx.py --model e5-small-ko</code></pre>
     <tr><td>2</td><td>규칙셋을 찾는가</td><td><code>MpowerClassify --file 샘플.txt</code></td><td>등급 출력<br><span class="def">못 찾으면 안내 후 종료코드 3</span></td></tr>
     <tr><td>3</td><td>임베딩 모델 로드</td><td><code>MpowerClassify --embed --file 샘플.txt</code></td><td>384차원 벡터 출력</td></tr>
     <tr><td>4</td><td>하이브리드 추출</td><td><code>MpowerClassify --dir 폴더 -r --hybridparse</code></td><td>pdf·hwp·docx 모두 등급이 매겨짐</td></tr>
+    <tr><td>4-1</td><td><b>문서파서 라이브러리</b><br><span class="def">(docparse)</span> <span class="def">2026-11-11 추가</span></td>
+        <td><code>MpowerClassify --dir 폴더 -r --extractor rust --log run.log</code></td>
+        <td>로그에 <code>실행 자체파서=rust docparse=&lt;VERSION 값&gt; lib=…_internal…docparse</code>, 결과는 4번과 같은 등급<br>
+            <span class="def">버전이 <code>third_party/docparse/VERSION</code> 과 같아야 합니다. 종료코드 1017 이면 <a href="#trouble">8-⑨</a>.
+            같은 폴더를 Rust 판(<code>MpowerClassify-rs</code>)으로 돌린 결과와 견주면 두 판이 같은 파서를 쓰는지 바로 보입니다</span></td></tr>
     <tr><td>5</td><td><b>기준 문서 등록이 되는가</b> <span class="def">2026-09-08 추가</span></td>
         <td><code>MpowerClassify --seed-add 샘플.txt --seed-grade C<br>
             &nbsp;&nbsp;--seed-reviewer "확인"</code></td>
@@ -729,8 +831,25 @@ if head[:8] == _OLE_MAGIC:</code></pre>
   사이냅이 뽑던 것과 규칙 판정 면에서 동등합니다. 달라지는 것은 <b>사이냅이 없는 환경</b>뿐으로,
   <code>검출 5 → 10</code>, <code>추출실패 7 → 0</code> 이 됩니다.</div>
   <div class="note">Rust 판(<code>MpowerClassify-rs</code>)은 CFB 컨테이너를 직접 열어 판정하므로
-  이 버그와 무관합니다. 재빌드가 필요 없습니다.</div>
+  이 버그와 무관합니다. 재빌드가 필요 없습니다.
+  <span class="def"><code>--extractor rust</code> 로 돌리면 감지도 docparse 가 하므로 마찬가지로 이 버그와 무관합니다.</span></div>
   <p class="def">PyInstaller 는 중간 산출물을 캐시합니다. spec 을 고쳤는데 반영이 안 되면 지우고 다시 빌드하세요.</p>
+
+  <h3>⑨ 종료코드 <code>1017</code> — <code>extractor_missing</code> <span class="os">공통</span> <span class="def">2026-11-11</span></h3>
+<pre><code>[MpowerClassify] --extractor rust 를 골랐지만 docparse 라이브러리를 불러오지 못했습니다: 문서파서 라이브러리(docparse.dll)를 찾을 수 없습니다 — 찾아본 곳: … (docparse.dll / libdocparse.so 를 실행파일 옆에 두거나 CSO_DOCPARSE 로 알려 주세요)</code></pre>
+  <p><code>--extractor rust</code>(또는 <code>CSOCLASSIFY_EXTRACTOR=rust</code>)인데 문서파서 라이브러리를 못 불러온 것입니다. 기본 <code>py</code> 에서는 나지 않습니다.</p>
+  <div class="scroll"><table>
+    <tr><th>메시지</th><th>원인</th><th>해결</th></tr>
+    <tr><td><code>…를 찾을 수 없습니다 — 찾아본 곳: …</code></td><td>빌드 때 <code>third_party/docparse</code> 가 없어 <code>_internal</code> 에 안 들어감</td>
+        <td>2-1 을 한 뒤 다시 빌드. 급하면 <code>third_party/docparse/&lt;os&gt;-x64/</code> 의 파일을 배포본 <code>_internal/</code> 이나 exe 옆에 복사</td></tr>
+    <tr><td>찾아본 곳이 엉뚱한 한 군데뿐</td><td><code>CSO_DOCPARSE</code> 가 걸려 있으면 그 자리만 봄</td>
+        <td>환경변수를 지우거나 맞는 경로로</td></tr>
+    <tr><td><code>ABI 버전이 다릅니다: 라이브러리 N / 감싸개 1</code></td><td>dll 만 새 판(또는 옛 판)으로 바꿨는데 함수 모양 번호가 다름</td>
+        <td><code>update-docparse.sh</code> 로 감싸개(<code>_docparse.py</code>)까지 함께 바꾸고 다시 빌드</td></tr>
+    <tr><td><code>OSError: … cannot open shared object</code> 등</td><td>다른 OS 용 파일이거나, 리눅스에서 의존 .so 를 못 찾음</td>
+        <td>리눅스는 <code>ldd _internal/libdocparse.so</code> 로 <code>not found</code> 가 없는지 확인</td></tr>
+  </table></div>
+  <p class="def">조용히 <code>py</code> 로 넘어가지 않고 멈추는 것은 일부러입니다 — 고른 파서와 다른 파서로 돌면 판정이 몰래 달라지기 때문입니다.</p>
 </section>
 
 
@@ -744,7 +863,9 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 
+dir third_party\docparse\windows-x64\docparse.dll   <span class="cmt">:: 문서파서 — 없으면 update-docparse.sh 먼저</span>
 pyinstaller build\csoclassify.spec
+dir dist\MpowerClassify\_internal\docparse.dll      <span class="cmt">:: spec 이 넣었는지</span>
 
 xcopy /E /I /Y dist\MpowerClassify dist-onedir\windows
 copy  /Y resources\policy\cso_rule.yaml dist-onedir\windows\
@@ -758,10 +879,12 @@ xcopy /E /I /Y resources\models\e5-small-ko dist-onedir\windows\models\e5-small-
 xcopy /E /I /Y ..\MpowerAI_v10\pympower_ext\common\filter4-v4.29.0-windows_64bit_VC9\v4 dist-onedir\windows\synap\windows
 
 dist-onedir\windows\MpowerClassify.exe --help</code></pre>
+  <p class="def">같은 일을 스크립트로: <code>bash scripts/build/win-deploy.sh python</code> (빌드 뒤 <code>_internal\docparse.dll</code> 이 들어갔는지도 검사합니다)</p>
 
   <h3>B. Linux <span class="def">(1) Windows(Git Bash) 에서 업로드</span></h3>
 <pre><code>cd /d/Project/MpowerClassify
-tar -czf /tmp/cso_src.tgz src build requirements.txt
+tar -czf /tmp/cso_src.tgz src build requirements.txt \
+    third_party/docparse/linux-x64 third_party/docparse/VERSION
 plink -batch -ssh -l &lt;계정&gt; -pw '&lt;PW&gt;' &lt;빌드서버&gt; "mkdir -p &lt;파이썬빌드폴더&gt;"
 pscp  -batch -pw '&lt;PW&gt;' /tmp/cso_src.tgz &lt;계정&gt;@&lt;빌드서버&gt;:&lt;파이썬빌드폴더&gt;/</code></pre>
 
@@ -770,10 +893,11 @@ pscp  -batch -pw '&lt;PW&gt;' /tmp/cso_src.tgz &lt;계정&gt;@&lt;빌드서버&g
 conda activate &lt;환경이름&gt;
 
 cd &lt;파이썬빌드폴더&gt;
-tar xzf cso_src.tgz
+rm -rf third_party &amp;&amp; tar xzf cso_src.tgz
 pyinstaller build/csoclassify.spec 2&gt;&amp;1 | tee build.log
 
 ls -la dist/MpowerClassify/_internal/libstdc++.so.6   <span class="cmt"># 있어야 정상</span>
+ls -la dist/MpowerClassify/_internal/libdocparse.so   <span class="cmt"># 있어야 정상(문서파서)</span>
 cd dist &amp;&amp; tar czf /tmp/MpowerClassify-onedir-linux.tgz MpowerClassify
 ls -lh /tmp/MpowerClassify-onedir-linux.tgz</code></pre>
 
@@ -803,7 +927,8 @@ chmod +x MpowerClassify synap/linux/snf_exe
   MpowerClassify(원본 · Python) 빌드 가이드 — 2026-08-26 기준<br>
   확인 조합: Windows Python 3.12.10 + PyInstaller 6.22.0 · Linux conda <code>bong</code> Python 3.13.5 + PyInstaller 6.22.0 (CentOS 7.9, glibc 2.17)<br>
   <span class="def">2026-08-26 변경 — <code>detect.py</code> OLE 매직 판정 수정(8-⑧). <code>--hybridparse</code> 가 구형
-  <code>.doc</code>/<code>.xls</code>/<code>.ppt</code>/<code>.hwp</code> 를 사이냅 없이 처리합니다. 기준값은 7장.</span>
+  <code>.doc</code>/<code>.xls</code>/<code>.ppt</code>/<code>.hwp</code> 를 사이냅 없이 처리합니다. 기준값은 7장.</span><br>
+  <span class="def">2026-11-11 변경 — Rust 문서파서 라이브러리(<code>docparse.dll</code> / <code>libdocparse.so</code>, VERSION <code>0.1.0+b9704d2</code>)를 <code>_internal</code> 에 묶고 <code>--extractor rust</code> 로 고를 수 있게 했습니다(1-1 · 6장 · 8-⑨).</span>
 </footer>
 
 </div>

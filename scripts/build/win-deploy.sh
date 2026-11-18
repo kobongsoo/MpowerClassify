@@ -64,6 +64,15 @@ $stray
     else
         echo "  [경고] third_party/docparse/windows-x64/docparse.dll 이 없어 문서파서 없이 만듭니다 — 배포본에서 --extractor rust 를 쓸 수 없습니다"
     fi
+    # 개인정보 검출 라이브러리(--pii-engine moaipii) — 설계: D:\Project\MoAI-pii\plan\MoAI-pii-개인정보검출-라이브러리분리-설계-20261117.html §6
+    # 별도 프로젝트(MoAI-pii)가 만든 moaipii.dll 을 third_party/moaipii 에 받아 두고, spec 이 묶는다.
+    local with_moaipii=""
+    if [ -f third_party/moaipii/windows-x64/moaipii.dll ]; then
+        with_moaipii=1
+        echo "  moaipii $(cat third_party/moaipii/VERSION 2>/dev/null || echo '?')"
+    else
+        echo "  [경고] third_party/moaipii/windows-x64/moaipii.dll 이 없어 개인정보 검출 라이브러리 없이 만듭니다 — 배포본에서 --pii-engine moaipii 를 쓸 수 없습니다"
+    fi
 
     python -m PyInstaller -y build/csoclassify.spec >/dev/null 2>&1 \
         || die "PyInstaller 빌드 실패 — 'python -m PyInstaller build/csoclassify.spec' 로 로그를 보세요"
@@ -72,6 +81,10 @@ $stray
     if [ -n "$with_docparse" ]; then
         [ -f dist/MpowerClassify/_internal/docparse.dll ] \
             || die "배포본에 docparse.dll 이 없습니다 — build/csoclassify.spec 의 binaries 를 보세요"
+    fi
+    if [ -n "$with_moaipii" ]; then
+        [ -f dist/MpowerClassify/_internal/moaipii.dll ] \
+            || die "배포본에 moaipii.dll 이 없습니다 — build/csoclassify.spec 의 binaries 를 보세요"
     fi
     [ -d dist/MpowerClassify/_internal ] || die "빌드 결과에 _internal 이 없습니다"
 
@@ -112,6 +125,9 @@ build_rust() {
     # 문서파서(docparse.dll)는 별도 프로젝트 산출물이다 — 받아 둔 것이 없으면 시험·실행 모두 1017 로 멈춘다.
     [ -f third_party/docparse/windows-x64/docparse.dll ] \
         || die "third_party/docparse/windows-x64/docparse.dll 이 없습니다 (scripts/build/update-docparse.sh 로 받으세요)"
+    # 개인정보 검출(moaipii.dll)도 별도 프로젝트(MoAI-pii) 산출물이다 — 없으면 분류 전에 1018 로 멈춘다.
+    [ -f third_party/moaipii/windows-x64/moaipii.dll ] \
+        || die "third_party/moaipii/windows-x64/moaipii.dll 이 없습니다 (scripts/build/update-moaipii.sh 로 받으세요)"
     ( cd Rust && cargo test >/dev/null 2>&1 ) || die "cargo test 실패 — 'cd Rust && cargo test' 로 보세요"
     ( cd Rust && cargo build --release >/dev/null 2>&1 ) || die "cargo build --release 실패"
     [ -f Rust/target/release/MpowerClassify-rs.exe ] || die "빌드 결과에 실행파일이 없습니다"
@@ -125,6 +141,8 @@ build_rust() {
     cp Rust/target/release/MpowerClassify-rs.exe "$RS_DIST/" || die "실행파일 복사 실패"
     # 문서파서 라이브러리는 실행파일 옆에 둔다(없으면 문서를 읽기 전에 1017 로 멈춘다).
     cp third_party/docparse/windows-x64/docparse.dll "$RS_DIST/" || die "docparse.dll 복사 실패"
+    # 개인정보 검출 라이브러리도 실행파일 옆에 둔다(없으면 분류 전에 1018 로 멈춘다).
+    cp third_party/moaipii/windows-x64/moaipii.dll "$RS_DIST/" || die "moaipii.dll 복사 실패"
     ( cd "$RS_DIST" && ./MpowerClassify-rs.exe --version >/dev/null 2>&1 ) \
         || die "갈아 끼운 배포본이 실행되지 않습니다"
     echo "  실행파일 $(ls -la "$RS_DIST/MpowerClassify-rs.exe" | awk '{print $5}') B"

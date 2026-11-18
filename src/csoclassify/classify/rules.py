@@ -130,6 +130,101 @@ except Exception as _e:   # pragma: no cover - ko-pii 미설치 환경에서만
     _ACCT_CELL_RE = None
     _DIGITS4_RE = None
 
+# ── PII 엔진 고르기: ko-pii(파이썬) ↔ moaipii(라이브러리) ─────────────────────
+# 설계: D:\Project\MoAI-pii\plan\MoAI-pii-개인정보검출-라이브러리분리-설계-20261117.html §7
+#   moaipii 는 Rust 판이 쓰는 것과 '같은' 개인정보 검출 라이브러리(moaipii.dll / libmoaipii.so)다.
+#   전환 기간에는 --pii-engine(config.PII_ENGINE) 으로 고른다. 기본은 kopii — 평가셋으로
+#   판정 차이를 잰 뒤 moaipii 로 바꾸고, 그다음 판에서 ko-pii 갈래를 지운다.
+#   moaipii 는 문서 전체를 한 번에 본다 — 아래 청크·100만 자 상한은 kopii 갈래에만 걸린다.
+PII_ENGINES = ("kopii", "moaipii")
+# 라이브러리가 모르는 라벨은 한 번만 알린다(문서마다 같은 경고가 쌓이지 않게).
+_MOAIPII_UNKNOWN_WARNED = set()
+
+
+#------------------------------------------------------------------
+# 지금 쓰는 PII 엔진 이름
+#=> config.PII_ENGINE 을 읽는다(cli 의 check_pii_engine_args 가 --pii-engine 으로 새긴다).
+#
+# -in: 없음
+#
+# -out: str = "kopii" | "moaipii"
+# -out: error = 없음(모르는 값은 kopii 로 본다 — 값 검사는 cli 가 먼저 한다)
+#------------------------------------------------------------------
+def pii_engine():
+    from .. import config
+    e = (getattr(config, "PII_ENGINE", "kopii") or "kopii").strip().lower()
+    return e if e in PII_ENGINES else "kopii"
+
+
+#------------------------------------------------------------------
+# moaipii 라이브러리 위치 힌트
+#=> _moaipii 의 기본 찾기(MOAIPII_LIB → 감싸개 폴더 → _MEIPASS → 실행파일 폴더) 앞에
+#   이 프로젝트의 자리를 더한다(rust_engine._lib_hint 와 같은 규칙).
+#    1) 환경변수 CSO_MOAIPII(파일·폴더) — Rust 판과 같은 이름
+#    2) 개발 PC: 저장소의 third_party/moaipii/<os>-x64/ (버전을 고정해 둔 정본)
+#    3) 못 찾으면 None — 감싸개 기본 찾기에 맡긴다(배포본은 실행파일 옆에 둔다)
+#
+# -in: 없음
+#
+# -out: str | None = 라이브러리 파일·폴더 경로
+# -out: error = 없음
+#------------------------------------------------------------------
+def _moaipii_lib_hint():
+    env = os.environ.get("CSO_MOAIPII")
+    if env:
+        return env
+    sub = "windows-x64" if sys.platform.startswith("win") else "linux-x64"
+    # src/csoclassify/classify/ → 저장소 최상위
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    d = os.path.join(root, "third_party", "moaipii", sub)
+    return d if os.path.isdir(d) and not getattr(sys, "frozen", False) else None
+
+
+#------------------------------------------------------------------
+# moaipii 라이브러리 불러오기(처음 한 번 — 감싸개가 기억한다)
+#
+# -in: 없음
+#
+# -out: module = 불러온 _moaipii 감싸개 모듈
+# -out: error = 못 찾거나 판이 다르면 _moaipii.MoaiPiiError
+#------------------------------------------------------------------
+def moaipii_load():
+    from . import _moaipii
+    _moaipii.load(_moaipii_lib_hint())
+    return _moaipii
+
+
+#------------------------------------------------------------------
+# moaipii 로 본문 검사
+#=> 라이브러리에 물어 결과 dict 를 받는다. 좌표는 str 인덱스(char)라 text[start:end] 로
+#   원문을 자를 수 있다(값은 라이브러리에서 받지 않는다 — 경계를 넘는 개인정보를 줄인다).
+#    1) 모르는 라벨은 Rust 판처럼 무시하되(unknown_labels="ignore"), 처음 한 번은 경고로 남긴다
+#       — ko-pii 는 더 많은 라벨을 알아서, 그 라벨을 쓰는 규칙은 moaipii 에서 0 건이 된다
+#    2) 라이브러리를 못 불러오면 RuntimeError(cli 가 시작할 때 이미 1018 로 막는다)
+#
+# -in: text   = 본문
+# -in: labels = 볼 라벨들
+# -in: items  = False 면 건수만 받는다(기본 True)
+#
+# -out: dict = {"chars", "counts", "items": [{"label","start","end"}], ("unknown")}
+# -out: error = 라이브러리가 없거나 판이 다르면 RuntimeError, 검사 실패면 _moaipii.MoaiPiiError
+#------------------------------------------------------------------
+def _moaipii_scan(text, labels, items=True):
+    from . import _moaipii
+    try:
+        moaipii_load()
+    except _moaipii.MoaiPiiError as e:
+        raise RuntimeError("개인정보 검출 라이브러리(moaipii)를 불러오지 못했습니다: %s" % e)
+    r = _moaipii.scan(text, labels, items=items, values=False, offsets="char", unknown_labels="ignore")
+    # 모르는 라벨은 처음 볼 때 한 번만 경고한다
+    new = set(r.get("unknown") or ()) - _MOAIPII_UNKNOWN_WARNED
+    if new:
+        _MOAIPII_UNKNOWN_WARNED.update(new)
+        from .. import logsetup
+        logsetup.get_logger("csoclassify.rules").warning(
+            "moaipii 가 모르는 PII 라벨이라 0 건으로 봅니다: %s", ", ".join(sorted(new)))
+    return r
+
 # 성능/지연 가드: subset(필요한 검출기만) 으로 바꾼 뒤에도 phone(O(n²))·address·
 # account 때문에 검출 시간이 입력 길이에 '초선형'으로 는다(실측: 10K≈0.08s,
 # 20K≈0.2s, 50K≈0.9s, 300K≈20s). 예전엔 앞 10K 만 남기고 '잘라' 지연을 눌렀지만,
@@ -1235,10 +1330,14 @@ def _count_merged_spans(spans):
 #         capped  = 초선형 검출기가 뒷부분을 못 봤으면 True
 #         covered = 그 검출기들이 실제로 훑은 글자 수
 #         total   = 전체 글자 수
-# -out: error = 없음 (초선형 라벨을 안 켰으면 언제나 (False, total, total))
+# -out: error = 없음 (초선형 라벨을 안 켰거나 moaipii 엔진이면 언제나 (False, total, total) —
+#               moaipii 는 문서 전체를 한 번에 본다)
 #------------------------------------------------------------------
 def superlinear_coverage(text, labels):
     total = len(text or "")
+    # moaipii 는 문서 전체를 한 번에 보므로 '뒷부분을 못 본' 일이 없다.
+    if pii_engine() == "moaipii":
+        return False, total, total
     # 초선형 라벨을 하나도 안 켰으면 이 상한은 이번 실행과 무관하다.
     if not (set(labels or ()) & _KOPII_SUPERLINEAR):
         return False, total, total
@@ -1295,15 +1394,22 @@ def _kopii_scan(text, labels):
 
 #------------------------------------------------------------------
 # 라벨별 건수
-#=> _kopii_scan 이 낸 목록을 세기만 한다. 세는 규칙이 따로 있지 않다.
+#=> kopii 갈래는 _kopii_scan 이 낸 목록을 세기만 한다. 세는 규칙이 따로 있지 않다.
+#   moaipii 갈래는 라이브러리에 '건수만' 묻는다 — 라이브러리 안에서도 건수와 위치는
+#   같은 스캔에서 나오므로(collect_pii 와 어긋나지 않는다) 목록을 받아 셀 필요가 없다.
 #
 # -in: text   = 스캔 대상 텍스트
-# -in: labels = 셀 ko-pii 라벨 목록(활성 유형들)
+# -in: labels = 셀 PII 라벨 목록(활성 유형들)
 #
 # -out: dict = {라벨: 건수}  (검출 없으면 빈 dict)
-# -out: error = ko-pii 미설치 시 RuntimeError(_kopii_scan 이 낸다)
+# -out: error = ko-pii 미설치 시 RuntimeError(_kopii_scan 이 낸다),
+#               moaipii 를 못 불러오면 RuntimeError(_moaipii_scan 이 낸다)
 #------------------------------------------------------------------
 def _kopii_counts(text, labels):
+    if pii_engine() == "moaipii":
+        if not text or not labels:
+            return {}
+        return dict(_moaipii_scan(text, set(labels), items=False)["counts"])
     counts = {}
     for m in _kopii_scan(text, labels):
         counts[m.label] = counts.get(m.label, 0) + 1
@@ -1839,19 +1945,29 @@ def scan_sensitive(text, ruleset):
 #   파생시키면 어긋날 자리가 없다.
 #    1) 규칙에 등록된 PII 라벨(regex_rules)만 검출 — 설정에 없는 유형은 안 남긴다
 #    2) 검출 1건마다 {label, value, start, end} (offset 은 원문 text 기준 절대값)
+#    3) moaipii 엔진이면 라이브러리에서 위치만 받고 값은 원문에서 잘라 낸다
+#       (라이브러리 안에서도 건수와 위치는 같은 스캔에서 나온다)
 #
 # -in: text    = 스캔 대상 텍스트
 # -in: ruleset = RuleSet(활성 PII 라벨 = regex_rules)
 #
 # -out: list[dict] = [{"label","value","start","end"}, ...] (없으면 빈 리스트)
-# -out: error = ko-pii 미설치 시엔 이미 scan_text 가 먼저 RuntimeError → 여기선 [] 로 안전 처리
+# -out: error = ko-pii 미설치 시엔 이미 scan_text 가 먼저 RuntimeError → 여기선 [] 로 안전 처리,
+#               moaipii 를 못 불러오면 RuntimeError(_moaipii_scan)
 #------------------------------------------------------------------
 def collect_pii(text, ruleset):
-    if not _HAVE_KOPII or not text or not getattr(ruleset, "regex_rules", None):
+    use_moaipii = pii_engine() == "moaipii"
+    if (not use_moaipii and not _HAVE_KOPII) or not text or not getattr(ruleset, "regex_rules", None):
         return []
     labels = {r.label for r in ruleset.regex_rules}
     if not labels:
         return []
+
+    if use_moaipii:
+        # 좌표는 str 인덱스 — 값은 원문에서 직접 잘라 낸다(라이브러리에서 값을 받지 않는다).
+        return [{"label": it["label"], "value": text[it["start"]:it["end"]],
+                 "start": it["start"], "end": it["end"]}
+                for it in _moaipii_scan(text, labels)["items"]]
 
     # 건수를 세는 그 목록에서 그대로 값을 꺼낸다 — 같은 스캔이므로
     # hits 의 건수와 여기 실리는 값 개수가 구조적으로 같아진다.

@@ -1,4 +1,4 @@
-//! 빌드 스크립트 — pdfium 과 docparse(문서파서) 동적 라이브러리를 실행파일 옆으로 자동 복사한다.
+//! 빌드 스크립트 — pdfium · docparse(문서파서) · moaipii(개인정보 검출) 동적 라이브러리를 실행파일 옆으로 자동 복사한다.
 //!
 //! [왜 필요한가] `extract.rs::pdfium_lib_path()` 의 탐색 순서는
 //! `CSO_PDFIUM` 환경변수 → **exe 옆** → 시스템이다. 개발 빌드(`target/debug`)에는
@@ -110,6 +110,29 @@ fn docparse_name_and_sources() -> Option<(&'static str, Vec<PathBuf>)> {
 }
 
 //------------------------------------------------------------------
+// 이 대상 OS 에서 쓸 moaipii(개인정보 검출) 라이브러리 파일 이름과 원본 후보들
+//=> 개인정보 검출은 별도 프로젝트(MoAI-pii)가 만든 배포 묶음을 저장소의
+//   third_party/moaipii/<os>-x64/ 에 풀어 둔 것이 정본이다(docparse 와 같은 자리 규칙).
+//
+// -in: 없음(cargo 가 주는 CARGO_CFG_TARGET_OS 를 읽는다)
+//
+// -out: Option<(&'static str, Vec<PathBuf>)> = (파일명, 원본 후보 경로들)
+//                                              지원하지 않는 OS 면 None
+// -out: error = 없음
+//------------------------------------------------------------------
+fn moaipii_name_and_sources() -> Option<(&'static str, Vec<PathBuf>)> {
+    let root = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").ok()?);
+    let os = std::env::var("CARGO_CFG_TARGET_OS").ok()?;
+    let (name, sub) = match os.as_str() {
+        "windows" => ("moaipii.dll", "windows-x64"),
+        "linux" => ("libmoaipii.so", "linux-x64"),
+        _ => return None,
+    };
+    let rel = format!("third_party/moaipii/{}/{}", sub, name);
+    Some((name, vec![root.join("..").join(&rel), root.join(&rel)]))
+}
+
+//------------------------------------------------------------------
 // 내용까지 같은 파일인가
 //=> docparse 라이브러리는 고친 판이 같은 크기일 수 있어 크기만으로는 못 가른다.
 //   몇 MB 라 통째로 비교해도 빌드 시간에 영향이 없다.
@@ -162,7 +185,7 @@ fn copy_beside(name: &str, sources: &[PathBuf], exe_dir: &Path, same: fn(&Path, 
 
 //------------------------------------------------------------------
 // 빌드 진입점
-//=> pdfium 과 docparse 라이브러리를 exe 옆(target/<프로파일>)으로 복사한다.
+//=> pdfium · docparse · moaipii 라이브러리를 exe 옆(target/<프로파일>)으로 복사한다.
 //
 // -in: 없음
 //
@@ -173,6 +196,7 @@ fn main() {
     // 환경변수로 직접 지정해 쓰는 사람도 있어, 그 값이 바뀌면 다시 판단하게 한다.
     println!("cargo:rerun-if-env-changed=CSO_PDFIUM");
     println!("cargo:rerun-if-env-changed=CSO_DOCPARSE");
+    println!("cargo:rerun-if-env-changed=CSO_MOAIPII");
 
     let Some(exe_dir) = exe_dir_from_out_dir() else {
         println!("cargo:warning=빌드 산출 폴더를 알 수 없어 pdfium·docparse 복사를 건너뜁니다");
@@ -188,5 +212,11 @@ fn main() {
         // 문서파서가 없으면 실행하자마자 1017 로 멈춘다 — 빌드 때 미리 알린다.
         copy_beside(name, &sources, &exe_dir, same_bytes,
                     &format!("{name} 원본(third_party/docparse)을 찾지 못했습니다 — 실행하면                               1017 extractor_missing 으로 멈춥니다. CSO_DOCPARSE 로 직접 지정하세요"));
+    }
+    if let Some((name, sources)) = moaipii_name_and_sources() {
+        // 개인정보 검출 라이브러리가 없으면 분류를 시작하자마자 1018 로 멈춘다 — 빌드 때 미리 알린다.
+        copy_beside(name, &sources, &exe_dir, same_bytes,
+                    &format!("{name} 원본(third_party/moaipii)을 찾지 못했습니다 — 분류하면 \
+                              1018 pii_engine_missing 으로 멈춥니다. CSO_MOAIPII 로 직접 지정하세요"));
     }
 }

@@ -195,6 +195,15 @@ DEFAULT_HYBRID_PARSE = _env_bool("CSOCLASSIFY_HYBRID", True)
 EXTRACTOR = os.environ.get("CSOCLASSIFY_EXTRACTOR", "py").strip().lower() or "py"
 EXTRACTORS = ("py", "rust")
 
+# 개인정보(PII) 검출 엔진 — "kopii"(파이썬 ko-pii + 보강 코드) 또는 "moaipii"(Rust 판과 같은 라이브러리
+# moaipii.dll / libmoaipii.so — 별도 프로젝트 MoAI-pii).
+# 설계: D:\Project\MoAI-pii\plan\MoAI-pii-개인정보검출-라이브러리분리-설계-20261117.html §7-1
+#   · --pii-engine 이 이 값을 덮어쓴다. 배치·UI 는 환경변수 CSOCLASSIFY_PII_ENGINE 로 고른다.
+#   · 전환 기간 기본은 "kopii" — 평가셋으로 판정 차이를 확인한 뒤 "moaipii" 로 바꾼다.
+#   · moaipii 인데 라이브러리를 못 불러오면 문서를 읽기 전에 1018 pii_engine_missing 으로 멈춘다.
+PII_ENGINE = os.environ.get("CSOCLASSIFY_PII_ENGINE", "kopii").strip().lower() or "kopii"
+PII_ENGINES = ("kopii", "moaipii")
+
 # 종료 코드(설계서 §7)
 EXIT_OK = 0
 EXIT_EXTRACT_FAIL = 1

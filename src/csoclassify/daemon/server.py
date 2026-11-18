@@ -39,7 +39,8 @@ class DaemonServer:
         self.idle_timeout = config.DEFAULT_IDLE_TIMEOUT if idle_timeout is None else idle_timeout
         self.num_threads = num_threads
         self._token = None
-        self._extractor = None
+        # 추출기는 요청이 고른 설정(하이브리드 여부 · 자체 파서 py/rust)마다 하나씩 만들어 재사용한다.
+        self._extractors = {}
         self._embedder = None
         self._stop = False
 
@@ -47,7 +48,8 @@ class DaemonServer:
     # 데몬 실행 (핵심)
     #=> 싱글턴 잠금 → 모델 로드 → 소켓 리슨 → 레지스트리 기록 → 요청 루프.
     #    1) acquire_singleton 실패 시 "다른 데몬이 이미 있음"으로 보고 조용히 종료
-    #    2) 추출기/임베더 준비 후 모델을 실제로 로드(데몬의 존재 이유)
+    #    2) 임베더 준비 후 모델을 실제로 로드(데몬의 존재 이유). 추출기는 요청별로 나중에
+    #       만든다(_extractor_for — 클라이언트의 --hybridparse · --extractor 를 따른다)
     #    3) loopback 리슨 소켓 + 랜덤 토큰으로 레지스트리 기록
     #    4) accept 타임아웃을 유휴시간으로 두고, 그 안에 요청이 없으면 종료
     #
@@ -69,10 +71,10 @@ class DaemonServer:
         srv = None
         try:
             log.info("데몬 시작 model=%s pid=%d idle_timeout=%s", model, os.getpid(), idle_disp)
-            # (2) 추출기/임베더 준비 후 모델을 실제로 메모리에 올린다.
-            #     데몬 추출은 항상 사이냅 단독(설계 CSO_HybridParse §9 선택A): --hybridparse 는
-            #     클라이언트측 추출에서만 유효하므로 서버는 hybrid=False 로 고정한다.
-            self._extractor = build_extractor(hybrid=False)
+            # (2) 임베더를 준비하고 모델을 실제로 메모리에 올린다.
+            #     추출기는 여기서 만들지 않는다 — 요청마다 클라이언트가 고른 설정
+            #     (--hybridparse · --extractor)을 따라야 하므로 처음 쓰일 때 만든다(_extractor_for).
+            #     예전에는 여기서 사이냅 단독으로 고정해, 사이냅이 없는 PC 에서는 데몬이 아예 못 떴다.
             self._embedder = OnnxEmbedder(self.spec, num_threads=self.num_threads)
             self._embedder.ensure_loaded()
 
@@ -197,9 +199,11 @@ class DaemonServer:
         opts = req.get("opts", {})
         timing = Timing()
         try:
+            # 클라이언트가 고른 추출 설정 그대로 — in-process 로 돌 때와 같은 파서로 읽게 한다.
+            extractor = self._extractor_for(opts)
             # 데몬은 모델이 이미 로드돼 있어 병렬 예열이 불필요.
             result = pipeline.process_file(
-                path, opts, self._extractor, self._embedder, timing, parallel_preload=False
+                path, opts, extractor, self._embedder, timing, parallel_preload=False
             )
             ipc.send_msg(conn, {"ok": True, "result": result})
         except ExtractError as e:
@@ -208,6 +212,33 @@ class DaemonServer:
             ipc.send_msg(conn, {"ok": False, "error": str(e), "kind": "embed"})
         except Exception as e:
             ipc.send_msg(conn, {"ok": False, "error": str(e), "kind": "other"})
+
+    #------------------------------------------------------------------
+    # 요청이 고른 추출기 꺼내기 (없으면 만들어 기억)
+    #=> 데몬은 여러 클라이언트가 함께 쓰는 프로세스라, 추출 방식을 데몬 쪽에서 하나로
+    #   정해 두면 클라이언트의 --hybridparse · --extractor 가 무시된다. 그래서 요청에 실린
+    #   설정을 보고 그 조합의 추출기를 쓴다.
+    #    1) opts["hybridparse"] — 없으면 False(옛 클라이언트는 사이냅 단독이던 예전 동작 그대로)
+    #    2) opts["extractor"]   — "py" | "rust", 없으면 "py"(옛 클라이언트)
+    #    3) 같은 조합은 한 번 만든 것을 다시 쓴다(사이냅 탐색·라이브러리 로드를 매번 하지 않게)
+    #
+    # -in: opts = 요청의 처리 옵션 dict
+    #
+    # -out: extractor = TextExtractor 구현체
+    # -out: error = 만들 수 없으면 ExtractError(사이냅 단독인데 snf 없음 · rust 인데 docparse 없음).
+    #               실패는 기억하지 않는다 — 고쳐 놓은 뒤 다음 요청에서 다시 시도한다
+    #------------------------------------------------------------------
+    def _extractor_for(self, opts):
+        hybrid = bool(opts.get("hybridparse", False))
+        which = str(opts.get("extractor") or "py").strip().lower()
+        # 사이냅 단독이면 자체 파서를 안 쓰므로 py/rust 를 가르지 않는다(같은 추출기 하나).
+        key = (hybrid, which if hybrid else "")
+        ex = self._extractors.get(key)
+        if ex is None:
+            ex = build_extractor(hybrid=hybrid, extractor=which)
+            self._extractors[key] = ex
+            log.info("데몬 추출기 준비 hybrid=%s extractor=%s", hybrid, which if hybrid else "-")
+        return ex
 
     #------------------------------------------------------------------
     # embed_text 요청 처리 (분류 경로 전용)

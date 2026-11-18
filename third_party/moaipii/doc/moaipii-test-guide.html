@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>moaipii-test 사용설명서</title>
+</head>
+<body>
+<style>
+  :root{
+    --bg:#f4f6f9; --surface:#ffffff; --surface-2:#eef1f6; --ink:#191d24;
+    --muted:#58616e; --faint:#8b94a2; --line:#dde2ea; --line-strong:#c7cfda;
+    --accent:#26437e; --accent-2:#365fb0; --accent-soft:#e7edf7;
+    --c:#cf3b2e; --c-soft:#fbeceb; --s:#b3760f; --s-soft:#f9f0dc; --o:#2f8f57; --o-soft:#e6f3ea;
+    --shadow:0 1px 2px rgba(20,30,50,.04), 0 8px 24px rgba(20,30,50,.06);
+    --sans:"Pretendard Variable",Pretendard,"Malgun Gothic","맑은 고딕",-apple-system,"Apple SD Gothic Neo",system-ui,sans-serif;
+    --mono:ui-monospace,"Cascadia Code","Cascadia Mono",Consolas,"D2Coding",monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0e1116; --surface:#161b22; --surface-2:#1d232c; --ink:#e7ebf1;
+      --muted:#9aa4b2; --faint:#6b7684; --line:#262d38; --line-strong:#333c49;
+      --accent:#7ea0e8; --accent-2:#8fb0f2; --accent-soft:#182233;
+      --c:#f2695c; --c-soft:#2a1715; --s:#e6a748; --s-soft:#271e10; --o:#57bd85; --o-soft:#122217;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#f4f6f9; --surface:#ffffff; --surface-2:#eef1f6; --ink:#191d24;
+    --muted:#58616e; --faint:#8b94a2; --line:#dde2ea; --line-strong:#c7cfda;
+    --accent:#26437e; --accent-2:#365fb0; --accent-soft:#e7edf7;
+    --c:#cf3b2e; --c-soft:#fbeceb; --s:#b3760f; --s-soft:#f9f0dc; --o:#2f8f57; --o-soft:#e6f3ea;
+  }
+  :root[data-theme="dark"]{
+    --bg:#0e1116; --surface:#161b22; --surface-2:#1d232c; --ink:#e7ebf1;
+    --muted:#9aa4b2; --faint:#6b7684; --line:#262d38; --line-strong:#333c49;
+    --accent:#7ea0e8; --accent-2:#8fb0f2; --accent-soft:#182233;
+    --c:#f2695c; --c-soft:#2a1715; --s:#e6a748; --s-soft:#271e10; --o:#57bd85; --o-soft:#122217;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    line-height:1.7;-webkit-font-smoothing:antialiased;font-size:16px;letter-spacing:-0.003em;}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 24px 96px;}
+  header.doc{padding:56px 0 34px;border-bottom:1px solid var(--line);margin-bottom:40px;}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);font-weight:600;display:flex;gap:10px;align-items:center;margin-bottom:20px;}
+  .eyebrow::before{content:"";width:26px;height:2px;background:var(--accent);border-radius:2px;}
+  h1.title{font-size:clamp(28px,4.6vw,44px);line-height:1.12;margin:0 0 14px;font-weight:800;
+    letter-spacing:-0.02em;text-wrap:balance;}
+  .lede{font-size:clamp(16px,2.1vw,19px);color:var(--muted);margin:0 0 22px;max-width:64ch;}
+  .lede b{color:var(--ink);font-weight:600;}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;}
+  .chip{font-size:12px;font-family:var(--mono);color:var(--muted);background:var(--surface);
+    border:1px solid var(--line);border-radius:999px;padding:5px 12px;}
+  .chip b{color:var(--ink);font-weight:600;}
+  section{margin:52px 0;scroll-margin-top:20px;}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:22px;}
+  .sec-num{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--accent);
+    border:1px solid var(--line-strong);border-radius:7px;padding:3px 9px;flex:none;line-height:1.3;}
+  h2{font-size:clamp(21px,3vw,27px);margin:0;font-weight:750;letter-spacing:-0.015em;line-height:1.25;}
+  h3{font-size:17px;margin:30px 0 12px;font-weight:700;letter-spacing:-0.01em;}
+  p{margin:0 0 15px;max-width:72ch;}
+  ul.plain{margin:0 0 15px;padding-left:20px;} ul.plain li{margin:5px 0;color:var(--muted);}
+  ul.plain li b{color:var(--ink);font-weight:600;}
+  ol.plain{margin:0 0 15px;padding-left:22px;} ol.plain li{margin:6px 0;color:var(--muted);}
+  ol.plain li b{color:var(--ink);font-weight:600;}
+  .tldr{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--accent);
+    border-radius:12px;padding:22px 24px;box-shadow:var(--shadow);}
+  .tldr .k{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);font-weight:700;margin-bottom:10px;}
+  .tldr p{margin:0;font-size:17px;color:var(--ink);max-width:none;}
+  .tldr b{color:var(--accent-2);}
+  .twrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);margin:16px 0;}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:640px;background:var(--surface);}
+  th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--line);vertical-align:top;}
+  thead th{background:var(--surface-2);font-size:12px;letter-spacing:.03em;color:var(--muted);
+    text-transform:uppercase;font-weight:700;white-space:nowrap;}
+  tbody tr:last-child td{border-bottom:none;}
+  td.mono,.mono-cell{font-family:var(--mono);font-size:13px;white-space:nowrap;}
+  code.inl{font-family:var(--mono);font-size:.9em;background:var(--surface-2);border:1px solid var(--line);
+    border-radius:5px;padding:1px 6px;}
+  pre{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 20px;
+    overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.65;box-shadow:var(--shadow);color:var(--ink);}
+  pre .cm{color:var(--o);} pre .kw{color:var(--accent-2);font-weight:600;} pre .hi{color:var(--c);font-weight:600;}
+  .note{border:1px solid var(--line);background:var(--surface-2);border-radius:12px;padding:16px 18px;
+    font-size:14.5px;display:flex;gap:12px;align-items:flex-start;margin:16px 0;}
+  .note .badge{font-family:var(--mono);font-size:10.5px;font-weight:800;letter-spacing:.06em;
+    padding:3px 8px;border-radius:6px;flex:none;text-transform:uppercase;white-space:nowrap;}
+  .note.safe .badge{color:var(--o);background:var(--o-soft);border:1px solid color-mix(in srgb,var(--o) 35%,transparent);}
+  .note.warn .badge{color:var(--s);background:var(--s-soft);border:1px solid color-mix(in srgb,var(--s) 35%,transparent);}
+  .note.bad .badge{color:var(--c);background:var(--c-soft);border:1px solid color-mix(in srgb,var(--c) 35%,transparent);}
+  .note.info .badge{color:var(--accent-2);background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent-2) 35%,transparent);}
+  .note p{margin:0;color:var(--muted);max-width:none;}
+  .note b{color:var(--ink);}
+  .x{color:var(--c);font-weight:700}
+  .ok{color:var(--o);font-weight:700}
+  .wn{color:var(--s);font-weight:700}
+  .src{font-family:var(--mono);font-size:12px;color:var(--faint);}
+  .fig{background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);
+    padding:18px;margin:16px 0;overflow-x:auto;}
+  .fig svg{display:block;min-width:680px;width:100%;height:auto;}
+  .fig text{font-family:var(--sans);fill:var(--ink);font-size:13px;}
+  .fig .t-mono{font-family:var(--mono);font-size:11.5px;fill:var(--muted);}
+  .fig .t-h{font-weight:700;font-size:14px;}
+  .fig .box{fill:var(--surface-2);stroke:var(--line-strong);}
+  .fig .box-a{fill:var(--accent-soft);stroke:var(--accent-2);}
+  .fig .ln{stroke:var(--muted);stroke-width:1.4;fill:none;}
+  .fig .ln-d{stroke:var(--faint);stroke-width:1.2;fill:none;stroke-dasharray:5 4;}
+  .fig .ah{fill:var(--muted);}
+  footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);
+    font-size:13px;color:var(--faint);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;
+    font-family:var(--mono);letter-spacing:.02em;}
+  @media print{ body{background:#fff;} .tldr,pre,.twrap,.fig{box-shadow:none;} }
+  .warn{color:var(--s);font-weight:700}
+  .toc{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 22px;margin:0 0 8px;box-shadow:var(--shadow);}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:32px;} .toc li{margin:3px 0;break-inside:avoid;}
+  .toc a{color:var(--accent-2);text-decoration:none;} .toc a:hover{text-decoration:underline;}
+  @media (max-width:640px){ .toc ol{columns:1;} .wrap{padding:0 16px 72px;} }
+  .lab{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 20px;margin:14px 0;box-shadow:var(--shadow);}
+  .lab h4{margin:0 0 8px;font-size:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
+  .lab h4 code{font-family:var(--mono);font-size:13.5px;color:var(--accent-2);}
+  .lab dl{margin:0;display:grid;grid-template-columns:88px 1fr;gap:4px 12px;font-size:14.5px;}
+  .lab dt{color:var(--faint);font-weight:600;} .lab dd{margin:0;color:var(--muted);}
+  .lab dd b{color:var(--ink);font-weight:600;}
+  @media (max-width:640px){ .lab dl{grid-template-columns:1fr;} .lab dt{margin-top:6px;} }
+  .rk{font-family:var(--mono);font-size:10.5px;font-weight:800;letter-spacing:.05em;padding:2px 7px;border-radius:6px;white-space:nowrap;}
+  .rk.c{color:var(--c);background:var(--c-soft);} .rk.h{color:var(--s);background:var(--s-soft);}
+  .rk.m{color:var(--accent-2);background:var(--accent-soft);} .rk.l{color:var(--o);background:var(--o-soft);}
+  .rk.i{color:var(--muted);background:var(--surface-2);}
+  .kw-y{color:var(--s);font-weight:700;} .kw-n{color:var(--faint);}
+  details.code{margin:12px 0;} details.code summary{cursor:pointer;color:var(--accent-2);font-weight:600;font-size:14.5px;}
+</style>
+
+<div class="wrap">
+  <header class="doc">
+    <div class="eyebrow">사용설명서 · moaipii-test 0.1</div>
+    <h1 class="title">moaipii-test 사용설명서<br>— 배포된 DLL·.so 를 바로 시험하는 CLI</h1>
+    <p class="lede">배포 묶음을 받은 쪽이 <b>코드를 한 줄도 쓰지 않고</b> 이 PC·서버에서 라이브러리가 열리는지, 판(ABI)이 맞는지, 개인정보를 기대대로 찾는지 확인하는 실행파일입니다.
+    Windows는 <code class="inl">moaipii-test.exe</code>, Linux는 <code class="inl">moaipii-test</code>이며 사용법은 같습니다.</p>
+    <div class="meta">
+      <span class="chip"><b>Windows</b> x64</span>
+      <span class="chip"><b>Linux</b> x86_64 · glibc 2.17+</span>
+      <span class="chip"><b>설치</b> 필요 없음</span>
+      <span class="chip"><b>명령</b> 7개</span>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="목차">
+    <p style="margin:0 0 10px;max-width:none"><a href="#utf8"><b>⚠ 중요 — 본문은 UTF-8 만 받습니다</b></a></p>
+    <ol>
+      <li><a href="#t1">무엇을 하나</a></li>
+      <li><a href="#t2">처음 실행 — 1분 점검</a></li>
+      <li><a href="#t3">라이브러리 찾는 순서</a></li>
+      <li><a href="#t4">명령별 사용법</a></li>
+      <li><a href="#t5">옵션 전체</a></li>
+      <li><a href="#t6">selftest 항목</a></li>
+      <li><a href="#t7">종료 코드와 스크립트 연동</a></li>
+      <li><a href="#t8">자주 쓰는 시나리오</a></li>
+      <li><a href="#t9">문제 해결</a></li>
+    </ol>
+  </nav>
+
+  <!-- ───────────────────────── 00 ───────────────────────── -->
+  <section id="utf8">
+    <div class="sec-head"><span class="sec-num">!</span><h2>중요 — 본문은 UTF-8 만 받습니다</h2></div>
+    <div class="note bad"><span class="badge">필수</span><p>라이브러리에 넘기는 본문은 <b>UTF-8 텍스트</b>여야 합니다. ANSI(CP949·EUC-KR)나 UTF-16(메모장의 "유니코드") 파일, docx·hwp·pdf 같은 문서 파일을 <b>그대로 넘기면 검출되지 않습니다</b>. 부르는 쪽에서 먼저 UTF-8 텍스트로 바꿔서 넘기세요.</p></div>
+    <p>moaipii-test 의 <code class="inl">scan</code>·<code class="inl">mask</code>·<code class="inl">bench</code>도 파일을 <b>바이트 그대로</b> 라이브러리에 넘기므로 같은 규칙이 적용됩니다. ANSI 파일·docx 를 주면 <code class="inl">kind=utf8 code=2</code> 오류(종료 코드 4)가 납니다.</p>
+    <div class="twrap"><table>
+      <thead><tr><th>넘긴 본문</th><th>결과</th><th>같은 내용 실측</th></tr></thead>
+      <tbody>
+        <tr><td>UTF-8</td><td class="ok">정상 검출</td><td>RRN · PHONE · ACCOUNT · ADDRESS 4건</td></tr>
+        <tr><td>UTF-8 BOM</td><td class="ok">정상 검출</td><td>4건. 단 BOM(U+FEFF)도 한 글자라 <b>좌표가 1칸 밀림</b> — BOM 을 붙인 본문 그대로 잘라야 맞음</td></tr>
+        <tr><td>ANSI (CP949 · EUC-KR)</td><td class="x">오류 kind=utf8</td><td>—</td></tr>
+        <tr><td>ANSI + <code class="inl">invalid_utf8:"replace"</code></td><td class="wn">일부만</td><td>2건(RRN · PHONE). 한글이 깨진 글자로 바뀌어 "계좌번호"·"주소는" 문맥이 사라짐 → 계좌·주소 놓침</td></tr>
+        <tr><td>UTF-16 (메모장 "유니코드")</td><td class="x">오류 kind=utf8</td><td>—</td></tr>
+        <tr><td>docx · xlsx · hwp · pdf 파일</td><td class="x">오류 kind=utf8</td><td>압축·이진 파일이라 텍스트가 아님 — 텍스트를 뽑은 뒤 넘김</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>왜 UTF-8 만 받나</h3>
+    <ol class="plain">
+      <li><b>바이트만 보고는 인코딩을 확실히 알 수 없습니다.</b> 파일에는 "나는 CP949" 같은 표시가 없습니다. <code class="inl">C8 AB B1 E6 B5 BF</code>는 CP949 로 읽으면 "홍길동", Latin-1 로 읽으면 <code class="inl">È«±æµ¿</code>입니다. 라이브러리가 추측하면 틀렸을 때 <b>오류 없이 조용히 놓칩니다</b> — 개인정보 검출에서 가장 위험한 실패라, 확실하지 않으면 멈추게 했습니다.</li>
+      <li><b>좌표가 어긋납니다.</b> 결과 좌표는 넘긴 본문 기준입니다. 한글 한 글자는 CP949 로 2바이트, UTF-8 로 3바이트라서, 라이브러리 안에서 바꿔 검사하면 byte 좌표가 원래 파일과 맞지 않아 마스킹이 <b>엉뚱한 자리</b>를 지웁니다.</li>
+      <li><b>연동하는 언어는 이미 유니코드로 일합니다.</b> Python <code class="inl">str</code> · Java <code class="inl">String</code> · C#·JS 문자열 · Rust <code class="inl">&amp;str</code>는 모두 유니코드라 UTF-8 로 넘기는 비용이 거의 없고, 파일 인코딩은 그 파일을 읽는 쪽이 가장 잘 압니다.</li>
+      <li><b>검출기 자체가 유니코드 기준입니다.</b> 정규식(Rust <code class="inl">regex</code>는 UTF-8 에서만 동작), 한글 범위·사건부호·법정동/국가 사전, 전각→반각 정규화표가 모두 유니코드라, 다른 인코딩을 받아도 결국 안에서 UTF-8 로 바꿔야 합니다.</li>
+      <li><b>ko-pii 와 같은 결과</b>를 보장하기 위해서입니다. 기준인 ko-pii(Python)도 유니코드 문자열을 받고, 정답표도 그 기준입니다.</li>
+      <li><b>작고 단순한 라이브러리.</b> CP949·EUC-KR·UTF-16LE/BE·조합형 변환표를 넣으면 크기와 시험 부담이 커집니다. "본문 = UTF-8 바이트 (포인터, 길이)" 한 규칙이라 다섯 언어 감싸개가 똑같이 움직입니다.</li>
+    </ol>
+
+    <h3>ANSI 파일은 이렇게 넘깁니다</h3>
+    <pre><span class="cm"># Python</span>
+text = open(path, encoding=<span class="hi">"cp949"</span>).read();  r = moaipii.scan(text, labels)
+<span class="cm">// Java</span>
+String text = <span class="kw">new</span> String(Files.readAllBytes(p), <span class="hi">"MS949"</span>);
+<span class="cm">// PHP</span>
+$text = mb_convert_encoding(file_get_contents($p), <span class="hi">'UTF-8'</span>, <span class="hi">'CP949'</span>);
+<span class="cm">:: 파일 하나만 시험할 때 — 메모장 "다른 이름으로 저장 → 인코딩: UTF-8", Word 는 "일반 텍스트(.txt) · UTF-8"</span></pre>
+    <div class="note warn"><span class="badge">주의</span><p><code class="inl">invalid_utf8:"replace"</code>는 ANSI 파일의 해결책이 아닙니다. UTF-8 문서 중간에 <b>일부만</b> 깨진 바이트가 섞였을 때 그 부분만 건너뛰고 검사하는 옵션입니다.</p></div>
+  </section>
+
+  <!-- ───────────── 01 ───────────── -->
+  <section id="t1">
+    <div class="sec-head"><span class="sec-num">01</span><h2>무엇을 하나</h2></div>
+    <p>moaipii-test 는 같은 묶음의 <code class="inl">moaipii.dll</code> / <code class="inl">libmoaipii.so</code> 파일을 <b>실행 중에 불러서</b> 검사를 시킵니다.
+    연동하는 프로그램(Python·Java·PHP·C++·Rust)이 라이브러리를 부르는 길과 똑같은 길이라, 여기서 통과하면 그 PC·서버에서 연동도 됩니다.</p>
+    <div class="fig">
+      <svg viewBox="0 0 760 150" role="img" aria-label="moaipii-test 가 DLL 을 실행 중에 불러 검사하는 흐름">
+        <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ah" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+        <rect class="box" x="10" y="45" width="170" height="60" rx="10"/>
+        <text x="95" y="70" text-anchor="middle" class="t-h">본문</text>
+        <text x="95" y="90" text-anchor="middle" class="t-mono">파일 · --text · 표준입력</text>
+        <rect class="box-a" x="270" y="30" width="200" height="90" rx="10"/>
+        <text x="370" y="62" text-anchor="middle" class="t-h">moaipii-test</text>
+        <text x="370" y="82" text-anchor="middle" class="t-mono">Rust 감싸개 moaipii_dyn</text>
+        <text x="370" y="100" text-anchor="middle" class="t-mono">(실행 중 불러오기)</text>
+        <rect class="box" x="560" y="45" width="190" height="60" rx="10"/>
+        <text x="655" y="70" text-anchor="middle" class="t-h">moaipii.dll / .so</text>
+        <text x="655" y="90" text-anchor="middle" class="t-mono">moaipii_scan · ABI 1</text>
+        <path class="ln" d="M180,75 L266,75" marker-end="url(#a)"/>
+        <path class="ln" d="M470,65 L556,65" marker-end="url(#a)"/>
+        <path class="ln-d" d="M556,88 L474,88" marker-end="url(#a)"/>
+        <text x="513" y="58" text-anchor="middle" class="t-mono">옵션 JSON</text>
+        <text x="513" y="106" text-anchor="middle" class="t-mono">결과 JSON</text>
+      </svg>
+    </div>
+    <div class="twrap"><table>
+      <thead><tr><th>파일 (묶음의 lib/)</th><th>성격</th><th>언제 쓰나</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">moaipii-test(.exe)</td><td><b>DLL·.so 파일을 불러</b> 씀. 표·마스킹·속도·자체 점검</td><td>받은 묶음이 이 환경에서 제대로 도는지 확인할 때 — <b>이 설명서의 대상</b></td></tr>
+        <tr><td class="mono">mp(.exe)</td><td>라이브러리 소스를 실행파일 안에 넣은 개발용 도구. DLL 파일은 열지 않음</td><td>결과 JSON 만 빨리 볼 때</td></tr>
+      </tbody>
+    </table></div>
+    <div class="note warn"><span class="badge">주의</span><p>scan 은 찾은 <b>원문 값을 화면에 보여 줍니다</b>. 실제 문서를 검사할 때는 <code class="inl">--hide-values</code>로 앞 2글자만 보이게 하거나 <code class="inl">--no-items</code>로 건수만 보세요. 이 도구는 로그·임시파일을 남기지 않습니다.</p></div>
+  </section>
+
+  <!-- ───────────── 02 ───────────── -->
+  <section id="t2">
+    <div class="sec-head"><span class="sec-num">02</span><h2>처음 실행 — 1분 점검</h2></div>
+    <p>묶음을 푼 폴더에서 아래 세 줄이면 끝납니다. 실행파일과 DLL 이 같은 <code class="inl">lib/</code> 폴더에 있으므로 따로 설정할 것이 없습니다.</p>
+    <h3>Windows (명령 프롬프트 · PowerShell)</h3>
+    <pre>cd moaipii-0.1.0-xxxxxxx-windows-x64
+lib\moaipii-test.exe info
+lib\moaipii-test.exe selftest</pre>
+    <h3>Linux</h3>
+    <pre>tar xzf moaipii-0.1.0-xxxxxxx-linux-x64.tgz
+cd moaipii-0.1.0-xxxxxxx-linux-x64
+lib/moaipii-test info
+lib/moaipii-test selftest            <span class="cm"># 실행 권한은 묶음에 이미 들어 있다</span></pre>
+    <pre><span class="cm"># info 출력 예</span>
+시험 도구    : moaipii-test 0.1.0+be89fc0
+라이브러리   : D:\pii\moaipii-0.1.0-be89fc0-windows-x64\lib\moaipii.dll
+버전         : 0.1.0+be89fc0
+ABI          : 1
+ko-pii 기준  : 1.15.2
+라벨         : 20개 (+ 별칭 PRESCRIPTION→PRESCRIPTION_ID)
+
+<span class="cm"># selftest 끝줄 — 이게 나오면 정상 (종료 코드 0)</span>
+결과: 16 / 16 통과</pre>
+    <div class="note safe"><span class="badge">판정</span><p><b>info</b>가 버전을 찍으면 라이브러리가 열린 것이고, <b>selftest 16/16</b>이면 검출·좌표·오류 처리·스레드까지 정상입니다. 하나라도 FAIL 이면 그 줄을 §9 문제 해결과 함께 전달해 주세요.</p></div>
+  </section>
+
+  <!-- ───────────── 03 ───────────── -->
+  <section id="t3">
+    <div class="sec-head"><span class="sec-num">03</span><h2>라이브러리 찾는 순서</h2></div>
+    <ol class="plain">
+      <li><b><code class="inl">--lib &lt;파일|폴더&gt;</code></b> — 주면 <b>그것만</b> 봅니다(없으면 다른 곳으로 대신하지 않고 실패).</li>
+      <li><b>환경변수 <code class="inl">MOAIPII_LIB</code></b> (파일 또는 폴더)</li>
+      <li><b>moaipii-test 실행파일이 있는 폴더</b> — 묶음 그대로면 여기서 찾습니다</li>
+      <li>그 상위 폴더</li>
+    </ol>
+    <p>PATH·LD_LIBRARY_PATH 같은 시스템 검색은 쓰지 않습니다. 다른 곳에 깔린 옛 판을 모르고 집어 오지 않게 하기 위해서입니다. 어느 파일을 불렀는지는 <code class="inl">info</code>의 "라이브러리" 줄로 늘 확인할 수 있습니다.</p>
+    <pre><span class="cm">:: 운영 서버에 이미 설치된 DLL 을 시험 (Windows)</span>
+lib\moaipii-test.exe --lib "C:\MyApp\bin\moaipii.dll" selftest
+<span class="cm"># Linux — 폴더를 줘도 된다</span>
+MOAIPII_LIB=/opt/myapp/lib lib/moaipii-test info</pre>
+    <div class="note warn"><span class="badge">주의</span><p><code class="inl">MOAIPII_LIB</code>이 이미 설정된 PC 에서는 실행파일 옆의 DLL 보다 <b>환경변수 쪽이 먼저</b>입니다. 묶음 안의 DLL 을 시험하려면 환경변수를 비우거나 <code class="inl">--lib lib</code>을 주세요.</p></div>
+  </section>
+
+  <!-- ───────────── 04 ───────────── -->
+  <section id="t4">
+    <div class="sec-head"><span class="sec-num">04</span><h2>명령별 사용법</h2></div>
+    <p>모양: <code class="inl">moaipii-test [--lib 경로] &lt;명령&gt; [옵션]</code>. 옵션은 명령 앞뒤 어디에 와도 됩니다. 아래 예는 Windows 표기이며 Linux 는 <code class="inl">lib/moaipii-test</code>로 바꿔 읽으세요.</p>
+
+    <h3>info — 불러온 라이브러리 정보</h3>
+    <pre>lib\moaipii-test.exe info</pre>
+    <p>라이브러리 경로·버전·ABI·ko-pii 기준·라벨 수를 찍습니다. 시험 도구와 DLL 이 다른 빌드면 <code class="inl">[참고]</code> 줄로 알려 줍니다(같은 묶음에서 꺼냈는지 확인용, 오류는 아님).</p>
+
+    <h3>labels — 지원 라벨</h3>
+    <pre>lib\moaipii-test.exe labels          <span class="cm"># 한 줄에 하나</span>
+lib\moaipii-test.exe labels --json   <span class="cm"># {"labels":[...],"aliases":{"PRESCRIPTION":"PRESCRIPTION_ID"}}</span></pre>
+
+    <h3>demo — 라벨별 예문 20개</h3>
+    <pre>lib\moaipii-test.exe demo
+
+라벨별 예문 검사 (0.1.0+be89fc0)
+  [PASS] RRN                주민등록번호 951006-1068003 입니다.  → 951006-1068003
+  [PASS] FRN                외국인등록번호 910410-5783619 확인.  → 910410-5783619
+  ...
+  [PASS] COURT_CASE         사건번호 2023가합12345 판결문.  → 2023가합12345
+
+결과: 20 / 20 통과</pre>
+    <p>각 라벨이 어떤 모양을 잡는지 눈으로 보는 용도입니다. 예문의 번호는 모두 체크섬만 맞춘 가짜입니다.</p>
+
+    <h3>selftest — 연동 전 점검</h3>
+    <pre>lib\moaipii-test.exe selftest</pre>
+    <p>demo 를 포함해 16개 항목을 시험합니다(§6). 전부 통과하면 종료 코드 0, 하나라도 실패하면 1.</p>
+
+    <h3>scan — 검사 결과 표</h3>
+    <pre>lib\moaipii-test.exe scan --text <span class="hi">"홍길동 010-1234-5678, hong@example.co.kr"</span>
+
+본문 37자 (43 바이트) · 라벨 20개 · 0.31 ms · 좌표 단위 char
+
+[건수] 합계 2
+  EMAIL              1
+  PHONE              1
+
+[위치]
+  라벨                    start      end  값
+  PHONE                     4       17  010-1234-5678
+  EMAIL                    19       37  hong@example.co.kr</pre>
+    <pre>lib\moaipii-test.exe scan 본문.txt                                   <span class="cm"># 파일 (UTF-8)</span>
+lib\moaipii-test.exe scan 본문.txt --labels RRN,PHONE,CARD --hide-values
+lib\moaipii-test.exe scan 본문.txt --no-items                        <span class="cm"># 건수만</span>
+lib\moaipii-test.exe scan 본문.txt --offsets utf16                   <span class="cm"># Java·JS 좌표로 보기</span>
+lib\moaipii-test.exe scan 본문.txt --json                            <span class="cm"># DLL 이 준 결과 JSON 그대로 (아래)</span>
+lib\moaipii-test.exe scan 옛문서.txt --invalid-utf8 replace          <span class="cm"># UTF-8 아닌 바이트는 건너뛰고 검사</span>
+type 본문.txt | lib\moaipii-test.exe scan -                          <span class="cm"># 표준입력</span></pre>
+    <ul class="plain">
+      <li>파일은 <b>바이트 그대로</b> 넘깁니다. 문자 변환을 하지 않으므로 EUC-KR 문서는 먼저 UTF-8 로 저장하거나 <code class="inl">--invalid-utf8 replace</code>(한글 부분은 검사되지 않음)를 쓰세요.</li>
+      <li>값 칸의 줄바꿈은 <code class="inl">⏎</code>로 바꿔 한 줄에 보여 줍니다.</li>
+      <li>시간(ms)은 라이브러리 호출 한 번의 시간입니다.</li>
+    </ul>
+
+    <h3>scan --json — DLL 출력 JSON 그대로</h3>
+    <p><code class="inl">--json</code>을 주면 표 대신 <b><code class="inl">moaipii_scan</code>이 돌려준 결과 JSON 을 그대로 한 줄로</b> 냅니다(키 순서·띄어쓰기까지 DLL 출력과 같음). 연동 코드가 받게 될 문자열을 미리 보거나, 다른 도구로 넘길 때 씁니다.</p>
+    <pre>lib\moaipii-test.exe scan --text <span class="hi">"홍길동 010-1234-5678"</span> --json
+{"chars":17,"counts":{"PHONE":1},"items":[{"end":17,"label":"PHONE","start":4}]}
+
+lib\moaipii-test.exe scan --text <span class="hi">"홍길동 010-1234-5678"</span> --json --values     <span class="cm">:: 원문 값도 싣기</span>
+{"chars":17,"counts":{"PHONE":1},"items":[{"end":17,"label":"PHONE","start":4,"value":"010-1234-5678"}]}
+
+lib\moaipii-test.exe scan 본문.txt --json --pretty                      <span class="cm">:: 사람이 읽기 좋게 들여쓰기</span>
+lib\moaipii-test.exe scan 본문.txt --json &gt; result.json                 <span class="cm">:: 파일로 (UTF-8)</span>
+
+<span class="cm">:: 실패해도 DLL 이 준 error JSON 을 그대로 내고 종료 코드 4</span>
+lib\moaipii-test.exe scan --text x --labels FAX --json
+{"error":{"kind":"arg","message":"모르는 라벨입니다: FAX (moaipii_labels 로 목록을 볼 수 있습니다)"}}</pre>
+
+    <h3>scan --opts — 옵션 JSON 을 DLL 에 그대로 넘기기</h3>
+    <p>연동 코드에서 쓸 옵션 JSON 을 손으로 적어 그대로 시험합니다. <code class="inl">--opts</code>를 주면 <code class="inl">--labels</code>·<code class="inl">--offsets</code> 같은 명령줄 옵션은 무시하고 <b>준 문자열을 바꾸지 않고</b> <code class="inl">moaipii_scan</code>에 넘깁니다. <code class="inl">--show-opts</code>는 실제로 넘긴 옵션 JSON 을 표준오류로 보여 줍니다(명령줄 옵션으로 만든 경우에도).</p>
+    <pre><span class="cm"># Linux · PowerShell — 작은따옴표로 감싼다</span>
+lib/moaipii-test scan 본문.txt --json --opts '{"labels":["RRN","PHONE"],"offsets":"utf16","values":true}'
+
+<span class="cm">:: Windows 명령 프롬프트는 따옴표가 까다로우니 파일로</span>
+lib\moaipii-test.exe scan 본문.txt --json --opts @opts.json
+
+<span class="cm">:: 명령줄 옵션이 어떤 JSON 으로 바뀌었는지 보기</span>
+lib\moaipii-test.exe scan 본문.txt --labels RRN --offsets byte --json --show-opts
+[옵션 JSON] {"invalid_utf8":"error","items":true,"labels":["RRN"],"offsets":"byte","today":null,"unknown_labels":"error","values":false}</pre>
+
+    <h3>mask — 검출 자리를 가린 본문</h3>
+    <pre>lib\moaipii-test.exe mask --text <span class="hi">"연락처 010-1234-5678 메일 hong@example.co.kr"</span>
+연락처 ************* 메일 ******************
+
+lib\moaipii-test.exe mask --text <span class="hi">"..."</span> --style label        <span class="cm"># 연락처 [PHONE] 메일 [EMAIL]</span>
+lib\moaipii-test.exe mask --text <span class="hi">"..."</span> --style keep --keep 3 <span class="cm"># 연락처 010********** 메일 hon***************</span>
+lib\moaipii-test.exe mask 본문.txt --labels RRN,FRN --out 가린본문.txt</pre>
+    <p>원래 바이트에서 검출 자리만 바꾸므로 나머지 내용·줄바꿈·인코딩은 그대로입니다. <code class="inl">--out</code>을 안 주면 표준출력으로 냅니다.</p>
+
+    <h3>bench — 처리 속도</h3>
+    <pre>lib\moaipii-test.exe bench 큰본문.txt --repeat 200 --threads 4
+
+본문 812.4 KB · 라벨 20개 · 50회 × 4스레드 = 200회
+총 3.412 s · 1회 평균 68.24 ms(스레드당) · 처리량 46.52 MB/s
+건수: {"ADDRESS":31,"EMAIL":12,"PHONE":57,"RRN":4}</pre>
+    <p>첫 호출을 한 번 돌린 뒤 잽니다. 위치 목록 없이(건수만) 검사하므로 순수 검출 속도에 가깝습니다. 스레드를 늘려 처리량이 함께 늘면 다중 스레드 연동이 제대로 병렬로 도는 것입니다. (위 숫자는 예시이며 PC 마다 다릅니다.)</p>
+
+    <h3>version · help</h3>
+    <pre>lib\moaipii-test.exe version      <span class="cm"># moaipii-test 0.1.0+be89fc0 — 라이브러리를 부르지 않는다</span>
+lib\moaipii-test.exe help</pre>
+  </section>
+
+  <!-- ───────────── 05 ───────────── -->
+  <section id="t5">
+    <div class="sec-head"><span class="sec-num">05</span><h2>옵션 전체</h2></div>
+    <div class="twrap"><table>
+      <thead><tr><th>옵션</th><th>쓰는 명령</th><th>기본</th><th>뜻</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">--lib &lt;파일|폴더&gt;</td><td>모두</td><td>—</td><td>쓸 라이브러리(§3)</td></tr>
+        <tr><td class="mono">&lt;파일&gt; | -</td><td>scan · mask · bench</td><td>—</td><td>검사할 파일. <code class="inl">-</code>는 표준입력</td></tr>
+        <tr><td class="mono">--text &lt;문장&gt;</td><td>scan · mask · bench</td><td>—</td><td>파일 대신 이 문장</td></tr>
+        <tr><td class="mono">--labels A,B | all</td><td>scan · mask · bench</td><td class="mono">all</td><td>켤 라벨(쉼표 구분, 대소문자 무관). 목록은 <code class="inl">labels</code></td></tr>
+        <tr><td class="mono">--offsets char|utf16|byte</td><td>scan</td><td class="mono">char</td><td>좌표 단위. Python=char, Java·JS·C#=utf16, PHP·C·C++=byte</td></tr>
+        <tr><td class="mono">--no-items</td><td>scan</td><td>—</td><td>건수만(위치 생략)</td></tr>
+        <tr><td class="mono">--hide-values</td><td>scan</td><td>—</td><td>값을 앞 2글자만 보이고 * 로</td></tr>
+        <tr><td class="mono">--ignore-unknown</td><td>scan</td><td>—</td><td>모르는 라벨을 오류 대신 무시하고 알려 줌</td></tr>
+        <tr><td class="mono">--invalid-utf8 error|replace</td><td>scan · mask · bench</td><td class="mono">error</td><td>UTF-8 이 아닌 본문을 오류로 볼지, 깨진 바이트만 건너뛰고 검사할지</td></tr>
+        <tr><td class="mono">--today YYYY-MM-DD</td><td>scan</td><td>오늘</td><td>주민등록번호 미래 생년월일 판단 기준일</td></tr>
+        <tr><td class="mono">--json</td><td>scan · labels</td><td>—</td><td>표 대신 DLL 결과 JSON 을 그대로 한 줄로. 실패도 error JSON 그대로(종료 코드 4)</td></tr>
+        <tr><td class="mono">--values</td><td>scan --json</td><td>—</td><td>JSON 에 원문 값도 싣기(표 출력은 항상 값 포함)</td></tr>
+        <tr><td class="mono">--pretty</td><td>scan --json</td><td>—</td><td>JSON 을 들여쓰기해서 출력</td></tr>
+        <tr><td class="mono">--opts &lt;JSON&gt; | @파일</td><td>scan</td><td>—</td><td>옵션 JSON 을 DLL 에 그대로 넘김(<code class="inl">--labels</code> 등 무시)</td></tr>
+        <tr><td class="mono">--show-opts</td><td>scan</td><td>—</td><td>DLL 에 넘긴 옵션 JSON 을 표준오류로</td></tr>
+        <tr><td class="mono">--style star|label|keep</td><td>mask</td><td class="mono">star</td><td>* 로 / [라벨] 로 / 앞 N글자 남기고 *</td></tr>
+        <tr><td class="mono">--keep N</td><td>mask</td><td class="mono">3</td><td>style=keep 일 때 남길 글자 수</td></tr>
+        <tr><td class="mono">--out &lt;파일&gt;</td><td>mask</td><td>표준출력</td><td>가린 본문을 쓸 파일</td></tr>
+        <tr><td class="mono">--repeat N</td><td>bench</td><td class="mono">20</td><td>총 검사 횟수</td></tr>
+        <tr><td class="mono">--threads N</td><td>bench</td><td class="mono">1</td><td>동시 스레드 수</td></tr>
+        <tr><td class="mono">-h, --help · -V, --version</td><td>—</td><td>—</td><td>도움말 · 버전</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- ───────────── 06 ───────────── -->
+  <section id="t6">
+    <div class="sec-head"><span class="sec-num">06</span><h2>selftest 항목</h2></div>
+    <div class="twrap"><table>
+      <thead><tr><th>#</th><th>항목</th><th>무엇을 확인하나</th><th>실패하면</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>라벨별 예문 20/20</td><td>20개 라벨이 각자 예문의 값을 정확히 잡는지</td><td>DLL 판이 다르거나 손상 — FAIL 줄에 무엇을 잡았는지 나옴</td></tr>
+        <tr><td>2–4</td><td>offsets char · utf16 · byte</td><td>이모지 섞인 본문에서 좌표 단위 3종이 맞는지(6–19 / 7–20 / 15–28), byte 좌표로 잘라 값이 맞는지</td><td>좌표 변환 문제 — 연동 시 엉뚱한 자리를 가리게 됨</td></tr>
+        <tr><td>5</td><td>items=false</td><td>건수만 모드</td><td rowspan="2">옵션 처리 문제</td></tr>
+        <tr><td>6</td><td>values=true</td><td>원문 값 싣기</td></tr>
+        <tr><td>7</td><td>모르는 라벨 → arg</td><td>반환 코드 1, kind=arg</td><td rowspan="2">오류 처리 문제</td></tr>
+        <tr><td>8</td><td>unknown_labels ignore</td><td>모르는 라벨을 결과 <code class="inl">unknown</code>에 알림</td></tr>
+        <tr><td>9</td><td>별칭 PRESCRIPTION</td><td>건수만 별칭 이름으로, 위치는 없음(ko-pii 와 같은 동작)</td><td>판이 다름</td></tr>
+        <tr><td>10</td><td>깨진 UTF-8 → utf8</td><td>반환 코드 2, kind=utf8</td><td rowspan="2">본문 검증 문제</td></tr>
+        <tr><td>11</td><td>깨진 UTF-8 replace</td><td>깨진 곳만 건너뛰고 계속 검사</td></tr>
+        <tr><td>12</td><td>본문 속 \0</td><td>널 문자 뒤도 검사(본문을 (포인터, 길이)로 넘김)</td><td>본문 전달 문제</td></tr>
+        <tr><td>13</td><td>빈 본문</td><td>오류 없이 0건</td><td>—</td></tr>
+        <tr><td>14</td><td>틀린 옵션 JSON → arg</td><td>JSON 이 아닌 옵션을 오류로</td><td>—</td></tr>
+        <tr><td>15</td><td>today</td><td>2025-12-31 생이 2025-06-01 기준 거부, 2026-01-01 기준 검출</td><td>날짜 판단 문제</td></tr>
+        <tr><td>16</td><td>8 스레드 × 5회</td><td>한 번 불러온 라이브러리를 여러 스레드가 동시에 써도 같은 결과</td><td>다중 스레드 연동 불가 — 반드시 제보</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- ───────────── 07 ───────────── -->
+  <section id="t7">
+    <div class="sec-head"><span class="sec-num">07</span><h2>종료 코드와 스크립트 연동</h2></div>
+    <div class="twrap"><table>
+      <thead><tr><th>코드</th><th>뜻</th><th>예</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">0</td><td>성공 (검출 0건도 성공)</td><td>—</td></tr>
+        <tr><td class="mono">1</td><td>demo·selftest 에 실패 항목 있음</td><td><code class="inl">결과: 15 / 16 통과</code></td></tr>
+        <tr><td class="mono">2</td><td>인자 오류·파일 읽기/쓰기 실패</td><td>모르는 옵션, 파일 없음</td></tr>
+        <tr><td class="mono">3</td><td>라이브러리 불러오기 실패</td><td><code class="inl">[불러오기 실패] … 찾아본 곳: …</code>, ABI 다름</td></tr>
+        <tr><td class="mono">4</td><td>검사 오류(라이브러리가 실패를 돌려줌)</td><td><code class="inl">[moaipii 오류] kind=arg code=1 : 모르는 라벨입니다: FAX</code></td></tr>
+      </tbody>
+    </table></div>
+    <h3>배포 후 자동 점검 — Linux 셸</h3>
+    <pre><span class="cm">#!/bin/sh</span>
+<span class="kw">if</span> /opt/pii/lib/moaipii-test selftest &gt; /tmp/pii-selftest.log 2&gt;&amp;1; <span class="kw">then</span>
+    echo <span class="hi">"moaipii OK: $(tail -1 /tmp/pii-selftest.log)"</span>
+<span class="kw">else</span>
+    echo <span class="hi">"moaipii 점검 실패 (코드 $?)"</span>; grep FAIL /tmp/pii-selftest.log; exit 1
+<span class="kw">fi</span></pre>
+    <h3>배포 후 자동 점검 — Windows 배치</h3>
+    <pre>@echo off
+chcp 65001 &gt;nul
+"C:\pii\lib\moaipii-test.exe" selftest &gt; "%TEMP%\pii-selftest.log" 2&gt;&amp;1
+if errorlevel 1 (
+  echo moaipii 점검 실패 (코드 %errorlevel%)
+  findstr FAIL "%TEMP%\pii-selftest.log"
+  exit /b 1
+)
+echo moaipii OK</pre>
+    <h3>여러 파일 건수 모으기 — PowerShell</h3>
+    <pre>Get-ChildItem D:\분류함 -Filter *.txt -Recurse | ForEach-Object {
+  $r = &amp; .\lib\moaipii-test.exe scan $_.FullName --no-items --json | ConvertFrom-Json
+  [pscustomobject]@{ 파일 = $_.Name; 건수 = ($r.counts | ConvertTo-Json -Compress) }
+} | Format-Table -AutoSize</pre>
+  </section>
+
+  <!-- ───────────── 08 ───────────── -->
+  <section id="t8">
+    <div class="sec-head"><span class="sec-num">08</span><h2>자주 쓰는 시나리오</h2></div>
+    <div class="twrap"><table>
+      <thead><tr><th>하고 싶은 것</th><th>명령</th></tr></thead>
+      <tbody>
+        <tr><td>새 서버에 올린 직후 동작 확인</td><td class="mono">moaipii-test info &amp;&amp; moaipii-test selftest</td></tr>
+        <tr><td>운영 앱이 쓰는 DLL 이 정상인지</td><td class="mono">moaipii-test --lib &lt;앱의 DLL 경로&gt; selftest</td></tr>
+        <tr><td>실제 문서에 무엇이 몇 건 있나(값은 숨김)</td><td class="mono">moaipii-test scan 문서.txt --hide-values</td></tr>
+        <tr><td>어떤 라벨이 오탐을 내는지</td><td class="mono">moaipii-test scan 문서.txt --labels NATIONALITY,ADDRESS</td></tr>
+        <tr><td>연동 코드의 좌표가 맞는지 비교</td><td class="mono">moaipii-test scan 문서.txt --offsets utf16 --json</td></tr>
+        <tr><td>가림 결과 미리보기</td><td class="mono">moaipii-test mask 문서.txt --style label</td></tr>
+        <tr><td>서버 사양별 처리량</td><td class="mono">moaipii-test bench 큰문서.txt --repeat 200 --threads 8</td></tr>
+        <tr><td>새 판으로 바꾸기 전후 결과 비교</td><td class="mono">moaipii-test --lib 옛판 scan a.txt --json --no-items &gt; old.json<br>moaipii-test --lib 새판 scan a.txt --json --no-items &gt; new.json</td></tr>
+      </tbody>
+    </table></div>
+    <p>라벨별로 무엇을 잡고 무엇을 놓치는지는 같은 묶음의 <code class="inl">doc/moaipii-guide.html</code>(연동 설명서) §5–6 에 자세히 있습니다.</p>
+  </section>
+
+  <!-- ───────────── 09 ───────────── -->
+  <section id="t9">
+    <div class="sec-head"><span class="sec-num">09</span><h2>문제 해결</h2></div>
+    <div class="twrap"><table>
+      <thead><tr><th>증상</th><th>원인</th><th>해결</th></tr></thead>
+      <tbody>
+        <tr><td><code class="inl">[불러오기 실패] … 찾을 수 없습니다</code></td><td>실행파일을 lib/ 밖으로 옮김</td><td>DLL 과 같은 폴더에 두거나 <code class="inl">--lib</code> / <code class="inl">MOAIPII_LIB</code></td></tr>
+        <tr><td><code class="inl">… 열지 못했습니다 (LoadLibraryExW failed)</code></td><td>Windows: 파일 손상·차단, 32비트 DLL</td><td><code class="inl">SHA256SUMS</code>로 파일 확인, 파일 속성의 "차단 해제"</td></tr>
+        <tr><td><code class="inl">version `GLIBC_2.xx' not found</code></td><td>glibc 2.17 미만 리눅스</td><td>CentOS 7 이상(glibc 2.17+) 필요</td></tr>
+        <tr><td>Linux <code class="inl">Permission denied</code></td><td>압축을 푼 도구가 권한을 잃음</td><td><code class="inl">chmod +x lib/moaipii-test lib/mp</code></td></tr>
+        <tr><td><code class="inl">ABI 버전이 다릅니다</code></td><td>다른 묶음의 DLL 을 불렀음</td><td>같은 묶음의 DLL·실행파일을 함께 사용, <code class="inl">info</code>로 경로 확인</td></tr>
+        <tr><td>info 에 <code class="inl">[참고] … 빌드가 다릅니다</code></td><td>DLL 과 시험 도구의 빌드 해시가 다름</td><td>오류는 아님. <code class="inl">MOAIPII_LIB</code>이 다른 곳을 가리키는지 확인</td></tr>
+        <tr><td><code class="inl">kind=utf8 code=2</code></td><td>UTF-8 이 아닌 파일(EUC-KR 등)</td><td>UTF-8 로 다시 저장하거나 <code class="inl">--invalid-utf8 replace</code></td></tr>
+        <tr><td><code class="inl">kind=arg … 모르는 라벨</code></td><td>라벨 오타</td><td><code class="inl">labels</code>로 이름 확인, 또는 <code class="inl">--ignore-unknown</code></td></tr>
+        <tr><td>콘솔 한글이 깨짐</td><td>출력을 파일·파이프로 보낼 때 UTF-8 로 나감</td><td>Windows 배치는 <code class="inl">chcp 65001</code>, 파일은 UTF-8 로 열기</td></tr>
+        <tr><td>PRESCRIPTION 건수는 있는데 위치가 없음</td><td>별칭은 건수만 셈</td><td><code class="inl">--labels PRESCRIPTION_ID</code></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <footer>
+    <span>MoAI-pii · moaipii-test 사용설명서</span>
+    <span>2026-11-18</span>
+  </footer>
+</div>
+</body>
+</html>

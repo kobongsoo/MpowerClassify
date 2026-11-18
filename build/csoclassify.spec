@@ -49,6 +49,10 @@ hiddenimports = [
     # 라이브러리 파일은 아래 binaries 에 넣는다. 빠지면 그 배포본은 --extractor rust 에서 1017 로 멈춘다.
     "csoclassify.extract.rust_engine",
     "csoclassify.extract._docparse",
+    # 개인정보 검출 라이브러리(--pii-engine moaipii) — 별도 프로젝트 MoAI-pii 가 만든 moaipii.dll/.so 를
+    # ctypes(_moaipii.py)로 부른다. 라이브러리 파일은 아래 binaries 에 넣는다. 빠지면 그 배포본은
+    # --pii-engine moaipii 에서 1018 로 멈춘다.
+    "csoclassify.classify._moaipii",
     # 포맷별 파서 라이브러리(전부 CentOS7/glibc2.17 호환 wheel).
     # docx/xlsx/pptx 는 stdlib(zipfile+ElementTree)로 직접 파싱하므로 라이브러리 불필요.
     "olefile", "pypdfium2", "xlrd",
@@ -80,6 +84,14 @@ if os.path.isfile(_dp_path):
     binaries.append((_dp_path, "."))
 else:
     print("[spec] 경고: 문서파서 라이브러리가 없습니다 — %s (--extractor rust 가 1017 로 멈춘다)" % _dp_path)
+# 개인정보 검출 라이브러리(moaipii.dll / libmoaipii.so) — 저장소 third_party/moaipii/<os>-x64 의 정본을
+# 같은 자리(묶음 최상위)에 둔다. _moaipii.py 는 _MEIPASS 를 찾아본다.
+_mp_name = "moaipii.dll" if os.name == "nt" else "libmoaipii.so"
+_mp_path = os.path.join(ROOT, "third_party", "moaipii", _dp_sub, _mp_name)
+if os.path.isfile(_mp_path):
+    binaries.append((_mp_path, "."))
+else:
+    print("[spec] 경고: 개인정보 검출 라이브러리가 없습니다 — %s (--pii-engine moaipii 가 1018 로 멈춘다)" % _mp_path)
 if os.name != "nt":
     _libdirs = [d for d in (os.environ.get("CSO_EXTRA_LIBDIR"),
                             os.path.join(sys.prefix, "lib")) if d]

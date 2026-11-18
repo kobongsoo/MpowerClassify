@@ -146,8 +146,10 @@ pub fn line(level: &str, site: &str, msg: &str) {
     if !is_on() {
         return;
     }
-    let text = format!("{} [PID {}] {} {}: {}",
-                       now_readable(), std::process::id(), level, site, msg);
+    let mut text = format!("{} [PID {}] {} {}: {}",
+                           now_readable(), std::process::id(), level, site, msg);
+    // 긴 로그는 끝에 줄바꿈을 하나 더 붙여, writeln 의 줄바꿈과 합쳐 빈 줄로 구분한다.
+    spaced(&mut text);
     if VERBOSE.load(Ordering::Relaxed) {
         eprintln!("{}", text);
     }
@@ -157,6 +159,29 @@ pub fn line(level: &str, site: &str, msg: &str) {
     };
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
         let _ = writeln!(f, "{}", text);
+    }
+}
+
+/// 이 글자 수 이상인 로그 한 건 뒤에는 빈 줄을 하나 둔다(파이썬 판 logsetup.LONG_LINE_CHARS 와 같은 값).
+pub const LONG_LINE_CHARS: usize = 250;
+
+//------------------------------------------------------------------
+// 긴 로그 뒤 빈 줄 붙이기
+//=> 경로·명령줄·오류 사유가 든 로그는 한 건이 수백 자라 편집기에서 여러 줄로 접혀
+//   보인다. 그러면 어디서 끝나고 다음 로그가 어디서 시작하는지 알기 어렵다.
+//   다 만든 로그 한 건(시각·PID 머리말 포함)이 LONG_LINE_CHARS 글자 이상이면 끝에
+//   '\n' 을 하나 붙인다 — 쓰는 쪽의 writeln 줄바꿈과 합쳐 빈 줄 한 줄이 된다.
+//
+// -in: text = 다 만든 로그 한 건(고쳐 쓴다)
+//
+// -out: 없음
+// -out: error = 없음
+//------------------------------------------------------------------
+pub fn spaced(text: &mut String) {
+    // 바이트가 아니라 글자 수로 센다 — 한글은 3바이트라 바이트로 세면 일찍 걸린다.
+    // 앞의 LONG_LINE_CHARS 글자만 세어 보면 되므로 긴 로그도 끝까지 훑지 않는다.
+    if text.chars().take(LONG_LINE_CHARS).count() >= LONG_LINE_CHARS {
+        text.push('\n');
     }
 }
 
@@ -219,6 +244,17 @@ mod tests {
     // CSOCLASSIFY_LOGDIR)를 건드린다. cargo test 는 테스트를 병렬 스레드로
     // 돌리므로 따로 두면 서로의 환경변수를 덮어써 엉뚱한 파일에 쓴다
     // (errlog 테스트가 실제로 그렇게 깨졌다). 한 테스트 안에서 순서대로 본다.
+    // 경계값 — 글자 수로 세고, 249자는 그대로 · 250자부터 빈 줄
+    #[test]
+    fn spaced_counts_chars() {
+        let mut a = "가".repeat(249);
+        spaced(&mut a);
+        assert!(!a.ends_with('\n'), "249자는 그대로여야 한다");
+        let mut b = "가".repeat(250);
+        spaced(&mut b);
+        assert!(b.ends_with('\n') && !b.ends_with("\n\n"), "250자는 줄바꿈 하나가 붙어야 한다");
+    }
+
     #[test]
     fn log_path_and_write() {
         // ---- (1) CSOCLASSIFY_LOGDIR 을 주면 그 폴더의 class_YYYYMMDD.log ----
@@ -246,6 +282,13 @@ mod tests {
         // 새 파일이면 BOM 이 맨 앞에 온다 — 메모장이 한글을 깨뜨리지 않게.
         let raw = std::fs::read(&p).unwrap_or_default();
         assert_eq!(&raw[..3], b"\xef\xbb\xbf", "새 파일은 UTF-8 BOM 으로 시작해야 한다");
+
+        // ---- (3) 250자 이상인 로그 뒤에는 빈 줄, 짧은 로그는 그대로 ----
+        line("INFO", "test.case:2", &"가".repeat(300));
+        line("INFO", "test.case:3", "짧은 줄");
+        let body = std::fs::read_to_string(&p).unwrap_or_default().replace("\r\n", "\n");
+        assert!(body.contains(&format!("{}\n\n", "가".repeat(300))), "긴 로그 뒤에 빈 줄이 있어야 한다");
+        assert!(body.contains("짧은 줄\n") && !body.contains("짧은 줄\n\n"), "짧은 로그 뒤에는 빈 줄이 없어야 한다");
 
         // ---- 뒷정리 ----
         std::env::remove_var("CSOCLASSIFY_LOGDIR");
