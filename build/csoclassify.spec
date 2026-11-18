@@ -148,12 +148,57 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 # 없을 수 있어 끈다(os.name=='nt').
 _strip = os.name != "nt"
 
+#------------------------------------------------------------------
+# 실행파일 '속성 → 자세히' 정보(버전 리소스) 만들기 — Windows 만
+#=> 탐색기 속성에 파일 버전 · 제품 이름 · 제품 버전 · 저작권 · 언어가 비어 있던 것을 채운다.
+#    1) 버전은 src/csoclassify/__init__.py 의 __version__(코드 버전)을 글자 그대로 읽는다
+#       (패키지를 import 하면 무거운 모듈까지 끌려오므로 정규식으로만 꺼낸다)
+#    2) PyInstaller 의 VSVersionInfo 로 만든다 — 언어 한국어(0x0412) · 유니코드(1200)
+#   Rust 판 Rust/build.rs embed_version_info 와 같은 값을 쓴다. 리눅스(ELF)에는 이런 칸이 없어 None.
+#
+# -in: 없음
+#
+# -out: VSVersionInfo | None = EXE(version=...) 에 넘길 값
+# -out: error = __init__.py 에서 버전을 못 찾으면 0.0.0 으로 쓴다(빌드는 계속)
+#------------------------------------------------------------------
+def _version_info():
+    if os.name != "nt":
+        return None
+    import re
+    from PyInstaller.utils.win32.versioninfo import (
+        VSVersionInfo, FixedFileInfo, StringFileInfo, StringTable, StringStruct,
+        VarFileInfo, VarStruct)
+    src = open(os.path.join(ROOT, "src", "csoclassify", "__init__.py"), encoding="utf-8").read()
+    m = re.search(r'__version__\s*=\s*"([^"]+)"', src)
+    ver = m.group(1) if m else "0.0.0"
+    # 1.2.3 → (1, 2, 3, 0) — 숫자 버전은 네 자리
+    nums = tuple((list(int(x) for x in re.findall(r"\d+", ver)) + [0, 0, 0, 0])[:4])
+    dotted = ".".join(str(n) for n in nums)
+    return VSVersionInfo(
+        ffi=FixedFileInfo(filevers=nums, prodvers=nums, mask=0x3F, flags=0x0,
+                          OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),
+        kids=[
+            StringFileInfo([StringTable("041204B0", [
+                StringStruct("CompanyName", "kobongsoo"),
+                StringStruct("FileDescription", "MpowerClassify - 문서 보안등급 · 업무분류 (Python 판)"),
+                StringStruct("FileVersion", dotted),
+                StringStruct("InternalName", "MpowerClassify"),
+                StringStruct("LegalCopyright", "Copyright (C) 2026 kobongsoo. All rights reserved."),
+                StringStruct("OriginalFilename", "MpowerClassify.exe"),
+                StringStruct("ProductName", "MpowerClassify"),
+                StringStruct("ProductVersion", ver),
+            ])]),
+            VarFileInfo([VarStruct("Translation", [0x0412, 1200])]),
+        ])
+
+
 exe = EXE(
     pyz,
     a.scripts,
     [],
     exclude_binaries=True,   # onedir: 바이너리는 아래 COLLECT 로 모음
     name="MpowerClassify",
+    version=_version_info(),  # exe 속성의 파일 버전 · 제품 이름 · 저작권 · 언어(Windows 만)
     console=True,            # CLI 도구이므로 콘솔 유지
     disable_windowed_traceback=False,
     strip=_strip,

@@ -192,7 +192,120 @@ fn copy_beside(name: &str, sources: &[PathBuf], exe_dir: &Path, same: fn(&Path, 
 // -out: 없음
 // -out: error = 없음(원본이 없거나 복사가 막히면 경고만)
 //------------------------------------------------------------------
+//------------------------------------------------------------------
+// Windows SDK 의 리소스 컴파일러(rc.exe) 찾기
+//=> 새 크레이트(embed-resource 등)를 들이지 않으려고 SDK 의 rc.exe 를 직접 부른다 — 리눅스
+//   빌드서버가 새 의존성을 받지 못해도 빌드가 깨지지 않게 하려는 것이다.
+//    1) 환경변수 RC 가 있으면 그 파일
+//    2) Windows Kits\10\bin\<버전>\x64\rc.exe 중 가장 새 버전(버전 폴더 이름순 마지막)
+//
+// -in: 없음
+//
+// -out: Option<PathBuf> = rc.exe 경로(못 찾으면 None)
+// -out: error = 없음
+//------------------------------------------------------------------
+fn find_rc() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("RC") {
+        let p = PathBuf::from(p);
+        if p.is_file() { return Some(p); }
+    }
+    let base = PathBuf::from(r"C:\Program Files (x86)\Windows Kits\10\bin");
+    let mut vers: Vec<PathBuf> = std::fs::read_dir(&base).ok()?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.join("x64").join("rc.exe").is_file())
+        .collect();
+    // '10.0.26100.0' 같은 이름 — 자리마다 숫자로 견줘 가장 새 것을 고른다
+    vers.sort_by_key(|p| p.file_name().and_then(|n| n.to_str()).unwrap_or("")
+        .split('.').map(|x| x.parse::<u32>().unwrap_or(0)).collect::<Vec<_>>());
+    vers.last().map(|p| p.join("x64").join("rc.exe"))
+}
+
+//------------------------------------------------------------------
+// 실행파일 '속성 → 자세히' 정보(버전 리소스) 넣기 — Windows 대상만
+//=> 탐색기 속성에 파일 버전 · 제품 이름 · 제품 버전 · 저작권 · 언어가 비어 있던 것을 채운다.
+//    1) Cargo.toml 의 version(0.1.0)을 파일 · 제품 버전으로 쓴다(코드 버전과 한 곳에서 맞춤)
+//    2) .rc 를 OUT_DIR 에 쓰고 rc.exe 로 .res 를 만든다(UTF-16 으로 써서 한글이 깨지지 않게)
+//    3) 링커에 .res 를 넘긴다 — MSVC 링커는 .res 를 바로 받는다
+//   rc.exe 가 없거나 실패하면 경고만 남기고 넘어간다(속성이 빌 뿐, 실행에는 지장 없다).
+//   파이썬 판 build/csoclassify.spec 의 버전 정보와 같은 값을 쓴다.
+//
+// -in: 없음(CARGO_CFG_TARGET_OS · CARGO_PKG_VERSION · OUT_DIR 을 읽는다)
+//
+// -out: 없음
+// -out: error = 없음(실패는 cargo:warning)
+//------------------------------------------------------------------
+fn embed_version_info() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return;   // ELF(리눅스)에는 이런 속성 칸이 없다
+    }
+    let ver = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".into());
+    // 1.2.3 → 1,2,3,0 (리소스의 숫자 버전은 네 자리)
+    let mut nums: Vec<u16> = ver.split(|c: char| !c.is_ascii_digit())
+        .filter(|s| !s.is_empty()).take(4).map(|s| s.parse().unwrap_or(0)).collect();
+    nums.resize(4, 0);
+    let num = nums.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",");
+    let dotted = nums.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(".");
+    let Ok(out) = std::env::var("OUT_DIR") else { return; };
+    let rc_path = PathBuf::from(&out).join("version.rc");
+    let res_path = PathBuf::from(&out).join("version.res");
+    // 언어 0x0412(한국어) · 코드페이지 1200(유니코드) — '041204B0' 블록과 Translation 이 짝이다
+    // winver.h 를 include 하지 않는다 — Visual Studio 환경(INCLUDE)이 없어도 rc.exe 가 돌게
+    // 상수를 숫자로 쓴다: 1 = VS_VERSION_INFO · 0x40004 = VOS_NT_WINDOWS32 · 0x1 = VFT_APP
+    let rc = format!(r#"1 VERSIONINFO
+ FILEVERSION {num}
+ PRODUCTVERSION {num}
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "041204B0"
+    BEGIN
+      VALUE "CompanyName", "kobongsoo"
+      VALUE "FileDescription", "MpowerClassify-rs - 문서 보안등급 · 업무분류 (Rust 판)"
+      VALUE "FileVersion", "{dotted}"
+      VALUE "InternalName", "MpowerClassify-rs"
+      VALUE "LegalCopyright", "Copyright (C) 2026 kobongsoo. All rights reserved."
+      VALUE "OriginalFilename", "MpowerClassify-rs.exe"
+      VALUE "ProductName", "MpowerClassify"
+      VALUE "ProductVersion", "{ver}"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0412, 1200
+  END
+END
+"#);
+    // rc.exe 는 BOM 붙은 UTF-16LE 를 유니코드로 읽는다 — 한글 설명이 깨지지 않게 그렇게 쓴다
+    let mut bytes = vec![0xFF, 0xFE];
+    for u in rc.encode_utf16() { bytes.extend_from_slice(&u.to_le_bytes()); }
+    if std::fs::write(&rc_path, bytes).is_err() {
+        println!("cargo:warning=버전 리소스(.rc)를 쓰지 못해 exe 속성 정보를 건너뜁니다");
+        return;
+    }
+    let Some(rc_exe) = find_rc() else {
+        println!("cargo:warning=rc.exe(Windows SDK)를 찾지 못해 exe 속성 정보를 건너뜁니다 — 환경변수 RC 로 알려 주세요");
+        return;
+    };
+    let ok = std::process::Command::new(&rc_exe)
+        .args(["/nologo", "/fo"]).arg(&res_path).arg(&rc_path)
+        .status().map(|s| s.success()).unwrap_or(false);
+    if !ok {
+        println!("cargo:warning=rc.exe 가 버전 리소스를 만들지 못해 exe 속성 정보를 건너뜁니다");
+        return;
+    }
+    // 실행파일에만 붙인다(시험 실행파일에는 필요 없다)
+    println!("cargo:rustc-link-arg-bins={}", res_path.display());
+}
+
 fn main() {
+    // exe 속성(파일 버전 · 제품 이름 · 저작권 …) — 라이브러리 복사와 무관하게 먼저 넣는다
+    println!("cargo:rerun-if-env-changed=RC");
+    embed_version_info();
     // 환경변수로 직접 지정해 쓰는 사람도 있어, 그 값이 바뀌면 다시 판단하게 한다.
     println!("cargo:rerun-if-env-changed=CSO_PDFIUM");
     println!("cargo:rerun-if-env-changed=CSO_DOCPARSE");
