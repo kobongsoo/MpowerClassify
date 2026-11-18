@@ -250,6 +250,11 @@ def test_두_판이_스캔PDF를_처리제외로_낸다(engine, tmp_path):
     scan = recs["스캔본.pdf"]
     assert scan.get("excluded", {}).get("kind") == "scan_pdf", (scan, r.stderr[-400:])
     assert "error" not in scan, scan
+    # 아무 등급도 못 정한 스캔본은 판정 칸(why.security.method)이 'excluded' 다 — 두 판이 같은 자리에
+    # 적어야 한다(Rust 판이 맨 위 method 칸에 따로 적던 것을 막는다).
+    if scan.get("grade") is None:
+        assert scan["why"]["security"]["method"] == "excluded", scan["why"]
+    assert "method" not in scan, "method 는 why.security 안에만 있어야 한다"
     assert "excluded" not in recs["정상.txt"], "정상 문서의 모양이 바뀌면 안 된다"
     assert summary.get("excluded") == 1 and summary["extract_failed"] == 0, summary
     assert r.returncode == 0, r.stderr[-400:]
@@ -260,3 +265,36 @@ def test_두_판이_스캔PDF를_처리제외로_낸다(engine, tmp_path):
               for l in s.stdout.splitlines() if l.strip().startswith("{") and '"file"' in l}
     assert simple["스캔본.pdf"].get("excluded") == "scan_pdf", simple
     assert "error" not in simple["스캔본.pdf"], simple
+
+
+#------------------------------------------------------------------
+# Rust 판 사이냅 폴백 — 사이냅도 못 읽은 스캔 PDF 도 처리제외다
+#=> --synap-fallback 이면 문서파서가 '자체 파서 → 사이냅'을 돌린다. 스캔 PDF 는 자체 파서가
+#   0자, 사이냅도 실패하면 '전 엔진 실패'가 된다. docparse 0.2.0 부터 그 실패에 쪽 구성(layout)이
+#   실려 오므로, Rust 판은 실패가 아니라 처리제외로 내야 한다(파이썬 판 실패 갈래와 같은 판정).
+#   예전에는 이 문서가 extract_failed(종료코드 1)로 나갔다.
+#    1) 가짜 사이냅 = 파이썬 실행파일 — 사이냅 인자(-U8 …)를 모르는 옵션으로 보고 실패하고 아무것도 안 쓴다
+#    2) 스캔본에 excluded 가 붙고 error 가 없으며 종료코드 0 인지 본다
+#
+# -in: tmp_path = pytest 임시폴더 픽스처
+# -out: 없음(assert)
+# -out: error = Rust exe 가 없으면 건너뛴다
+#------------------------------------------------------------------
+def test_Rust판_사이냅폴백_전엔진실패도_처리제외(tmp_path):
+    if not os.path.isfile(RS_EXE):
+        pytest.skip("Rust exe 없음(cargo build --release 먼저)")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    _make_pdf(docs / "스캔본.pdf")
+    env = dict(os.environ, PYTHONIOENCODING="utf-8",
+               CSOCLASSIFY_POLICY_DIR=os.path.join(ROOT, "resources", "policy"))
+    # 사이냅 자리에 '반드시 실패하는 실행파일'을 준다 — 자체 파서도 사이냅도 못 읽는 경우를 만든다
+    r = subprocess.run([RS_EXE, "--dir", str(docs), "--rule-only", "--format", "jsonl",
+                        "--synap-fallback", "--synap-path", sys.executable],
+                       cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8")
+    rows = [json.loads(l) for l in r.stdout.splitlines() if l.strip().startswith("{")]
+    scan = next(x for x in rows if "file" in x)
+    assert scan.get("excluded", {}).get("kind") == "scan_pdf", (scan, r.stderr[-400:])
+    assert "error" not in scan, scan
+    assert scan["why"]["security"]["method"] == "excluded", scan["why"]
+    assert r.returncode == 0, r.stderr[-400:]

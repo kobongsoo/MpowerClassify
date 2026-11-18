@@ -3870,6 +3870,15 @@ fn main() {
                     layout = x.layout.map(|l| (l.pages, l.scan_pages));
                     Some(x.text)
                 }
+                // 실패에도 쪽 구성이 실려 오고 그것이 스캔 PDF 면(본문 0자) '실패'가 아니라
+                // '처리제외'다 — 빈 본문으로 성공 갈래에 보내 기본 엔진의 Ok("") 와 같은 길을 탄다.
+                // 사이냅 모드에서 자체 파서도 사이냅도 못 읽은 스캔 PDF 가 이 경우다
+                // (파이썬 판 cli.py except 갈래의 _scan_pdf_excluded(layout, 0) 과 같은 판정).
+                Err(docparse::ExtractError::Failed { layout: Some(l), .. })
+                    if docparse::scan_pdf_verdict(l.pages, l.scan_pages, 0) => {
+                    layout = Some((l.pages, l.scan_pages));
+                    Some(String::new())
+                }
                 Err(e) => { ext_why = extractcfg::fail_reason(&e); None }
             }
         };
@@ -4050,9 +4059,11 @@ fn main() {
                            범위에서 제외되어, 본문 없이 파일명·경로 신호로만 판정했습니다."
             });
             // 아무것도 못 정했을 때만 method 를 바꾼다 — 'unclassified' 는 "봤는데 없더라"다.
+            // method 는 판정 칸(why.security.method)에 있다 — 맨 위(rec["method"])에 쓰면
+            // 판정 칸은 'unclassified' 로 남고 쓸데없는 칸이 하나 생긴다(파이썬 판 _mark_excluded 와 같은 자리).
             if rec["grade"].is_null()
-                && rec["method"].as_str().map_or(true, |m| m == "unclassified") {
-                rec["method"] = json!("excluded");
+                && rec["why"]["security"]["method"].as_str().map_or(true, |m| m == "unclassified") {
+                rec["why"]["security"]["method"] = json!("excluded");
             }
         } else if body_chars < min_text_len {
             fail += 1;
